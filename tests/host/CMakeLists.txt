@@ -21,5 +21,18 @@ add_executable(test_protocol
 )
 target_include_directories(test_protocol PRIVATE ../../src/proto)
 
+add_executable(test_usb
+  test_usb.c
+  ../../src/proto/protocol.c
+  ../../src/proto/pack.c
+  ../../src/proto/spi.c
+  ../../src/usb/usb_hid.c
+)
+target_include_directories(test_usb PRIVATE
+  ../../src/proto
+  ../../src/usb
+)
+
 enable_testing()
 add_test(NAME protocol COMMAND test_protocol)
+add_test(NAME usb COMMAND test_usb)

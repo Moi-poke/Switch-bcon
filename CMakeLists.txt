@@ -75,6 +75,51 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
   )
 
   pico_add_extra_outputs(poc_dualcore)
+
+  # Task 3: 有線FW本体 (無線OFF。CYW43/BTstackなし。ドック列挙のため)。
+  # Core0 = 1ms poll (u32→pack→usb_wired)＋log＋Flash試験。
+  # Core1 = UART1 DMA＋v3 parser＋mutex push。
+  add_executable(pico-bcon
+    src/main.c
+    src/proto/protocol.c
+    src/proto/pack.c
+    src/proto/spi.c
+    src/usb/usb_descriptors.c
+    src/usb/usb_hid.c
+    src/usb/usb_wired.c
+  )
+
+  pico_set_program_name(pico-bcon "pico-bcon")
+  pico_set_program_version(pico-bcon "0.1")
+
+  # ログは UART0 (GP0/1)。USB は有線ProConが専有、UART1 は data path。
+  pico_enable_stdio_uart(pico-bcon 1)
+  pico_enable_stdio_usb(pico-bcon 0)
+
+  target_include_directories(pico-bcon PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/src
+    ${CMAKE_CURRENT_LIST_DIR}/src/usb
+    ${CMAKE_CURRENT_LIST_DIR}/src/proto
+  )
+
+  target_link_libraries(pico-bcon
+    pico_stdlib
+    hardware_uart
+    hardware_dma
+    hardware_flash
+    pico_flash
+    pico_multicore
+    pico_unique_id
+    tinyusb_device
+    tinyusb_board
+  )
+
+  target_compile_definitions(pico-bcon PRIVATE
+    CFG_TUSB_OS=OPT_OS_PICO
+    POC_DATA_BAUD=${POC_DATA_BAUD}
+  )
+
+  pico_add_extra_outputs(pico-bcon)
 else()
   project(pico-bcon-hostonly C)
   message(STATUS "pico_sdk_import.cmake not found: firmware target skipped (host tests only).")

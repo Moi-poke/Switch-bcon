@@ -174,3 +174,73 @@ CRC-8/SMBUS（poly 0x07、init 0x00、 refin/refoutなし、xorout 0x00）。検
 ## 10. PC側指針
 
 HAT相当・Y反転・12bit pack・差分＋リフレッシュ・単一write()・方向別SEQ・HELLO・CONFIG送信・FTDI latency 1msはPC送信ラッパ1箇所に集約する。
+
+## 11. 輸送写像表 (u32 → Switch 1 輸送3B)
+
+線路u32 (VIIPER順・§5.1) は輸送非依存の論理値。Pico側pack関数
+(`src/proto/pack.c` の `ctrl_pack_btn3`・`pack_stick_12bit`) で吸収する。
+BT 3BとUSB 0x30ボタン3Bは任天堂が同一順序のため、両表は同値である
+(実装は単一のpack関数を共有する)。
+
+| u32 bit | ボタン | BT byte.bit | USB byte.bit | 備考 |
+|---------|--------|-------------|--------------|------|
+| 0 | B | B0.b2 | B0.b2 | |
+| 1 | A | B0.b3 | B0.b3 | |
+| 2 | Y | B0.b0 | B0.b0 | |
+| 3 | X | B0.b1 | B0.b1 | |
+| 4 | R | B0.b6 | B0.b6 | |
+| 5 | ZR | B0.b7 | B0.b7 | |
+| 6 | Plus(+) | B1.b1 | B1.b1 | |
+| 7 | R押込 | B1.b2 | B1.b2 | |
+| 8 | Down | B2.b0 | B2.b0 | 斜めは2bit同時 |
+| 9 | Right | B2.b2 | B2.b2 | 斜めは2bit同時 |
+| 10 | Left | B2.b3 | B2.b3 | 斜めは2bit同時 |
+| 11 | Up | B2.b1 | B2.b1 | 斜めは2bit同時 |
+| 12 | L | B2.b6 | B2.b6 | |
+| 13 | ZL | B2.b7 | B2.b7 | |
+| 14 | Minus(-) | B1.b0 | B1.b0 | |
+| 15 | L押込 | B1.b3 | B1.b3 | |
+| 16 | Home | B1.b4 | B1.b4 | |
+| 17 | Capture | B1.b5 | B1.b5 | |
+| 18 | GR | — (落とす) | — (落とす) | Switch 1輸送に位置なし |
+| 19 | GL | — (落とす) | — (落とす) | 同上 |
+| 20 | C | — (落とす) | — (落とす) | 同上 |
+| 21 | Headset | — (落とす) | — (落とす) | 同上 |
+| 22-31 | 予約 | — (落とす) | — (落とす) | 0送信・受信側は無視 |
+
+B0.b4/b5 (右SR/SL)・B1.b6・B2.b4/b5 (左SR/SL) に相当するu32 bitは存在しない。
+pack出力は常に0 (ProConにSR/SLはない)。
+
+輸送report層の固定加工 (pack関数の外・各輸送のbuilderが行う):
+
+- USB 0x30/0x21: `btn[1] |= 0x80`、`btn[2] &= 0xCF`、電池 `0x91`、振動 `0x09`
+  (2wiCC ControllerData互換。wakecon `usb_pack_controller_data` 通り)。
+- BT 0x30: 生3Bのまま。電池 `0x80`、振動 `0x08` (wakecon `hid.c` 通り)。
+
+スティック12bit化 (両輸送共通):
+
+- `x12 = x8 << 4`、`y12 = 4096 − (y8 << 4)` (4095でclamp)。
+- Y反転はPC側で済ませる (§5.1)。Picoは8bit値をそのままpackする。
+
+## 12. USB写し固定値 (Task 3)
+
+- Device: USB 2.00・EP0 64B・`057E:2009`・`bcdDevice 0x0200`
+  (ToadKing写し。`0x0210` 説あり。ドック検証で確認し確定する)。
+- Config一式41B: Remote Wakeup・500mA・HID 1IF・IN `0x81`/OUT `0x01`
+  (各64B・`bInterval 8` 実機写し。低遅延化のための短縮はしない)。
+- HID report 203B (ToadKing写し。入力 `0x30`・`0x21`/`0x81`、
+  出力 `0x01`/`0x10`/`0x80`/`0x82`)。
+- 文字列: `Nintendo Co., Ltd` / `Pro Controller` / `000000000001` (純正固定値)。
+- SPI `0x6000` 域 (シリアル) は `0xFF` で答える (実機風値を返すと
+  Switch 2が `2162-0002` で落ちる実測のため。2wiCCも同運用)。
+  ※「シリアル0xFF」とはこのSPI域の事。USB文字列シリアルは上記固定値のまま。
+- SPI色 `0x6050` (13B。既定グレー系。`COLOR_SET` で書換・Task 4)。
+  内訳: 本体RGB・ボタンRGB・左グリップRGB・右グリップRGB (左右独立)・不明1B。
+  左右同色でも別々に保持する。`0x601B=0x01` (色情報あり) が無いとSwitchは
+  デフォルト色を使い `0x6050` を無視する (dekuNukem準拠)。
+  注意: Switch側は初回接続時の色をキャッシュするため、色定義を変えた場合は
+  登録解除→再接続で取り直させる。
+- ハンドシェイク: `80 04` 受信で入力開始、`80 05`・unmountで中立＋再待機。
+- 無線OFF要求: CYW43/BT動作中はSwitch 2ドックがUSB列挙しない実測
+  (wakecon知見) のため、有線FWは無線を上げない。最終FWは `WIRED_MODE`
+  (Task 4) で無線停波を管理する。
