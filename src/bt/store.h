@@ -23,6 +23,8 @@ void store_host_forget(void); // KEY_DELETE用 (bcon追加)
 void store_wired(bool en);
 bool store_wired_load(void);
 bool store_wired_load_def(bool dflt); // 未保存時の既定値付き (bcon追加)
+void store_baud(uint8_t idx); // B-0/§3共有レート表の永続 (変化時のみ1 write)
+bool store_baud_load(uint8_t *out); // false=未保存 (bcon追加)
 void store_color(void);
 void store_color_load(void);
 bool store_cap_save(void);

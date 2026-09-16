@@ -40,7 +40,14 @@ add_executable(test_config
 )
 target_include_directories(test_config PRIVATE ../../src/proto)
 
+add_executable(test_baud
+  test_baud.c
+  ../../src/proto/baud.c
+)
+target_include_directories(test_baud PRIVATE ../../src/proto)
+
 enable_testing()
 add_test(NAME protocol COMMAND test_protocol)
 add_test(NAME usb COMMAND test_usb)
 add_test(NAME config COMMAND test_config)
+add_test(NAME baud COMMAND test_baud)

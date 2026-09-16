@@ -9,11 +9,13 @@
 #include "link.h"
 #include "store.h"
 #include "bt_compat.h"
+#include "baud.h"
 
 #define TAG_HOST 0x4243484Fu  /* 'BCHO' */
 #define TAG_COLOR 0x4243434Cu /* 'BCCL' */
 #define TAG_CAP 0x42435731u   /* 'BCW1' */
 #define TAG_WIRED 0x42435752u /* 'BCWR' */
+#define TAG_BAUD 0x42434252u  /* 'BCBR' (B §3＋B-0共有レート表index) */
 /* 注意: wakeconとは別名前空間にする。同一Picoで共存しBT MACも同一導出の
  * ため、NXxx系TAGを共有するとwakecon保存値 (特にWIRED) を拾ってしまう。
  * Classicリンク鍵 (BTstack管理) は同一機器として共有するのが正しいため
@@ -271,4 +273,51 @@ bool store_wired_load_def(bool dflt)
         return dflt;
     }
     return v != 0u;
+}
+
+/* baud hunt (B-0) の last-good 永続。変化時のみ1 write (Flash wear配慮)。
+ * 範囲外値は保存も読戻しもしない (B §3の.BAUD_SET拒否と同義)。 */
+static bool s_baud_have;
+static uint8_t s_baud_idx;
+
+void store_baud(uint8_t idx)
+{
+    const btstack_tlv_t *tlv = NULL;
+    void *ctx = NULL;
+    if (!baud_idx_valid(idx)) {
+        return;
+    }
+    if (s_baud_have && s_baud_idx == idx) {
+        return; /* unchanged: no flash wear */
+    }
+    if (!get_tlv(&tlv, &ctx)) {
+        return;
+    }
+    if (tag_store_safe(tlv, ctx, TAG_BAUD, &idx, 1) != 0) {
+        return;
+    }
+    s_baud_have = true;
+    s_baud_idx = idx;
+}
+
+bool store_baud_load(uint8_t *out)
+{
+    const btstack_tlv_t *tlv = NULL;
+    void *ctx = NULL;
+    uint8_t v = 0u;
+    if (!get_tlv(&tlv, &ctx)) {
+        return false;
+    }
+    if (tlv->get_tag(ctx, TAG_BAUD, &v, 1) != 1) {
+        return false;
+    }
+    if (!baud_idx_valid(v)) {
+        return false;
+    }
+    s_baud_have = true;
+    s_baud_idx = v;
+    if (out != NULL) {
+        *out = v;
+    }
+    return true;
 }

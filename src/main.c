@@ -31,6 +31,7 @@
 #include "pico/btstack_flash_bank.h"
 
 #include "protocol.h"
+#include "baud.h"
 #include "dispatch.h"
 #include "pack.h"
 #include "spi.h"
@@ -83,6 +84,14 @@ typedef struct {
     uint32_t boot_code;   // 0=boot中 1=selftest PASS 2=FAIL 3=走行中
     uint32_t boot_detail;
     volatile bool state_accept; // Core0書込・Core1読込 (既定true)
+    // baud hunt (B-0) の跨コア信号。全てg_m mutex区間で受渡し。
+    volatile bool bt_session;    // Core0書込 (hid open中のみtrue)・Core1読込
+    volatile bool baud_locked;   // Core1書込 (2連続有効frameで確定)・Core0読込
+    volatile uint8_t baud_idx;   // 現slotの表index (Core1書込・Core0読込)
+    volatile bool baud_save_req; // Core1→Core0のBCBR保存要求 (pollがdrain)
+    uint8_t baud_save_idx;
+    uint8_t baud_slots[BAUD_N];  // Core0が起動時に組むsweep順 (slot0=last-good)
+    uint8_t baud_nslots;
     ib_msg_t ib[IB_N];
     volatile uint8_t ib_w, ib_r;
     uint32_t ib_drop;
@@ -105,6 +114,8 @@ uint32_t bcon_bt_rumble_n;
 static v3_session_t g_vs;
 static uint8_t g_tx_seq; // Pico->PC 方向SEQ (方向独立・mod256)
 static bool s_wired = true;
+static bool s_baud_tx_ok; // hunt確定までUART1 TX抑制 (B-0)。起動時に初期化。
+static uint32_t s_boot_baud; // 起動baud (ready表示用。BCBR/sweep解決済み)。
 static bool s_neutral_hold; // timeout-neutral中 (STATUS bit2)
 static uint32_t s_last_state_ms;
 static uint32_t s_last_frames;
@@ -203,12 +214,40 @@ static void stack_guard_install(uint32_t *bottom)
 static link_stats_t s_pst;
 static parser_t s_parser;
 
+// ---- baud hunt (B-0) のCore1側状態。非ブロッキング遷移のみ (WDT安全) ----
+#define HUNT_DWELL_MS 150u // spec §1: 各slot 150ms試聴
+typedef struct {
+    uint8_t slots[BAUD_N];
+    uint8_t nslots;
+    uint8_t at;
+    uint32_t dwell_until;
+    baud_lock_t lock;
+    uint16_t err_base;  // gap検出用 (err_crc baseline)
+    uint16_t drop_base; // gap検出用 (err_drop baseline)
+    bool locked;
+    bool armed; // selftest合成frameをlock計数から外す錠 (init後にtrue)
+} hunt_t;
+static hunt_t s_hunt;
+
 static void bcon_frame_cb(uint8_t type, const uint8_t *p, uint8_t len,
                           uint8_t seq, void *user) {
     (void)user;
     mutex_enter_blocking(&g_m);
+    if (!g_s.baud_locked && s_hunt.armed) {
+        // hunt中 (B-0): 有効frame 2連続で確定。確定前のinboxは未確定baudの
+        // 産物のため捨てる (selftest直後のpurgeと同義)。
+        if (baud_lock_feed(&s_hunt.lock, true)) {
+            g_s.baud_locked = true;
+            g_s.baud_idx = s_hunt.slots[s_hunt.at];
+            g_s.baud_save_req = true;
+            g_s.baud_save_idx = g_s.baud_idx;
+            g_s.ib_r = g_s.ib_w;
+            s_hunt.locked = true;
+        }
+    }
+    bool trusted = g_s.baud_locked;
     if (type == T_STATE && proto_state_len_ok(len)) {
-        if (g_s.state_accept) {
+        if (trusted && g_s.state_accept) {
             g_s.state.buttons =
                 (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
                 ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
@@ -226,9 +265,12 @@ static void bcon_frame_cb(uint8_t type, const uint8_t *p, uint8_t len,
         }
     } else if (type == T_NEUTRAL && len == 0) {
         // 安全停止はUNSUPPORTED下でも適用する (dispatchと同義)。
-        g_s.state.buttons = 0u;
-        g_s.state.lx = g_s.state.ly = 0x800u;
-        g_s.state.rx = g_s.state.ry = 0x800u;
+        // ただしhunt確定前は未確定baudのため適用しない。
+        if (trusted) {
+            g_s.state.buttons = 0u;
+            g_s.state.lx = g_s.state.ly = 0x800u;
+            g_s.state.rx = g_s.state.ry = 0x800u;
+        }
     } else {
         // CONFIG/HELLO/PING等は inbox へ。Core0がdispatchする
         // (Flash書込を伴うためCore1では実行しない)。
@@ -278,6 +320,36 @@ static uint32_t core1_selftest(void) {
 static int g_dma_ch = -1;
 static uint32_t g_rd = 0;
 
+// slot切替: DMA停止→FIFO/エラー破棄→baud切替→parser再init (acc捨て・
+// stats保持)→ring再同期→DMA再開→2-frame計数reset。
+static void hunt_set_slot(uint8_t at, uint32_t now) {
+    uint32_t bps = baud_bps(s_hunt.slots[at]);
+    if (bps == 0u) {
+        return;
+    }
+    dma_channel_abort(g_dma_ch); // 停止＋無効化 (再開はset_write_addr trig)
+    while (uart_is_readable(DATA_UART)) {
+        (void)uart_getc(DATA_UART);
+    }
+    // RP2350: UARTRSR/UARTECRは同一アドレス。rsrへの書込でclear。
+    uart_get_hw(DATA_UART)->rsr = 0xFF;
+    (void)uart_set_baudrate(DATA_UART, bps);
+    parser_init(&s_parser, bcon_frame_cb, NULL, &s_pst); // acc捨て・stats保持
+    {
+        uint32_t wa = dma_hw->ch[g_dma_ch].write_addr;
+        g_rd = (wa - (uint32_t)dma_ring) & (RING_SIZE - 1); // 旧baud残渣捨て
+    }
+    dma_channel_set_write_addr(g_dma_ch, dma_ring, true);
+    baud_lock_reset(&s_hunt.lock);
+    s_hunt.err_base = s_pst.err_crc;
+    s_hunt.drop_base = s_pst.err_drop;
+    s_hunt.at = at;
+    s_hunt.dwell_until = now + HUNT_DWELL_MS;
+    mutex_enter_blocking(&g_m);
+    g_s.baud_idx = s_hunt.slots[at];
+    mutex_exit(&g_m);
+}
+
 static void core1_entry(void) {
     stack_guard_install(&__StackOneBottom); // MSPLIMガード
     // PoC確定: lockout victim初期化 (flash_safe_executeの相手側)。
@@ -298,7 +370,36 @@ static void core1_entry(void) {
     g_s.ib_r = g_s.ib_w;
     mutex_exit(&g_m);
 
-    uart_init(DATA_UART, POC_DATA_BAUD);
+    // hunt init (B-0): slotsはCore0がBCBR込で組済み。armedはselftest後に
+    // 立てる (合成3 frameをlock計数に入れない)。
+    {
+        uint8_t k;
+        mutex_enter_blocking(&g_m);
+        s_hunt.nslots = g_s.baud_nslots;
+        if (s_hunt.nslots == 0u || s_hunt.nslots > BAUD_N) {
+            s_hunt.nslots = 1u;
+            s_hunt.slots[0] = 0u;
+        } else {
+            for (k = 0u; k < s_hunt.nslots; k++) {
+                s_hunt.slots[k] = g_s.baud_slots[k];
+            }
+        }
+        s_hunt.at = 0u;
+        s_hunt.locked = g_s.baud_locked; // 単slot構成は確定済みで起動
+        mutex_exit(&g_m);
+        baud_lock_reset(&s_hunt.lock);
+        s_hunt.err_base = s_pst.err_crc;
+        s_hunt.drop_base = s_pst.err_drop;
+        s_hunt.dwell_until = to_ms_since_boot(get_absolute_time()) +
+            HUNT_DWELL_MS;
+        s_hunt.armed = true;
+    }
+
+    uint32_t boot_bps = baud_bps(g_s.baud_idx);
+    if (boot_bps == 0u) {
+        boot_bps = POC_DATA_BAUD;
+    }
+    uart_init(DATA_UART, boot_bps);
     gpio_set_function(DATA_TX_PIN, GPIO_FUNC_UART);
     gpio_set_function(DATA_RX_PIN, GPIO_FUNC_UART);
     uart_set_hw_flow(DATA_UART, false, false);
@@ -324,6 +425,27 @@ static void core1_entry(void) {
     g_core1_booted = true;
 
     for (;;) {
+        // hunt sweep (B-0): (!locked && !session) の間のみ。確定後は永久固定。
+        // session中は駐機 (dwell延長で復帰時にfull試聴)。
+        if (!s_hunt.locked && (iters & 0x3FFu) == 0u) {
+            bool session;
+            mutex_enter_blocking(&g_m);
+            session = g_s.bt_session;
+            mutex_exit(&g_m);
+            uint32_t now = to_ms_since_boot(get_absolute_time());
+            if (session) {
+                s_hunt.dwell_until = now + HUNT_DWELL_MS;
+            } else if ((int32_t)(now - s_hunt.dwell_until) >= 0) {
+                hunt_set_slot((uint8_t)((s_hunt.at + 1u) % s_hunt.nslots),
+                              now);
+            } else if (s_pst.err_crc != s_hunt.err_base ||
+                       s_pst.err_drop != s_hunt.drop_base) {
+                // 有効でないframeの痕跡＝lock対の分断。計数を割る。
+                s_hunt.err_base = s_pst.err_crc;
+                s_hunt.drop_base = s_pst.err_drop;
+                baud_lock_feed(&s_hunt.lock, false);
+            }
+        }
         uint32_t wa = dma_hw->ch[g_dma_ch].write_addr;
         uint32_t idx = (wa - (uint32_t)dma_ring) & (RING_SIZE - 1);
         if (idx != g_rd) {
@@ -357,7 +479,11 @@ static void core1_entry(void) {
 // ---------------- Core0: UART1 TX (Pico->PC。RX DMAと方向が独立) ----------------
 static void uart_tx_frame(uint8_t type, const uint8_t *payload, uint8_t len) {
     uint8_t out[PROTO_FRAME_MAX];
-    size_t n = frame_build(out, type, payload, len, g_tx_seq);
+    size_t n;
+    if (!s_baud_tx_ok) {
+        return; // hunt中TX抑制 (B-0)。確定後に開放する。
+    }
+    n = frame_build(out, type, payload, len, g_tx_seq);
     g_tx_seq++;
     if (n > 0) {
         uart_write_blocking(DATA_UART, out, n);
@@ -484,6 +610,31 @@ static void poll_tick(uint32_t now) {
                                   (probe_vibration_enabled ? 0x02u : 0u));
     g_vs.player_valid = probe_player_seen;
     v3_player_tick(&g_vs);
+    // baud hunt (B-0): session発行＋保存drain。inbox/FXは確定まで閉じる
+    // (確定前バイトはuntrusted。Core1が確定時にpurge済み)。
+    bool baud_locked;
+    {
+        bool save_req;
+        uint8_t save_idx;
+        mutex_enter_blocking(&g_m);
+        g_s.bt_session = (probe_hid_cid != 0u);
+        save_req = g_s.baud_save_req;
+        save_idx = g_s.baud_save_idx;
+        if (save_req) {
+            g_s.baud_save_req = false;
+        }
+        baud_locked = g_s.baud_locked;
+        mutex_exit(&g_m);
+        if (save_req) {
+            char bl[48];
+            store_baud(save_idx); // 変化時のみ1 write (Core1直接flash禁止)
+            snprintf(bl, sizeof(bl), "data baud=%lu locked",
+                     (unsigned long)baud_bps(save_idx));
+            probe_line(bl);
+        }
+    }
+    s_baud_tx_ok = baud_locked;
+    if (baud_locked) {
     for (;;) {
         ib_msg_t cur;
         bool empty;
@@ -503,6 +654,7 @@ static void poll_tick(uint32_t now) {
         (void)v3_on_frame(&g_vs, cur.type, cur.payload, cur.len, cur.seq);
     }
     exec_fx(now);
+    }
     flush_outbox();
 
     // 共有u32 → pack → bcon_*/probe_* (Core0単独)。
@@ -585,7 +737,7 @@ static uint32_t pm_rd(void)
 }
 
 static void stats_print(void) {
-    char line[192];
+    char line[224];
     usb_wired_stats_t ws;
     bcon_shared_t cp;
     mutex_enter_blocking(&g_m);
@@ -595,8 +747,9 @@ static void stats_print(void) {
     snprintf(line, sizeof(line),
              "BCON t=%lus hs=%d mnt=%d cid=%u wired=%d "
              "cap=%d/%d/%d res=%d err=%02x rum=%lu+%lu "
-             "ibdrop=%lu obdrop=%u frames=%lu crc=%lu drop=%lu ovr=%lu "
-             "rx80=%lu tx81=%lu tx21=%lu in30=%lu iters=%lu pm=%lu",
+              "ibdrop=%lu obdrop=%u frames=%lu crc=%lu drop=%lu ovr=%lu "
+              "rx80=%lu tx81=%lu tx21=%lu in30=%lu iters=%lu pm=%lu "
+              "baud=%u%c",
              (unsigned long)(to_ms_since_boot(get_absolute_time()) / 1000),
              usb_wired_handshake_done() ? 1 : 0,
              usb_wired_is_configured() ? 1 : 0,
@@ -609,9 +762,10 @@ static void stats_print(void) {
              (unsigned long)cp.ib_drop, g_vs.ob_dropped,
              (unsigned long)cp.frames, (unsigned long)cp.crc_err,
              (unsigned long)cp.drop_ev, (unsigned long)cp.overruns,
-             (unsigned long)ws.rx80, (unsigned long)ws.tx81,
-             (unsigned long)ws.tx21, (unsigned long)ws.in30,
-             (unsigned long)cp.iters, (unsigned long)pm_rd());
+              (unsigned long)ws.rx80, (unsigned long)ws.tx81,
+              (unsigned long)ws.tx21, (unsigned long)ws.in30,
+              (unsigned long)cp.iters, (unsigned long)pm_rd(),
+              (unsigned)cp.baud_idx, cp.baud_locked ? 'L' : 'H');
     printf("%s\n", line);
     if (g_vs.auto_status) {
         send_status();
@@ -849,7 +1003,7 @@ static void packet_handler(uint8_t packet_type, uint16_t channel,
 static void wired_loop(void) {
     uint32_t last_ms = 0u, last_log = 0u;
     printf("ready. feed UART1 GP4/5 %lu baud v3 frames. log=UART0 115200\n",
-           (unsigned long)POC_DATA_BAUD);
+           (unsigned long)s_boot_baud);
     watchdog_enable(2000, 1);
     for (;;) {
         uint32_t now = to_ms_since_boot(get_absolute_time());
@@ -929,6 +1083,34 @@ int main(void) {
     g_s.state.lx = g_s.state.ly = 0x800u;
     g_s.state.rx = g_s.state.ry = 0x800u;
     g_s.state_accept = true;
+    // hunt boot (B-0 Layer 0): BCBR保存値をsweep slot0に (TLV読込は
+    // Core1起動前に済ませる規則に従う)。単slot構成は確定済みで起動し
+    // 従来挙動 (即TX) を保つ。
+    {
+        uint8_t order[BAUD_N];
+        uint8_t saved = 0xFFu, sb = 0u, k;
+        if (store_baud_load(&sb)) {
+            saved = sb;
+        }
+        g_s.baud_nslots =
+            baud_sweep_order(saved, (uint32_t)POC_DATA_BAUD, order);
+        if (g_s.baud_nslots == 0u) {
+            order[0] = 0u; // 非常口 (max<115200): 115200に駐機
+            g_s.baud_nslots = 1u;
+        }
+        for (k = 0u; k < g_s.baud_nslots; k++) {
+            g_s.baud_slots[k] = order[k];
+        }
+        g_s.baud_idx = order[0];
+        g_s.baud_locked = (g_s.baud_nslots == 1u);
+        g_s.bt_session = false;
+        g_s.baud_save_req = false;
+        s_baud_tx_ok = g_s.baud_locked;
+        s_boot_baud = baud_bps(order[0]);
+        printf("data baud=%lu%s\n", (unsigned long)s_boot_baud,
+               (g_s.baud_nslots == 1u) ? " (fixed)" :
+               ((saved != 0xFFu) ? " (saved first)" : " (sweep)"));
+    }
     v3_session_init(&g_vs);
     multicore_launch_core1(core1_entry);
 
@@ -1031,7 +1213,7 @@ int main(void) {
                                        &link_reconnect_handler);
 
     printf("ready. feed UART1 GP4/5 %lu baud v3 frames. log=UART0 115200\n",
-           (unsigned long)POC_DATA_BAUD);
+           (unsigned long)s_boot_baud);
 
     // 生存WDT 2s (spec §8)。usb tick (1ms) で更新。debug中は停止。
     watchdog_enable(2000, 1);

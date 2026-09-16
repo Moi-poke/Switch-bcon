@@ -85,6 +85,7 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
   add_executable(pico-bcon
     src/main.c
     src/proto/protocol.c
+    src/proto/baud.c
     src/proto/pack.c
     src/proto/spi.c
     src/proto/dispatch.c
