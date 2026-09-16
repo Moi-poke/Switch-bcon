@@ -33,6 +33,14 @@ target_include_directories(test_usb PRIVATE
   ../../src/usb
 )
 
+add_executable(test_config
+  test_config.c
+  ../../src/proto/protocol.c
+  ../../src/proto/dispatch.c
+)
+target_include_directories(test_config PRIVATE ../../src/proto)
+
 enable_testing()
 add_test(NAME protocol COMMAND test_protocol)
 add_test(NAME usb COMMAND test_usb)
+add_test(NAME config COMMAND test_config)

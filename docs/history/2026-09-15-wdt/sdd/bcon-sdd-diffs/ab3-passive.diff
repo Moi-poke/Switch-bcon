@@ -1,0 +1,22 @@
+diff --git "a/C:\\Users\\moilo\\AppData\\Local\\Temp\\opencode\\bcon-sdd\\backups\\ab3\\link_conn.c.bak" b/src/bt/link_conn.c
+index 18c9134..5626016 100644
+--- "a/C:\\Users\\moilo\\AppData\\Local\\Temp\\opencode\\bcon-sdd\\backups\\ab3\\link_conn.c.bak"
++++ b/src/bt/link_conn.c
+@@ -42,6 +42,8 @@ uint8_t probe_ssp_count;
+ 
+ #define RECONNECT_RETRY_MS 5000u
+ #define RECONNECT_GIVEUP_MS 15000u
++/* AB3: passive-only trial — never page out, only accept incoming. */
++static const bool kPassiveOnly = true;
+ static uint32_t outgoing_at_ms;
+ 
+ void link_reconnect_handler(btstack_timer_source_t *ts)
+@@ -68,7 +70,7 @@ void link_reconnect_handler(btstack_timer_source_t *ts)
+         btstack_run_loop_add_timer(ts);
+         return;
+     }
+-    if (probe_hid_cid == 0u && !probe_outgoing_tried && probe_host_known) {
++    if (probe_hid_cid == 0u && !probe_outgoing_tried && probe_host_known && !kPassiveOnly) {
+         uint16_t cid = 0u;
+         uint8_t st;
+         probe_reconnect_tries++;

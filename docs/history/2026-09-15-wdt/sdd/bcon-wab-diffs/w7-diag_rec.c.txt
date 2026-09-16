@@ -1,0 +1,110 @@
+/* W7DIAG: recorder implementation — entire file is W7-only (see diag_rec.h). */
+/* W7DIAG: Core0-only writer. No printf, no flash writes, no mutex, no IRQ. */
+#include "diag_rec.h" /* W7DIAG */
+#include <string.h> /* W7DIAG */
+#include "pico/stdlib.h" /* W7DIAG: time_us_32. */
+#include "hardware/structs/watchdog.h" /* W7DIAG: scratch mirror. */
+/* W7DIAG: the ring itself. NOLOAD => crt0 leaves it alone => survives WDT reboot. */
+/* W7DIAG: No initializer here (NOLOAD memory is never zero-filled by startup). */
+/* W7DIAG */ static w7_state_t w7_state __attribute__((section(".uninitialized_data")));
+/* W7DIAG: FNV-1a/32 over the whole state with the crc word forced to zero. */
+/* W7DIAG */ static uint32_t w7_crc(void) {
+/* W7DIAG */     const uint8_t *p = (const uint8_t *)&w7_state;
+/* W7DIAG */     size_t i, n = sizeof(w7_state);
+/* W7DIAG */     size_t co = offsetof(w7_state_t, crc);
+/* W7DIAG */     uint32_t h = 2166136261u;
+/* W7DIAG */     for (i = 0; i < n; i++) {
+/* W7DIAG */         uint8_t b = (i >= co && i < co + sizeof(uint32_t)) ? 0u : p[i];
+/* W7DIAG */         h = (h ^ b) * 16777619u;
+/* W7DIAG */     }
+/* W7DIAG */     return h;
+/* W7DIAG */ }
+/* W7DIAG: mirror packed index+CRC into scratch[1] (low16 = slot, high16 = crc). */
+/* W7DIAG */ static void w7_mirror_index(void) {
+/* W7DIAG */     uint32_t slot = w7_state.idx % W7_NRING;
+/* W7DIAG */     watchdog_hw->scratch[W7_SCR_INDEX] = ((w7_state.crc >> 16) << 16) | slot;
+/* W7DIAG */ }
+/* W7DIAG: commit one entry + refresh CRC + index mirror. */
+/* W7DIAG */ static void w7_push(uint16_t kind, uint16_t a1, uint32_t a2, uint32_t a3) {
+/* W7DIAG */     w7_entry_t *e = &w7_state.ring[w7_state.idx % W7_NRING];
+/* W7DIAG */     e->ts = time_us_32();
+/* W7DIAG */     e->kind = kind;
+/* W7DIAG */     e->a1 = a1;
+/* W7DIAG */     e->a2 = a2;
+/* W7DIAG */     e->a3 = a3;
+/* W7DIAG */     w7_state.idx++;
+/* W7DIAG */     w7_state.n++;
+/* W7DIAG */     w7_state.crc = w7_crc();
+/* W7DIAG */     w7_mirror_index();
+/* W7DIAG */ }
+/* W7DIAG */ void diag_rec_init(void) {
+/* W7DIAG */     bool ok = (w7_state.magic == W7_MAGIC) && (w7_state.ver == W7_VER);
+/* W7DIAG */     if (ok) {
+/* W7DIAG */         ok = (w7_state.crc == w7_crc());
+/* W7DIAG */     }
+/* W7DIAG */     if (!ok) {
+/* W7DIAG */         memset(&w7_state, 0, sizeof(w7_state));
+/* W7DIAG */         w7_state.magic = W7_MAGIC;
+/* W7DIAG */         w7_state.ver = W7_VER;
+/* W7DIAG */         w7_state.crc = w7_crc();
+/* W7DIAG */     }
+/* W7DIAG */     watchdog_hw->scratch[W7_SCR_MAGIC] = W7_MAGIC;
+/* W7DIAG */     w7_mirror_index();
+/* W7DIAG */ }
+/* W7DIAG */ void diag_rec_stage(uint8_t st) {
+/* W7DIAG */     uint8_t i;
+/* W7DIAG */     w7_state.stage_last = st;
+/* W7DIAG */     for (i = 0; i < 7; i++) {
+/* W7DIAG */         w7_state.stage_trail[i] = w7_state.stage_trail[i + 1];
+/* W7DIAG */     }
+/* W7DIAG */     w7_state.stage_trail[7] = st;
+/* W7DIAG */     w7_state.stage_n++;
+/* W7DIAG */     watchdog_hw->scratch[W7_SCR_STAGE] = st;
+/* W7DIAG */     w7_push(W7K_STAGE, st, w7_state.stage_n, 0u);
+/* W7DIAG */ }
+/* W7DIAG */ void diag_rec_flash(uint8_t op, uint8_t phase, uint32_t a2, uint32_t a3) {
+/* W7DIAG */     uint16_t a1;
+/* W7DIAG */     if (op > 5u) {
+/* W7DIAG */         op = 0u;
+/* W7DIAG */     }
+/* W7DIAG */     a1 = (uint16_t)(((uint16_t)op << 1) | (phase & 1u));
+/* W7DIAG */     if (phase == W7PH_BEGIN) {
+/* W7DIAG */         w7_state.begins[op]++;
+/* W7DIAG */         w7_state.last_tag[op] = a2;
+/* W7DIAG */     } else {
+/* W7DIAG */         w7_state.ends[op]++;
+/* W7DIAG */         w7_state.last_rc[op] = (int32_t)a2;
+/* W7DIAG */         w7_state.last_dur[op] = a3;
+/* W7DIAG */     }
+/* W7DIAG */     w7_push(W7K_FLASH, a1, a2, a3);
+/* W7DIAG */ }
+/* W7DIAG */ void diag_rec_timer(uint8_t id, uint8_t act, uint32_t timeout_ms) {
+/* W7DIAG */     uint16_t a1;
+/* W7DIAG */     if (id > 3u) {
+/* W7DIAG */         id = 0u;
+/* W7DIAG */     }
+/* W7DIAG */     a1 = (uint16_t)(((uint16_t)id << 2) | (act & 3u));
+/* W7DIAG */     if (act == W7TA_ADD) {
+/* W7DIAG */         w7_state.tmr_add[id]++;
+/* W7DIAG */         w7_state.tmr_to[id] = timeout_ms;
+/* W7DIAG */     } else if (act == W7TA_REMOVE) {
+/* W7DIAG */         w7_state.tmr_rem[id]++;
+/* W7DIAG */     } else {
+/* W7DIAG */         w7_state.tmr_fire[id]++;
+/* W7DIAG */     }
+/* W7DIAG */     w7_push(W7K_TIMER, a1, timeout_ms, w7_state.tmr_fire[id]);
+/* W7DIAG */ }
+/* W7DIAG */ void diag_rec_ev(uint8_t ev) {
+/* W7DIAG */     w7_state.ev_last = ev;
+/* W7DIAG */     w7_state.ev_n++;
+/* W7DIAG */     w7_push(W7K_EV, ev, w7_state.ev_n, 0u);
+/* W7DIAG */ }
+/* W7DIAG */ bool diag_rec_valid(void) {
+/* W7DIAG */     if (w7_state.magic != W7_MAGIC || w7_state.ver != W7_VER) {
+/* W7DIAG */         return false;
+/* W7DIAG */     }
+/* W7DIAG */     return w7_state.crc == w7_crc();
+/* W7DIAG */ }
+/* W7DIAG */ const w7_state_t *diag_rec_state(void) {
+/* W7DIAG */     return &w7_state;
+/* W7DIAG */ }

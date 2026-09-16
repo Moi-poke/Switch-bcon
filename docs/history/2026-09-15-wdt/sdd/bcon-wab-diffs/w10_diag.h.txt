@@ -1,0 +1,16 @@
+/* W10DIAG: W10 HAL breadcrumb recorder (TEMP DIAGNOSTIC — MUST BE REVERTED). */ /* W10DIAG */
+/* W10DIAG: Splits the op-in-death hang into (a) Core1 lockout no-ack vs (b) ROM stall. */ /* W10DIAG */
+/* W10DIAG: Four points via --wrap: lockout-req / lockout-ack / ROM-before / ROM-after. */ /* W10DIAG */
+/* W10DIAG: Removal: delete this file + revert CMakeLists.txt/main.c/store.c/store.h hunks. */ /* W10DIAG */
+#ifndef W10_DIAG_H /* W10DIAG */
+#define W10_DIAG_H /* W10DIAG */
+
+#include <stdbool.h> /* W10DIAG */
+#include <stdint.h> /* W10DIAG */
+
+void w10_init(void); /* W10DIAG: validate prev NOLOAD state, bump boot epoch. */ /* W10DIAG */
+void w10_dump(void); /* W10DIAG: print prev-boot counters + ring via probe_line. */ /* W10DIAG */
+void w10_ev(uint32_t kind, uint32_t a, uint32_t b); /* W10DIAG: record one crumb. */ /* W10DIAG */
+uint32_t w10_force_fire(void); /* W10DIAG: D-gate generation counter (forced BCHO write). */ /* W10DIAG */
+
+#endif /* W10_DIAG_H */ /* W10DIAG */

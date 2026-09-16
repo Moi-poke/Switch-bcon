@@ -1,0 +1,12 @@
+﻿diff --git "a/C:\\Users\\moilo\\AppData\\Local\\Temp\\opencode\\bcon-wab\\backups\\w9ab\\CMakeLists.txt.bak" b/CMakeLists.txt
+index 58b746f..f80998e 100644
+--- "a/C:\\Users\\moilo\\AppData\\Local\\Temp\\opencode\\bcon-wab\\backups\\w9ab\\CMakeLists.txt.bak"
++++ b/CMakeLists.txt
+@@ -98,6 +98,7 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
+     src/bt/link_beacon.c
+     src/bt/cap.c
+     src/bt/store.c
++    src/diag_rec.c # W9DIAG: 9b recorder (9a stages + D-gate gen + outer-return-2s crumbs). REMOVE with all W9DIAG.
+   )
+ 
+   pico_set_program_name(pico-bcon "pico-bcon")

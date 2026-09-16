@@ -1,5 +1,5 @@
 // PoC暫定コピー (origin: pico-wakecon src/btstack_config.h)。
-// Task 4 (BT移植) で正式版に置換する。内容は wakecon と同一。
+// 正式版設定。内容は wakecon と同一。
 #ifndef _PICO_BTSTACK_BTSTACK_CONFIG_H
 #define _PICO_BTSTACK_BTSTACK_CONFIG_H
 

@@ -32,6 +32,9 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
   # POC_DATA_BAUD: UART1 baud (既定1000000=spec通り)。115200上限アダプタの
   # derated試験時は -DPOC_DATA_BAUD=115200 で構成する (build/はgit管理外)。
   set(POC_DATA_BAUD 1000000 CACHE STRING "PoC UART1 baud rate")
+  # WIRED_DEFAULT: TLV未保存時の起動モード (1=有線既定)。
+  # 無線起動の試験時は -DWIRED_DEFAULT=0 で別構成する。
+  set(WIRED_DEFAULT 1 CACHE STRING "Default boot mode when TLV unwritten (1=wired)")
   add_executable(poc_dualcore
     src/poc_dualcore/main.c
     src/poc_dualcore/poc_usb.c
@@ -76,17 +79,25 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
 
   pico_add_extra_outputs(poc_dualcore)
 
-  # Task 3: 有線FW本体 (無線OFF。CYW43/BTstackなし。ドック列挙のため)。
-  # Core0 = 1ms poll (u32→pack→usb_wired)＋log＋Flash試験。
+  # Task 4: 統合FW (USB + Classic BT + BLE wake。無線はWIRED_MODE管理)。
+  # Core0 = BTstack run loop＋TinyUSB＋CYW43 (wakecon同lib・同初期化順)。
   # Core1 = UART1 DMA＋v3 parser＋mutex push。
   add_executable(pico-bcon
     src/main.c
     src/proto/protocol.c
     src/proto/pack.c
     src/proto/spi.c
+    src/proto/dispatch.c
     src/usb/usb_descriptors.c
     src/usb/usb_hid.c
     src/usb/usb_wired.c
+    src/bt/hid.c
+    src/bt/link.c
+    src/bt/link_conn.c
+    src/bt/link_cap.c
+    src/bt/link_beacon.c
+    src/bt/cap.c
+    src/bt/store.c
   )
 
   pico_set_program_name(pico-bcon "pico-bcon")
@@ -100,6 +111,7 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
     ${CMAKE_CURRENT_LIST_DIR}/src
     ${CMAKE_CURRENT_LIST_DIR}/src/usb
     ${CMAKE_CURRENT_LIST_DIR}/src/proto
+    ${CMAKE_CURRENT_LIST_DIR}/src/bt
   )
 
   target_link_libraries(pico-bcon
@@ -107,9 +119,15 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
     hardware_uart
     hardware_dma
     hardware_flash
+    hardware_watchdog
     pico_flash
     pico_multicore
     pico_unique_id
+    pico_btstack_classic
+    pico_btstack_ble
+    pico_btstack_cyw43
+    pico_cyw43_arch_none
+    pico_btstack_flash_bank
     tinyusb_device
     tinyusb_board
   )
@@ -117,6 +135,7 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
   target_compile_definitions(pico-bcon PRIVATE
     CFG_TUSB_OS=OPT_OS_PICO
     POC_DATA_BAUD=${POC_DATA_BAUD}
+    WIRED_DEFAULT=${WIRED_DEFAULT}
   )
 
   pico_add_extra_outputs(pico-bcon)

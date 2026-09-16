@@ -13,6 +13,8 @@ Task 5 の pc/bcon_send.py (本番送信ラッパ) とは別物。負荷試験�
 仕様 (spec/protocol_v3.md の抜粋):
 - Frame: [SYNC=0xAB][TYPE][LEN][PAYLOAD][SEQ][CRC8/SMBUS over TYPE..SEQ]
 - STATE: TYPE=0x01 LEN=8。BTN u32-LE (bit22-31は0固定) + LX LY RX RY。
+  LEN=12拡張あり：BTN u32-LE + LX LY RX RY をu16LE×4（0-4095・中央0x0800）。
+  --hold12 で送信（例：--hold12 0x2 0x800 0x800 0x800 0x800）。
 - SEQは方向独立・mod256。BTNはカウンタ下位22bitを流し、bit変化を起こす。
 - 1フレーム1 write() (PC側指針の単一write遵守)。
 
@@ -48,6 +50,151 @@ def build_state_full(btn: int, lx: int, ly: int, rx: int, ry: int, seq: int) -> 
     payload = struct.pack("<I", btn & BTN_MASK) + bytes((lx, ly, rx, ry))
     body = bytes((T_STATE, len(payload))) + payload + bytes((seq & 0xFF,))
     return bytes((SYNC,)) + body + bytes((crc8_smbus(body),))
+
+
+def build_state12(btn: int, lx: int, ly: int, rx: int, ry: int, seq: int) -> bytes:
+    """STATE LEN=12 (12bit sticks, u16LE x4, center 0x0800). Masked to 16bit wire size."""
+    payload = struct.pack("<IHHHH", btn & BTN_MASK,
+                          lx & 0xFFFF, ly & 0xFFFF, rx & 0xFFFF, ry & 0xFFFF)
+    body = bytes((T_STATE, len(payload))) + payload + bytes((seq & 0xFF,))
+    return bytes((SYNC,)) + body + bytes((crc8_smbus(body),))
+
+
+def build_key_delete(seq: int) -> bytes:
+    """KEY_DELETE LEN=0 (tombstones BCHO + drops classic keys on FW side)."""
+    body = bytes((T_KEY_DELETE, 0, seq & 0xFF))
+    return bytes((SYNC,)) + body + bytes((crc8_smbus(body),))
+
+
+T_PING = 0x03
+T_PONG = 0x21
+T_KEY_DELETE = 0x33
+T_HELLO = 0x10
+T_HELLO_ACK = 0x11
+T_STATUS = 0x20
+T_STATUS_REQ = 0x35
+
+
+def build_ping(seq: int) -> bytes:
+    body = bytes((T_PING, 0, seq & 0xFF))
+    return bytes((SYNC,)) + body + bytes((crc8_smbus(body),))
+
+
+def build_hello(ver: int = 4, flags: int = 1, seq: int = 0) -> bytes:
+    body = bytes((T_HELLO, 2, ver & 0xFF, flags & 0xFF, seq & 0xFF))
+    return bytes((SYNC,)) + body + bytes((crc8_smbus(body),))
+
+
+def scan_frames(ser, secs: float):
+    """受信frameを走査し (TYPE, SEQ, payload) を列挙するgenerator."""
+    import time as _t
+    buf = bytearray()
+    t_end = _t.perf_counter() + secs
+    while _t.perf_counter() < t_end:
+        chunk = ser.read(64)
+        if chunk:
+            buf += chunk
+        while len(buf) >= 5:
+            try:
+                i = buf.index(SYNC)
+            except ValueError:
+                buf.clear()
+                break
+            if i > 0:
+                del buf[:i]
+            if len(buf) < 3:
+                break
+            ln = buf[2]
+            if ln > 32:
+                del buf[0]
+                continue
+            if len(buf) < 3 + ln + 2:
+                break
+            body = bytes(buf[1:3 + ln + 1])
+            if crc8_smbus(body) != buf[3 + ln + 1]:
+                del buf[0]
+                continue
+            yield (buf[1], buf[3 + ln], bytes(buf[3:3 + ln]))
+            del buf[:3 + ln + 2]
+
+
+def hello_check(ser, secs: float = 6.0) -> int:
+    """HELLO→HELLO_ACK＋自動STATUSの確認 (Step 3用)。"""
+    ser.reset_input_buffer()
+    ser.write(build_hello())
+    print("HELLO sent (ver=4 flags=1: auto STATUS on)", flush=True)
+    n_status = 0
+    for typ, seq, pay in scan_frames(ser, secs):
+        if typ == T_HELLO_ACK and len(pay) == 4:
+            print(f"HELLO_ACK ver={pay[0]} fw={pay[1]}.{pay[2]} "
+                  f"result=0x{pay[3]:02X} seq=0x{seq:02X}", flush=True)
+        elif typ == T_STATUS and len(pay) == 7:
+            n_status += 1
+            print(f"STATUS flags=0x{pay[0]:02X} last=0x{pay[1]:02X} "
+                  f"crc={pay[2] | (pay[3] << 8)} drop={pay[4] | (pay[5] << 8)} "
+                  f"err=0x{pay[6]:02X} seq=0x{seq:02X}", flush=True)
+        elif typ == T_PONG:
+            print(f"(PONG echo=0x{pay[0]:02X})", flush=True)
+    print(f"hello check done status_rx={n_status}", flush=True)
+    return 0
+
+
+def ping_test(ser, count: int, timeout: float = 0.5) -> int:
+    """PING→PONG RTT計測 (Step 3用)。PONG payload=送信SEQのエコーで照合。"""
+    import time as _t
+    ser.reset_input_buffer()
+    ok = 0
+    rtts = []
+    seq = 0
+    for _ in range(count):
+        ser.write(build_ping(seq))
+        t0 = _t.perf_counter()
+        buf = bytearray()
+        got = None
+        while _t.perf_counter() - t0 < timeout:
+            chunk = ser.read(64)
+            if chunk:
+                buf += chunk
+            # frame走査: SYNC..TYPE..LEN..PAYLOAD..SEQ..CRC
+            while len(buf) >= 5:
+                try:
+                    i = buf.index(SYNC)
+                except ValueError:
+                    buf.clear()
+                    break
+                if i > 0:
+                    del buf[:i]
+                if len(buf) < 3:
+                    break
+                ln = buf[2]
+                if ln > 32:
+                    del buf[0]
+                    continue
+                if len(buf) < 3 + ln + 2:
+                    break
+                body = bytes(buf[1:3 + ln + 1])
+                if crc8_smbus(body) != buf[3 + ln + 1]:
+                    del buf[0]
+                    continue
+                typ, rxseq = buf[1], buf[3 + ln]
+                pay = bytes(buf[3:3 + ln])
+                del buf[:3 + ln + 2]
+                if typ == T_PONG and ln == 1 and pay[0] == seq:
+                    got = (_t.perf_counter() - t0) * 1000.0
+                    break
+        if got is None:
+            print(f"ping seq=0x{seq:02X} TIMEOUT", flush=True)
+        else:
+            print(f"ping seq=0x{seq:02X} rtt={got:.2f}ms", flush=True)
+            ok += 1
+            rtts.append(got)
+        seq = (seq + 1) & 0xFF
+    if rtts:
+        print(f"ping done ok={ok}/{count} min={min(rtts):.2f} "
+              f"avg={sum(rtts)/len(rtts):.2f} max={max(rtts):.2f}ms", flush=True)
+    else:
+        print(f"ping done ok=0/{count}", flush=True)
+    return 0 if ok == count else 1
 
 
 # (bit, name) の順。GR/GL/C/HeadsetはSwitch1輸送で落とされる。
@@ -145,6 +292,16 @@ def main() -> int:
                     help="seconds to hold each sweep step (short: Home exits test screen)")
     ap.add_argument("--gap", type=float, default=0.3,
                     help="neutral seconds between sweep steps")
+    ap.add_argument("--ping", type=int, default=0, metavar="N",
+                    help="PING->PONG RTT measurement, N times")
+    ap.add_argument("--hold12", nargs=5, metavar=("BTN", "LX", "LY", "RX", "RY"),
+                    help="hold one 12-bit STATE (BTN hex-ok, sticks 0..4095 center 0x800)"
+                    " for --secs at --hz (e.g. --hold12 0x2 0x800 0x800 0x800 0x800)")
+    ap.add_argument("--key-delete", action="store_true",
+                    help="send KEY_DELETE x3 (SEQ 0,1,2) for tombstone-bank prelude;"
+                    " expect 'keys deleted' on log UART, then power-cycle and check host=0")
+    ap.add_argument("--hello", action="store_true",
+                    help="HELLO->HELLO_ACK + auto STATUS check")
     args = ap.parse_args()
 
     try:
@@ -169,12 +326,49 @@ def main() -> int:
     n = 0
     seq = 0
     t0 = time.perf_counter()
+    if args.hello:
+        try:
+            return hello_check(ser)
+        finally:
+            ser.close()
+    if args.ping > 0:
+        try:
+            return ping_test(ser, args.ping)
+        finally:
+            ser.close()
     if args.sweep:
         # sweepは目視用。既定1000Hzのままでは速すぎるため60Hzに落とす
         # (--hz明示時はそちらを尊重)。
         sweep_hz = 60.0 if args.hz >= 1000 else args.hz
         try:
             sweep(ser, sweep_hz, args.dwell, args.gap)
+        finally:
+            ser.close()
+        return 0
+    if args.hold12:
+        try:
+            btn12 = int(args.hold12[0], 0) & BTN_MASK
+            st12 = [int(v, 0) & 0xFFFF for v in args.hold12[1:5]]
+            t_end12 = time.perf_counter() + args.secs
+            while time.perf_counter() < t_end12:
+                t0 = time.perf_counter()
+                ser.write(build_state12(btn12, st12[0], st12[1], st12[2], st12[3], seq))
+                seq = (seq + 1) & 0xFF
+                n += 1
+                wait = t0 + period - time.perf_counter()
+                if wait > 0:
+                    time.sleep(wait)
+            print(f"hold12 done sent={n}", flush=True)
+        finally:
+            ser.close()
+        return 0
+    if args.key_delete:
+        try:
+            for kseq in (0, 1, 2):
+                f = build_key_delete(kseq)
+                ser.write(f)
+                print(f"key-delete sent seq={kseq} {f.hex(' ')}", flush=True)
+                time.sleep(0.1)
         finally:
             ser.close()
         return 0

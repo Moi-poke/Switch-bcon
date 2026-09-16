@@ -1,0 +1,292 @@
+﻿diff --git "a/C:\\Users\\moilo\\AppData\\Local\\Temp\\opencode\\bcon-wab\\backups\\w9ab\\src_main.c.bak" "b/src\\main.c"
+index b0b9150..9fd95aa 100644
+--- "a/C:\\Users\\moilo\\AppData\\Local\\Temp\\opencode\\bcon-wab\\backups\\w9ab\\src_main.c.bak"
++++ "b/src\\main.c"
+@@ -29,6 +29,9 @@
+ #include "btstack_tlv_flash_bank.h"
+ #include "classic/btstack_link_key_db_tlv.h"
+ #include "pico/btstack_flash_bank.h"
++/* W9DIAG: hci_dump ON for comparability (W6-proven inert). REMOVE with all W9DIAG. */
++/* W9DIAG */ #include "hci_dump.h"
++/* W9DIAG */ #include "hci_dump_embedded_stdout.h"
+ 
+ #include "protocol.h"
+ #include "dispatch.h"
+@@ -41,6 +44,7 @@
+ #include "bt/cap.h"
+ #include "bt/switch_hid.h"
+ #include "bt/bt_compat.h"
++/* W9DIAG */ #include "diag_rec.h"
+ 
+ // ---- 蜑肴署繝斐Φ繝ｻ騾溷ｺｦ (spec ﾂｧ2: 譌｢螳・GP4/5繝ｻUART1繝ｻ1Mbps) ----
+ #define LOG_UART      uart0
+@@ -462,6 +466,7 @@ static void flush_outbox(void) {
+ 
+ // ---------------- Core0: 1ms tick (pull/pack/drain/FX/flush/usb/neutral) ----------------
+ static void poll_tick(uint32_t now) {
++    diag_rec_stage(W9ST_POLL_ENTER); /* W9DIAG: poll entered. */
+     bcon_shared_t cp;
+     uint8_t pb[3];
+     bool advanced;
+@@ -495,6 +500,7 @@ static void poll_tick(uint32_t now) {
+         // STATE諡貞凄繧貞性繧)縲ゅ％縺薙〒縺ｯCONFIG遲峨・fx/ob縺ｮ縺ｿ謇ｱ縺・・         (void)v3_on_frame(&g_vs, cur.type, cur.payload, cur.len, cur.seq);
+     }
++    diag_rec_stage(W9ST_POLL_BODY_DONE); /* W9DIAG: inbox drained. */
+     exec_fx(now);
+     flush_outbox();
+ 
+@@ -552,12 +558,15 @@ static void poll_tick(uint32_t now) {
+     usb_wired_task(now);
+     link_poll(now);
+     watchdog_update();
++    diag_rec_stage(W9ST_WDT_UPDATE_DONE); /* W9DIAG: watchdog fed. */
+     if (s_reboot_at != 0u && (int32_t)(now - s_reboot_at) >= 0) {
+         probe_line("rebooting to apply WIRED_MODE...");
+         sleep_ms(50);
+         watchdog_reboot(0, 0, 0);
+         while (1) tight_loop_contents();
+     }
++    diag_rec_stage(W9ST_POLL_TAIL_DONE); /* W9DIAG */
++    diag_rec_stage(W9ST_POLL_RETURN_IMMINENT); /* W9DIAG: about to return. */
+ }
+ // ---------------- Core0: BTstack timers ----------------
+ static uint8_t hid_service_buffer[700];
+@@ -604,24 +613,40 @@ static void stats_print(void) {
+ }
+ 
+ static void stats_handler(btstack_timer_source_t *ts) {
++    diag_rec_timer(W9TMR_STATS, W9TA_FIRE, 0u); /* W9DIAG: stats_timer fired. */
++    diag_rec_tmr_svc(W9TMR_STATS); /* W9DIAG: last-BTstack-timer-service stamp. */
+     stats_print();
+     btstack_run_loop_set_timer(ts, 1000);
+     btstack_run_loop_add_timer(ts);
++    diag_rec_timer(W9TMR_STATS, W9TA_ADD, (uint32_t)ts->timeout); /* W9DIAG: stats_timer re-armed. */
+ }
+ 
+ static void usb_handler(btstack_timer_source_t *ts) {
++    diag_rec_timer(W9TMR_USB, W9TA_FIRE, 0u); /* W9DIAG: usb_timer fired. */
++    diag_rec_tmr_svc(W9TMR_USB); /* W9DIAG: last-BTstack-timer-service stamp. */
++    diag_rec_stage(W9ST_USB_HANDLER_ENTER); /* W9DIAG */
+     poll_tick(to_ms_since_boot(get_absolute_time()));
++    diag_rec_stage(W9ST_POLL_RETURNED); /* W9DIAG: poll_tick returned. */
++    diag_rec_loop_sample(to_ms_since_boot(get_absolute_time())); /* W9DIAG: 2s-crumb: timer list + IRQ. */
+     btstack_run_loop_set_timer(ts, 1);
++    diag_rec_stage(W9ST_SET_TIMER_DONE); /* W9DIAG */
+     btstack_run_loop_add_timer(ts);
++    diag_rec_timer(W9TMR_USB, W9TA_ADD, (uint32_t)ts->timeout); /* W9DIAG: usb_timer re-armed. */
++    diag_rec_stage(W9ST_ADD_TIMER_DONE); /* W9DIAG */
++    diag_rec_stage(W9ST_USB_HANDLER_RETURN_IMMINENT); /* W9DIAG */
+ }
+ 
+ static void empty_handler(btstack_timer_source_t *ts) {
++    diag_rec_timer(W9TMR_EMPTY, W9TA_FIRE, 0u); /* W9DIAG: empty_timer fired. */
++    diag_rec_tmr_svc(W9TMR_EMPTY); /* W9DIAG: last-BTstack-timer-service stamp. */
+     if (probe_hid_cid != 0u) {
+         // 騾∽ｿ｡繧ｲ繝ｼ繝郁ｩｦ鬨薙・邨ゆｺ・(辟｡鄂ｪ遒ｺ螳壹・縺溘ａ蠕ｩ蟶ｰ)縲５LV蛛懈ｭ｢縺ｮ縺ｿ邯咏ｶ壹・         hid_device_request_can_send_now_event(probe_hid_cid);
++        diag_rec_tx_req(); /* W9DIAG: hci TX request liveness. */
+     }
+     btstack_run_loop_set_timer(ts, probe_send_interval_ms());
+     btstack_run_loop_add_timer(ts);
++    diag_rec_timer(W9TMR_EMPTY, W9TA_ADD, (uint32_t)ts->timeout); /* W9DIAG: empty_timer re-armed. */
+ }
+ 
+ // ---------------- Core0: BT packet handlers (wakecon蜷檎ｭ・ ----------------
+@@ -713,6 +738,12 @@ static void handle_hid_meta(uint8_t *packet) {
+                 snprintf(msg, sizeof(msg), "hid open. host %s saved",
+                          bd_addr_to_str(a));
+                 probe_line(msg);
++                { /* W9DIAG: D-gate one-shot forced BCHO write (same gate in A and B). */
++                /* W9DIAG */ uint32_t w9gen = diag_rec_force_fire();
++                /* W9DIAG */ store_host_force(a);
++                /* W9DIAG */ snprintf(msg, sizeof(msg), "w9fire var=D gen=%lu", (unsigned long)w9gen);
++                /* W9DIAG */ probe_line(msg);
++                /* W9DIAG */ }
+             }
+             link_mark_connected();
+             break;
+@@ -724,6 +755,7 @@ static void handle_hid_meta(uint8_t *packet) {
+             break;
+         case HID_SUBEVENT_CAN_SEND_NOW:
+             probe_can_send_now();
++            diag_rec_tx_grant(); /* W9DIAG: hci TX grant liveness. */
+             break;
+         default:
+             snprintf(msg, sizeof(msg), "hid sub=0x%02x", sub);
+@@ -738,6 +770,7 @@ static void packet_handler(uint8_t packet_type, uint16_t channel,
+     (void)channel;
+     (void)size;
+     ev = hci_event_packet_get_type(packet);
++    diag_rec_ev(ev); /* W9DIAG: last HCI event byte (RX liveness). */
+     // LE 蛻・妙縺ｯ Classic 蛛ｴ縺ｮ蜃ｦ逅・∈關ｽ縺ｨ縺輔↑縺・・     if (ev == HCI_EVENT_DISCONNECTION_COMPLETE &&
+         link_is_le(hci_event_disconnection_complete_get_connection_handle(
+@@ -851,6 +884,118 @@ static void wired_loop(void) {
+     }
+ }
+ 
++/* W9DIAG: link-key-db shim (wrapper layer only; no BTstack/SDK edits). */
++/* W9DIAG: Forwards all 9 methods to the TLV instance; counts put/delete. */
++/* W9DIAG: Static storage; exact signatures from btstack_link_key_db.h. */
++static const btstack_link_key_db_t *w9_lk_inner; /* W9DIAG */
++/* W9DIAG */ static void w9_lk_open(void) { w9_lk_inner->open(); }
++/* W9DIAG */ static void w9_lk_set_local_bd_addr(bd_addr_t bd_addr) { w9_lk_inner->set_local_bd_addr(bd_addr); }
++/* W9DIAG */ static void w9_lk_close(void) { w9_lk_inner->close(); }
++/* W9DIAG */ static int w9_lk_get(bd_addr_t bd_addr, link_key_t link_key, link_key_type_t *type) { return w9_lk_inner->get_link_key(bd_addr, link_key, type); }
++/* W9DIAG */ static void w9_lk_put(bd_addr_t bd_addr, link_key_t link_key, link_key_type_t type) { uint32_t w9_t0 = time_us_32(); diag_rec_flash(W9OP_LK_PUT, W9PH_BEGIN, 0u, 0u); w9_lk_inner->put_link_key(bd_addr, link_key, type); diag_rec_flash(W9OP_LK_PUT, W9PH_END, 0u, time_us_32() - w9_t0); }
++/* W9DIAG */ static void w9_lk_del(bd_addr_t bd_addr) { uint32_t w9_t0 = time_us_32(); diag_rec_flash(W9OP_LK_DEL, W9PH_BEGIN, 0u, 0u); w9_lk_inner->delete_link_key(bd_addr); diag_rec_flash(W9OP_LK_DEL, W9PH_END, 0u, time_us_32() - w9_t0); }
++/* W9DIAG */ static int w9_lk_iter_init(btstack_link_key_iterator_t *it) { return w9_lk_inner->iterator_init(it); }
++/* W9DIAG */ static int w9_lk_iter_next(btstack_link_key_iterator_t *it, bd_addr_t bd_addr, link_key_t link_key, link_key_type_t *type) { return w9_lk_inner->iterator_get_next(it, bd_addr, link_key, type); }
++/* W9DIAG */ static void w9_lk_iter_done(btstack_link_key_iterator_t *it) { w9_lk_inner->iterator_done(it); }
++/* W9DIAG */ static const btstack_link_key_db_t w9_lk_shim = {
++/* W9DIAG */     .open = w9_lk_open,
++/* W9DIAG */     .set_local_bd_addr = w9_lk_set_local_bd_addr,
++/* W9DIAG */     .close = w9_lk_close,
++/* W9DIAG */     .get_link_key = w9_lk_get,
++/* W9DIAG */     .put_link_key = w9_lk_put,
++/* W9DIAG */     .delete_link_key = w9_lk_del,
++/* W9DIAG */     .iterator_init = w9_lk_iter_init,
++/* W9DIAG */     .iterator_get_next = w9_lk_iter_next,
++/* W9DIAG */     .iterator_done = w9_lk_iter_done,
++/* W9DIAG */ };
++/* W9DIAG: SINGLE boot-dump block, epoch-linked: 9a S-trail, D-gate gen, outer-return-to-2s crumbs. */
++/* W9DIAG: Prints via probe_line; the recorder itself never prints. */
++/* W9DIAG: *-boot lines = current-minus-baseline (this boot only). */
++/* W9DIAG: w8flash-total / w8tmr-total keep the literal W8 cumulative formats (U3/U5 continuity). */
++/* W9DIAG: w9loop: us = last post-poll sample; tmr_n = OTHER pending timers (own usb_timer excluded); */
++/* W9DIAG: next_to = ms until next timeout (-1 = empty); first_to = head timeout tick; trunc = walk capped. */
++/* W9DIAG: pm/bp = PRIMASK/BASEPRI (0/0 = IRQs open). s12_* = snapshot at S12 (2s-window entry). */
++/* W9DIAG */ static void w9_boot_dump(void) {
++/* W9DIAG */     const w9_state_t *s = diag_rec_state();
++/* W9DIAG */     char w9m[160];
++/* W9DIAG */     if (!diag_rec_valid()) {
++/* W9DIAG */         probe_line("w9rec invalid (fresh boot; ring reset)");
++/* W9DIAG */         return;
++/* W9DIAG */     }
++/* W9DIAG */     probe_line("w9var A-control double-wrap");
++/* W9DIAG */     snprintf(w9m, sizeof(w9m), "w9epoch post=%lu current=%lu",
++/* W9DIAG */              (unsigned long)s->post_epoch, (unsigned long)s->boot_epoch);
++/* W9DIAG */     probe_line(w9m);
++/* W9DIAG */     snprintf(w9m, sizeof(w9m), "w8flash-total safe=%lu/%lu tag=%lu/%lu del=%lu/%lu lkput=%lu/%lu lkdel=%lu/%lu",
++/* W9DIAG */              (unsigned long)s->begins[W9OP_STORE_SAFE], (unsigned long)s->ends[W9OP_STORE_SAFE],
++/* W9DIAG */              (unsigned long)s->begins[W9OP_STORE_TAG], (unsigned long)s->ends[W9OP_STORE_TAG],
++/* W9DIAG */              (unsigned long)s->begins[W9OP_DELETE_TAG], (unsigned long)s->ends[W9OP_DELETE_TAG],
++/* W9DIAG */              (unsigned long)s->begins[W9OP_LK_PUT], (unsigned long)s->ends[W9OP_LK_PUT],
++/* W9DIAG */              (unsigned long)s->begins[W9OP_LK_DEL], (unsigned long)s->ends[W9OP_LK_DEL]);
++/* W9DIAG */     probe_line(w9m);
++/* W9DIAG */     snprintf(w9m, sizeof(w9m), "w9flash-boot safe=%lu/%lu tag=%lu/%lu del=%lu/%lu lkput=%lu/%lu lkdel=%lu/%lu",
++/* W9DIAG */              (unsigned long)(s->begins[W9OP_STORE_SAFE] - s->base_begins[W9OP_STORE_SAFE]), (unsigned long)(s->ends[W9OP_STORE_SAFE] - s->base_ends[W9OP_STORE_SAFE]),
++/* W9DIAG */              (unsigned long)(s->begins[W9OP_STORE_TAG] - s->base_begins[W9OP_STORE_TAG]), (unsigned long)(s->ends[W9OP_STORE_TAG] - s->base_ends[W9OP_STORE_TAG]),
++/* W9DIAG */              (unsigned long)(s->begins[W9OP_DELETE_TAG] - s->base_begins[W9OP_DELETE_TAG]), (unsigned long)(s->ends[W9OP_DELETE_TAG] - s->base_ends[W9OP_DELETE_TAG]),
++/* W9DIAG */              (unsigned long)(s->begins[W9OP_LK_PUT] - s->base_begins[W9OP_LK_PUT]), (unsigned long)(s->ends[W9OP_LK_PUT] - s->base_ends[W9OP_LK_PUT]),
++/* W9DIAG */              (unsigned long)(s->begins[W9OP_LK_DEL] - s->base_begins[W9OP_LK_DEL]), (unsigned long)(s->ends[W9OP_LK_DEL] - s->base_ends[W9OP_LK_DEL]));
++/* W9DIAG */     probe_line(w9m);
++/* W9DIAG */     snprintf(w9m, sizeof(w9m), "w9last store tag=%lx epoch=%lu rc=%ld dur=%lu",
++/* W9DIAG */              (unsigned long)s->last_tag[W9OP_STORE_SAFE],
++/* W9DIAG */              (unsigned long)s->last_epoch[W9OP_STORE_SAFE],
++/* W9DIAG */              (long)s->last_rc[W9OP_STORE_SAFE],
++/* W9DIAG */              (unsigned long)s->last_dur[W9OP_STORE_SAFE]);
++/* W9DIAG */     probe_line(w9m);
++/* W9DIAG */     snprintf(w9m, sizeof(w9m), "w9last delete tag=%lx epoch=%lu rc=%ld dur=%lu",
++/* W9DIAG */              (unsigned long)s->last_tag[W9OP_DELETE_TAG],
++/* W9DIAG */              (unsigned long)s->last_epoch[W9OP_DELETE_TAG],
++/* W9DIAG */              (long)s->last_rc[W9OP_DELETE_TAG],
++/* W9DIAG */              (unsigned long)s->last_dur[W9OP_DELETE_TAG]);
++/* W9DIAG */     probe_line(w9m);
++/* W9DIAG */     snprintf(w9m, sizeof(w9m), "w8tmr-total usb a=%lu f=%lu to=%lu empty a=%lu f=%lu to=%lu stats a=%lu f=%lu to=%lu",
++/* W9DIAG */              (unsigned long)s->tmr_add[W9TMR_USB], (unsigned long)s->tmr_fire[W9TMR_USB],
++/* W9DIAG */              (unsigned long)s->tmr_to[W9TMR_USB],
++/* W9DIAG */              (unsigned long)s->tmr_add[W9TMR_EMPTY], (unsigned long)s->tmr_fire[W9TMR_EMPTY],
++/* W9DIAG */              (unsigned long)s->tmr_to[W9TMR_EMPTY],
++/* W9DIAG */              (unsigned long)s->tmr_add[W9TMR_STATS], (unsigned long)s->tmr_fire[W9TMR_STATS],
++/* W9DIAG */              (unsigned long)s->tmr_to[W9TMR_STATS]);
++/* W9DIAG */     probe_line(w9m);
++/* W9DIAG */     snprintf(w9m, sizeof(w9m), "w9tmr-boot usb a=%lu f=%lu empty a=%lu f=%lu stats a=%lu f=%lu",
++/* W9DIAG */              (unsigned long)(s->tmr_add[W9TMR_USB] - s->base_tmr_add[W9TMR_USB]), (unsigned long)(s->tmr_fire[W9TMR_USB] - s->base_tmr_fire[W9TMR_USB]),
++/* W9DIAG */              (unsigned long)(s->tmr_add[W9TMR_EMPTY] - s->base_tmr_add[W9TMR_EMPTY]), (unsigned long)(s->tmr_fire[W9TMR_EMPTY] - s->base_tmr_fire[W9TMR_EMPTY]),
++/* W9DIAG */              (unsigned long)(s->tmr_add[W9TMR_STATS] - s->base_tmr_add[W9TMR_STATS]), (unsigned long)(s->tmr_fire[W9TMR_STATS] - s->base_tmr_fire[W9TMR_STATS]));
++/* W9DIAG */     probe_line(w9m);
++/* W9DIAG */     snprintf(w9m, sizeof(w9m), "w9stage last=%lu n=%lu trail=%u,%u,%u,%u,%u,%u,%u,%u",
++/* W9DIAG */              (unsigned long)s->stage_last, (unsigned long)s->stage_n,
++/* W9DIAG */              s->stage_trail[0], s->stage_trail[1], s->stage_trail[2], s->stage_trail[3],
++/* W9DIAG */              s->stage_trail[4], s->stage_trail[5], s->stage_trail[6], s->stage_trail[7]);
++/* W9DIAG */     probe_line(w9m);
++/* W9DIAG */     snprintf(w9m, sizeof(w9m), "w9opstage last=S%lu n=%lu trail=%u,%u,%u,%u,%u,%u,%u,%u",
++/* W9DIAG */              (unsigned long)s->opstage_last, (unsigned long)s->opstage_n,
++/* W9DIAG */              s->opstage_trail[0], s->opstage_trail[1], s->opstage_trail[2], s->opstage_trail[3],
++/* W9DIAG */              s->opstage_trail[4], s->opstage_trail[5], s->opstage_trail[6], s->opstage_trail[7]);
++/* W9DIAG */     probe_line(w9m);
++/* W9DIAG */     snprintf(w9m, sizeof(w9m), "w9force gen=%lu n=%lu",
++/* W9DIAG */              (unsigned long)s->force_gen, (unsigned long)s->force_n);
++/* W9DIAG */     probe_line(w9m);
++/* W9DIAG */     snprintf(w9m, sizeof(w9m), "w9tmrsvc usb=%lu empty=%lu stats=%lu",
++/* W9DIAG */              (unsigned long)s->svc_us[W9TMR_USB],
++/* W9DIAG */              (unsigned long)s->svc_us[W9TMR_EMPTY],
++/* W9DIAG */              (unsigned long)s->svc_us[W9TMR_STATS]);
++/* W9DIAG */     probe_line(w9m);
++/* W9DIAG */     snprintf(w9m, sizeof(w9m), "w9loop us=%lu tmr_n=%lu next_to=%ld first_to=%lu trunc=%lu pm=%lu bp=%lu",
++/* W9DIAG */              (unsigned long)s->loop_us, (unsigned long)s->loop_tmr_n,
++/* W9DIAG */              (long)s->loop_next_to, (unsigned long)s->loop_first_to,
++/* W9DIAG */              (unsigned long)s->loop_trunc, (unsigned long)s->loop_pm, (unsigned long)s->loop_bp);
++/* W9DIAG */     probe_line(w9m);
++/* W9DIAG */     snprintf(w9m, sizeof(w9m), "w9s12 us=%lu pm=%lu bp=%lu",
++/* W9DIAG */              (unsigned long)s->s12_us, (unsigned long)s->s12_pm, (unsigned long)s->s12_bp);
++/* W9DIAG */     probe_line(w9m);
++/* W9DIAG */     snprintf(w9m, sizeof(w9m), "w9hci rx_n=%lu rx_last=0x%02lx tx_req=%lu tx_grant=%lu",
++/* W9DIAG */              (unsigned long)s->ev_n, (unsigned long)s->ev_last,
++/* W9DIAG */              (unsigned long)s->tx_req, (unsigned long)s->tx_grant);
++/* W9DIAG */     probe_line(w9m);
++/* W9DIAG */ }
+ // ---------------- Core0 main ----------------
+ int main(void) {
+     hid_sdp_record_t hid_params = {
+@@ -874,6 +1019,7 @@ int main(void) {
+ 
+     // WDT蠕ｩ蟶ｰ縺ｮ險倬鹸 (STATUS bit3)縲Ｆnable蜑阪・蛟､繧定ｪｭ繧縲・     s_wdt_recovered = watchdog_caused_reboot();
++    diag_rec_init(); /* W9DIAG: flight recorder (continues across WDT reboot; epoch+baseline). */
+ 
+     // 閾ｪMAC: OUI 7C:BB:8A・丘nique譛ｫ蟆ｾ (wakecon link_init縺ｨ蜷御ｸ)縲・     link_init();
+@@ -895,8 +1041,8 @@ int main(void) {
+         tlv_impl = btstack_tlv_flash_bank_init_instance(
+             &tlv_bank_ctx, pico_flash_bank_instance(), NULL);
+         btstack_tlv_set_instance(tlv_impl, &tlv_bank_ctx);
+-        hci_set_link_key_db(
+-            btstack_link_key_db_tlv_get_instance(tlv_impl, &tlv_bank_ctx));
++        w9_lk_inner = btstack_link_key_db_tlv_get_instance(tlv_impl, &tlv_bank_ctx); /* W9DIAG: shim target. */
++        hci_set_link_key_db(&w9_lk_shim); /* W9DIAG: counted shim (was direct TLV instance). */
+         printf("tlv=%d\n", (tlv_impl != NULL) ? 1 : 0);
+     }
+ 
+@@ -908,6 +1054,7 @@ int main(void) {
+     printf("wired=%d(wdef=%d) host=%d cap=%d wdt=%d\n", s_wired ? 1 : 0, WIRED_DEFAULT,
+            probe_host_known ? 1 : 0, probe_cap_valid ? 1 : 0,
+            s_wdt_recovered ? 1 : 0);
++    w9_boot_dump(); /* W9DIAG: single epoch-linked dump block (boot context only). */
+ 
+     mutex_init(&g_m);
+     memset(&g_s, 0, sizeof(g_s));
+@@ -992,6 +1139,8 @@ int main(void) {
+     hci_events.callback = &packet_handler;
+     hci_add_event_handler(&hci_events);
+ 
++    /* W9DIAG: hci_dump (W6-proven inert; comparability). */ hci_dump_init(hci_dump_embedded_stdout_get_instance());
++    /* W9DIAG */ hci_dump_enable_packet_log(true);
+     hci_set_bd_addr(probe_addr);
+     usb_wired_pump();
+ 
+@@ -1003,14 +1152,17 @@ int main(void) {
+     btstack_run_loop_set_timer_handler(&stats_timer, &stats_handler);
+     btstack_run_loop_set_timer(&stats_timer, 1000);
+     btstack_run_loop_add_timer(&stats_timer);
++    diag_rec_timer(W9TMR_STATS, W9TA_ADD, (uint32_t)stats_timer.timeout); /* W9DIAG: stats_timer armed. */
+ 
+     btstack_run_loop_set_timer_handler(&usb_timer, &usb_handler);
+     btstack_run_loop_set_timer(&usb_timer, 1);
+     btstack_run_loop_add_timer(&usb_timer);
++    diag_rec_timer(W9TMR_USB, W9TA_ADD, (uint32_t)usb_timer.timeout); /* W9DIAG: usb_timer armed. */
+ 
+     btstack_run_loop_set_timer_handler(&empty_timer, &empty_handler);
+     btstack_run_loop_set_timer(&empty_timer, 100);
+     btstack_run_loop_add_timer(&empty_timer);
++    diag_rec_timer(W9TMR_EMPTY, W9TA_ADD, (uint32_t)empty_timer.timeout); /* W9DIAG: empty_timer armed. */
+ 
+     btstack_run_loop_set_timer_handler(&reconnect_timer,
+                                        &link_reconnect_handler);

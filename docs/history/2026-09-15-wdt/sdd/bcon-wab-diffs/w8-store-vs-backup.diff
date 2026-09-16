@@ -1,0 +1,49 @@
+﻿diff --git "a/C:\\Users\\moilo\\AppData\\Local\\Temp\\opencode\\bcon-wab\\backups\\w8\\store.c.bak" b/src/bt/store.c
+index 2ffb710..6ef448c 100644
+--- "a/C:\\Users\\moilo\\AppData\\Local\\Temp\\opencode\\bcon-wab\\backups\\w8\\store.c.bak"
++++ b/src/bt/store.c
+@@ -9,6 +9,8 @@
+ #include "link.h"
+ #include "store.h"
+ #include "bt_compat.h"
++#include "pico/time.h" /* W8DIAG: time_us_32 for flash-op durations. */
++#include "diag_rec.h" /* W8DIAG: flash-op counters. REMOVE with all W8DIAG. */
+ 
+ #define TAG_HOST 0x4243484Fu  /* 'BCHO' */
+ #define TAG_COLOR 0x4243434Cu /* 'BCCL' */
+@@ -40,7 +42,10 @@ typedef struct {
+ static void tag_store_fn(void *param)
+ {
+     tag_store_op_t *op = (tag_store_op_t *)param;
++    uint32_t w8_t0 = time_us_32(); /* W8DIAG: program-op timing. */
++    diag_rec_flash(W8OP_STORE_TAG, W8PH_BEGIN, op->tag, op->len); /* W8DIAG */
+     op->rc = op->tlv->store_tag(op->ctx, op->tag, op->data, op->len);
++    diag_rec_flash(W8OP_STORE_TAG, W8PH_END, (uint32_t)op->rc, time_us_32() - w8_t0); /* W8DIAG */
+ }
+ 
+ typedef struct {
+@@ -52,7 +57,10 @@ typedef struct {
+ static void tag_delete_fn(void *param)
+ {
+     tag_delete_op_t *op = (tag_delete_op_t *)param;
++    uint32_t w8_t0 = time_us_32(); /* W8DIAG: delete-op timing. */
++    diag_rec_flash(W8OP_DELETE_TAG, W8PH_BEGIN, op->tag, 0u); /* W8DIAG */
+     op->tlv->delete_tag(op->ctx, op->tag);
++    diag_rec_flash(W8OP_DELETE_TAG, W8PH_END, 0u, time_us_32() - w8_t0); /* W8DIAG: void return, rc n/a. */
+ }
+ 
+ static int tag_store_safe(const btstack_tlv_t *tlv, void *ctx, uint32_t tag,
+@@ -65,9 +73,13 @@ static int tag_store_safe(const btstack_tlv_t *tlv, void *ctx, uint32_t tag,
+     op.data = data;
+     op.len = len;
+     op.rc = -1;
++    uint32_t w8_t0 = time_us_32(); /* W8DIAG: safe-op timing. */
++    diag_rec_flash(W8OP_STORE_SAFE, W8PH_BEGIN, tag, len); /* W8DIAG */
+     if (flash_safe_execute(tag_store_fn, &op, UINT32_MAX) != PICO_OK) {
++        diag_rec_flash(W8OP_STORE_SAFE, W8PH_END, 0xFFFFFFFFu, time_us_32() - w8_t0); /* W8DIAG: safe_execute refused. */
+         return -1;
+     }
++    diag_rec_flash(W8OP_STORE_SAFE, W8PH_END, (uint32_t)op.rc, time_us_32() - w8_t0); /* W8DIAG */
+     return op.rc;
+ }
+ 

@@ -1,0 +1,9 @@
+# W10DIAG: TEMP diagnostic — linker --wrap intercepts for the 4-point HAL breadcrumbs. # W10DIAG
+# W10DIAG: Included from CMakeLists.txt; delete this file together with all W10DIAG hunks. # W10DIAG
+target_link_options(pico-bcon PRIVATE # W10DIAG
+  -Wl,--wrap=flash_safe_execute # W10DIAG: P2 boundary (rc/dur of the safe-execute) # W10DIAG
+  -Wl,--wrap=multicore_lockout_start_timeout_us # W10DIAG: P1/P2 lockout request-ack # W10DIAG
+  -Wl,--wrap=multicore_lockout_end_timeout_us # W10DIAG: lockout end (counter only) # W10DIAG
+  -Wl,--wrap=flash_range_program # W10DIAG: P3/P4 ROM program # W10DIAG
+  -Wl,--wrap=flash_range_erase # W10DIAG: P3/P4 ROM erase (bank erase path) # W10DIAG
+) # W10DIAG

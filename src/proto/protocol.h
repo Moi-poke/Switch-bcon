@@ -8,7 +8,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define PROTO_VER          0x03
+#define PROTO_VER          0x04
 #define PROTO_SYNC         0xAB
 
 #define PROTO_MAX_PAYLOAD  32
@@ -16,7 +16,8 @@
 #define PROTO_ACC_SIZE     96
 
 enum {
-    T_STATE         = 0x01, // PC->Pico LEN=8 BTN u32 + LX LY RX RY
+    T_STATE         = 0x01, // PC->Pico LEN=8 BTN u32 + LX LY RX RY (u8x4, center 0x80)
+                             //        or LEN=12 BTN u32 + LX LY RX RY (u16LEx4, center 0x0800)
     T_NEUTRAL       = 0x02, // PC->Pico LEN=0
     T_PING          = 0x03, // PC->Pico LEN=0
     T_HELLO         = 0x10, // PC->Pico LEN=2 ver, flags
@@ -24,6 +25,7 @@ enum {
     T_STATUS        = 0x20, // Pico->PC LEN=7 flags, last, crc16, drop16, err
     T_PONG          = 0x21, // Pico->PC LEN=1 echo of PING seq
     T_RUMBLE        = 0x22, // Pico->PC LEN=2 amp L/R (reserved v1)
+    T_PLAYER_INFO   = 0x23, // Pico->PC LEN=2 lamp+flags
     T_CAPTURE_START = 0x30, // PC->Pico LEN=1 seconds 1-60
     T_BEACON_START  = 0x31, // PC->Pico LEN=0
     T_COLOR_SET     = 0x32, // PC->Pico LEN=12 RGB x4
@@ -85,11 +87,12 @@ enum {
     ST_UART_OVERRUN    = 1u << 4,
     ST_WIRED_MODE      = 1u << 5,
     ST_BT_CONNECTED    = 1u << 6,
+    ST_RUMBLE_SEEN     = 1u << 7, // 前回STATUS以降の振動受信あり
 };
 
 typedef struct {
     uint32_t buttons; // BTN_* bitmap
-    uint8_t  lx, ly, rx, ry; // 0..255, center 0x80
+    uint16_t lx, ly, rx, ry; // 0..4095, center 0x800 (LEN=8 ingest is u8<<4)
 } ctrl_state_t;
 
 typedef struct {
@@ -104,6 +107,10 @@ uint8_t crc8(const uint8_t *data, size_t len);
 
 // Expected payload length for a known type, or -1 if variable/unknown.
 int proto_expected_len(uint8_t type);
+
+// T_STATE accepts LEN 8 (legacy u8x4 sticks) or LEN 12 (u16LEx4 sticks).
+// The canonical length reported by proto_expected_len stays 8.
+bool proto_state_len_ok(uint8_t plen);
 
 typedef void (*frame_cb_t)(uint8_t type, const uint8_t *payload, uint8_t len,
                            uint8_t seq, void *user);

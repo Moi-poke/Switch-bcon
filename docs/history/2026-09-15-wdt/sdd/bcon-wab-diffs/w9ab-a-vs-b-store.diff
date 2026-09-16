@@ -1,0 +1,51 @@
+﻿diff --git "a/C:\\Users\\moilo\\AppData\\Local\\Temp\\wab-store-a.c" "b/src\\bt\\store.c"
+index cabfe0c..56be459 100644
+--- "a/C:\\Users\\moilo\\AppData\\Local\\Temp\\wab-store-a.c"
++++ "b/src\\bt\\store.c"
+@@ -67,6 +67,12 @@ static void tag_delete_fn(void *param)
+     diag_rec_flash(W9OP_DELETE_TAG, W9PH_END, 0u, time_us_32() - w9_t0); /* W9DIAG: void return, rc n/a. */
+ }
+ 
++/* W9DIAG: W9-B trial: outer flash_safe_execute REMOVED from store + delete paths (HAL inner coverage only). */
++/* W9DIAG: KNOWN granularity change (disclosed): atomicity shrinks from whole-op to per-page; the HAL lockout is */
++/* W9DIAG: released between pages. Partial-write signatures, if any, must be reported separately. */
++/* W9DIAG: Safety case: SDK src/rp2_common/pico_btstack/btstack_flash_bank.c:82 (erase) and :170 (page-program */
++/* W9DIAG: loop) wrap every HAL mutation in an inner flash_safe_execute; reads are XIP memcpy; the TLV delete */
++/* W9DIAG: path programs zeros through pico_flash_bank_write, i.e. equally covered. */
+ static int tag_store_safe(const btstack_tlv_t *tlv, void *ctx, uint32_t tag,
+                           const uint8_t *data, uint32_t len)
+ {
+@@ -80,12 +86,9 @@ static int tag_store_safe(const btstack_tlv_t *tlv, void *ctx, uint32_t tag,
+     uint32_t w9_t0 = time_us_32(); /* W9DIAG: safe-op timing. */
+     diag_rec_opstage(W9S_S0); /* W9DIAG: S0 tag_store_safe enter. */
+     diag_rec_flash(W9OP_STORE_SAFE, W9PH_BEGIN, tag, len); /* W9DIAG */
+-    diag_rec_opstage(W9S_S1); /* W9DIAG: S1 immediately before outer flash_safe_execute. */
+-    if (flash_safe_execute(tag_store_fn, &op, UINT32_MAX) != PICO_OK) { /* W9DIAG: W9-A keeps the outer wrap (control). */
+-        diag_rec_flash(W9OP_STORE_SAFE, W9PH_END, 0xFFFFFFFFu, time_us_32() - w9_t0); /* W9DIAG: safe_execute refused. */
+-        return -1;
+-    }
+-    diag_rec_opstage(W9S_S12); /* W9DIAG: S12 immediately after outer flash_safe_execute returns. */
++    diag_rec_opstage(W9S_S1); /* W9DIAG: S1 pre-direct-call (no outer wrap in W9-B). */
++    tag_store_fn(&op); /* W9DIAG: W9-B trial: DIRECT call, outer flash_safe_execute REMOVED (HAL inner only). */
++    diag_rec_opstage(W9S_S12); /* W9DIAG: S12 post-direct-call return. */
+     diag_rec_s12(w9_rd_primask(), w9_rd_basepri()); /* W9DIAG: outer-return IRQ snapshot (2s-window entry). */
+     diag_rec_flash(W9OP_STORE_SAFE, W9PH_END, (uint32_t)op.rc, time_us_32() - w9_t0); /* W9DIAG */
+     return op.rc;
+@@ -137,7 +140,7 @@ void store_host_forget(void)
+     op.tlv = tlv;
+     op.ctx = ctx;
+     op.tag = TAG_HOST;
+-    (void)flash_safe_execute(tag_delete_fn, &op, UINT32_MAX);
++    tag_delete_fn(&op); /* W9DIAG: W9-B trial: DIRECT call, outer wrap REMOVED (HAL inner only). */
+     probe_host_known = false;
+ }
+ 
+@@ -230,7 +233,7 @@ void store_cap_forget(void)
+     op.tlv = tlv;
+     op.ctx = ctx;
+     op.tag = TAG_CAP;
+-    (void)flash_safe_execute(tag_delete_fn, &op, UINT32_MAX);
++    tag_delete_fn(&op); /* W9DIAG: W9-B trial: DIRECT call, outer wrap REMOVED (HAL inner only). */
+ }
+ 
+ /* 譛臥ｷ壹Δ繝ｼ繝我ｿ晄戟縲りｵｷ蜍墓凾縺ｫ蠕ｩ蜈・＠縲・崕豕｢繧剃ｸ翫￡繧句燕縺ｫ USB 蜈郁｡後〒蛻玲嫌縺輔○繧九・*/

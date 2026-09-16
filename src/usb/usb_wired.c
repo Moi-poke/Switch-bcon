@@ -15,8 +15,9 @@
 
 /* 入力状態の所有元は main.c。読みのみ。 */
 extern uint8_t bcon_btn[3];
-extern uint8_t bcon_lx, bcon_ly, bcon_rx, bcon_ry;
+extern uint16_t bcon_lx, bcon_ly, bcon_rx, bcon_ry;
 extern uint8_t bcon_mac[6]; /* 応答順 (main.cで反転済み) */
+extern uint32_t bcon_usb_rumble_n; /* 所有元main.c。USB振動0x10受信累計 */
 
 #define USB_WIRED_REPORT_ID_INPUT 0x30u
 #define USB_WIRED_INPUT_LEN 64u
@@ -293,7 +294,11 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
         }
         pend_resp_id = 0x21u;
         pend_resp_valid = true;
-    } else if (req[0] != 0x10u) {
+    } else if (req[0] == 0x10u) {
+        /* 振動のみ (Step 2: ACK＋破棄し計数のみ。v1はPCへ転送しない)。
+         * TinyUSBがACKするためここでは何も返さない。STATUS bit7の源。 */
+        bcon_usb_rumble_n++;
+    } else {
         /* 0x80/0x01/0x10 以外は応答なし。未知 ID は計数だけ残す。 */
         wired_stats.unk_id = req[0];
         wired_stats.unk_len = (uint8_t)(req_len > 255 ? 255 : req_len);
@@ -309,7 +314,7 @@ void tud_mount_cb(void)
 
 /* 抜線で handshake を落とす。次セッションは 80 04 からやり直し。
  * 送信ゲートが閉じるため古い入力は出ない (unmount中立化)。
- * 共有u32の陳腐化は timeout-neutral (Task 4) が扱う。 */
+ * 共有u32の陳腐化は timeout-neutral が扱う。 */
 void tud_umount_cb(void)
 {
     wired_stats.unmount++;

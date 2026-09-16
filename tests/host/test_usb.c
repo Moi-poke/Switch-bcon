@@ -18,7 +18,7 @@ static void pack_btn(uint32_t b, uint8_t o[3]) {
     ctrl_state_t st;
     memset(&st, 0, sizeof(st));
     st.buttons = b;
-    st.lx = st.ly = st.rx = st.ry = 0x80;
+    st.lx = st.ly = st.rx = st.ry = 0x800;
     ctrl_pack_btn3(&st, o);
 }
 
@@ -75,15 +75,26 @@ int main(void) {
     pack_btn(0xFFFFFFFFu, o);
     CHECK(o[0] == 0xCF && o[1] == 0x3F && o[2] == 0xCF, "all-bits packed shape");
 
-    printf("[3] stick 8bit -> 12bit pack\n");
+    printf("[3] stick 12bit pack (legacy u8<<4 inputs)\n");
     {
         uint8_t s[3];
-        pack_stick_12bit(0x80, 0x80, s);
+        pack_stick_12bit(0x800, 0x800, s);
         CHECK(s[0] == 0x00 && s[1] == 0x08 && s[2] == 0x80, "center -> 0x800/0x800");
-        pack_stick_12bit(0x00, 0x00, s);
+        pack_stick_12bit(0x000, 0x000, s);
         CHECK(s[0] == 0x00 && s[1] == 0xF0 && s[2] == 0xFF, "min -> x=0/y=4095");
-        pack_stick_12bit(0xFF, 0xFF, s);
+        pack_stick_12bit(0xFF0, 0xFF0, s);
         CHECK(s[0] == 0xF0 && s[1] == 0x0F && s[2] == 0x01, "max -> x=0xFF0/y=0x010");
+    }
+
+    printf("[3b] stick 12bit direct (STATE LEN=12 path)\n");
+    {
+        uint8_t s[3];
+        pack_stick_12bit(0x800, 0x800, s);
+        CHECK(s[0] == 0x00 && s[1] == 0x08 && s[2] == 0x80, "12bit center -> 0x800/0x800");
+        pack_stick_12bit(0xABC, 0x123, s);
+        CHECK(s[0] == 0xBC && s[1] == 0xDA && s[2] == 0xED, "12bit mid -> BC DA ED");
+        pack_stick_12bit(0xFFF, 0xFFF, s);
+        CHECK(s[0] == 0xFF && s[1] == 0x1F && s[2] == 0x00, "12bit max -> FF 1F 00");
     }
 
     printf("[4] 81 handshake replies are 64B zero-padded\n");
@@ -109,7 +120,7 @@ int main(void) {
         uint8_t out[64];
         uint8_t req[16];
         memset(&ctx, 0, sizeof(ctx));
-        ctx.lx = ctx.ly = ctx.rx = ctx.ry = 0x80;
+        ctx.lx = ctx.ly = ctx.rx = ctx.ry = 0x800;
         memset(req, 0, sizeof(req));
         req[0] = 0x01; req[10] = 0x02;
         memcpy(ctx.mac, (const uint8_t[]){1, 2, 3, 4, 5, 6}, 6);
@@ -121,8 +132,11 @@ int main(void) {
         memset(req, 0, sizeof(req));
         req[0] = 0x01; req[10] = 0x10; req[11] = 0x50; req[12] = 0x60; req[15] = 12;
         n = usb_build_21_reply(req, 16, out, 64, &ctx);
-        CHECK(n == 64 && out[13] == 0x90 && out[14] == 0x10 && out[19] == 12 &&
-              out[20] == 0x82 && out[21] == 0x82, "10 SPI color 6050");
+         CHECK(n == 64 && out[13] == 0x90 && out[14] == 0x10 && out[19] == 12 &&
+               out[20] == 0x82 && out[21] == 0x82 &&
+               out[26] == 0x46 && out[27] == 0x46 && out[28] == 0x46 &&
+               out[29] == 0xFF && out[30] == 0xFF && out[31] == 0xFF,
+               "10 SPI color 6050 (L/R differ)");
         // SPI serial area 0x6000 answers 0xFF (2162-0002 avoidance).        memset(req, 0, sizeof(req));
         req[0] = 0x01; req[10] = 0x10; req[11] = 0x00; req[12] = 0x60; req[15] = 16;
         n = usb_build_21_reply(req, 16, out, 64, &ctx);
@@ -154,7 +168,7 @@ int main(void) {
         uint8_t out[64];
         memset(&ctx, 0, sizeof(ctx));
         ctx.btn[0] = 0x08; ctx.btn[1] = 0x02; ctx.btn[2] = 0x40 | 0x10;
-        ctx.lx = ctx.ly = ctx.rx = ctx.ry = 0x80;
+        ctx.lx = ctx.ly = ctx.rx = ctx.ry = 0x800;
         ctx.timer = 0x5A;
         int n = usb_build_30_report(&ctx, out);
         CHECK(n == 64 && out[0] == 0x30 && out[1] == 0x5A && out[2] == 0x91 &&
@@ -185,11 +199,11 @@ int main(void) {
             usb_sub_ctx_t ctx;
             uint8_t rep[64];
             cst.buttons = BTN_A;
-            cst.lx = cst.ly = cst.rx = cst.ry = 0x80;
+            cst.lx = cst.ly = cst.rx = cst.ry = 0x800;
             ctrl_pack_btn3(&cst, b3);
             memset(&ctx, 0, sizeof(ctx));
             ctx.btn[0] = b3[0]; ctx.btn[1] = b3[1]; ctx.btn[2] = b3[2];
-            ctx.lx = ctx.ly = ctx.rx = ctx.ry = 0x80;
+            ctx.lx = ctx.ly = ctx.rx = ctx.ry = 0x800;
             usb_build_30_report(&ctx, rep);
             CHECK((rep[3] & 0x08) != 0, "A reaches USB byte0 bit3");
         }

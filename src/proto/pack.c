@@ -28,9 +28,9 @@ void ctrl_pack_btn3(const ctrl_state_t *st, uint8_t out3[3]) {
     out3[2] = b2;
 }
 
-void pack_stick_12bit(uint8_t x8, uint8_t y8, uint8_t out3[3]) {
-    uint16_t x = (uint16_t)x8 << 4;
-    uint16_t y = (uint16_t)4096 - ((uint16_t)y8 << 4);
+void pack_stick_12bit(uint16_t x12, uint16_t y12, uint8_t out3[3]) {
+    uint16_t x = x12 & 0x0FFFu;
+    uint16_t y = (uint16_t)(4096u - (y12 & 0x0FFFu));
     if (y > 4095u) y = 4095u;
     out3[0] = (uint8_t)(x & 0xFFu);
     out3[1] = (uint8_t)(((x >> 8) & 0x0Fu) | ((y & 0x0Fu) << 4));

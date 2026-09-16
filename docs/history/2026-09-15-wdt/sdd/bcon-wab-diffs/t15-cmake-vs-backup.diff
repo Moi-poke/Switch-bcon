@@ -1,0 +1,32 @@
+﻿diff --git "a/C:\\Users\\moilo\\AppData\\Local\\Temp\\opencode\\bcon-wab\\backups\\t15\\CMakeLists.txt.bak" "b/C:\\pico-bcon\\CMakeLists.txt"
+index 58b746f..619e7a0 100644
+--- "a/C:\\Users\\moilo\\AppData\\Local\\Temp\\opencode\\bcon-wab\\backups\\t15\\CMakeLists.txt.bak"
++++ "b/C:\\pico-bcon\\CMakeLists.txt"
+@@ -35,6 +35,9 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
+   # WIRED_DEFAULT: TLV譛ｪ菫晏ｭ俶凾縺ｮ襍ｷ蜍輔Δ繝ｼ繝・(1=譛臥ｷ壽里螳・縲・   # 辟｡邱夊ｵｷ蜍輔・隧ｦ鬨捺凾縺ｯ -DWIRED_DEFAULT=0 縺ｧ蛻･讒区・縺吶ｋ縲・   set(WIRED_DEFAULT 1 CACHE STRING "Default boot mode when TLV unwritten (1=wired)")
++  # W10DIAG: TEMP diagnostic 窶・cap for HAL flash_safe_execute timeout (0=unchanged,
++  # W10DIAG: e.g. 100). NOT a permanent fix; remove with all W10DIAG hunks.
++  set(W10_TIMEOUT_MS 0 CACHE STRING "W10DIAG: HAL flash_safe_execute timeout cap in ms (0=off)")
+   add_executable(poc_dualcore
+     src/poc_dualcore/main.c
+     src/poc_dualcore/poc_usb.c
+@@ -98,6 +101,7 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
+     src/bt/link_beacon.c
+     src/bt/cap.c
+     src/bt/store.c
++    src/w10_diag.c # W10DIAG: TEMP HAL breadcrumb recorder (remove with all W10DIAG)
+   )
+ 
+   pico_set_program_name(pico-bcon "pico-bcon")
+@@ -136,8 +140,11 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
+     CFG_TUSB_OS=OPT_OS_PICO
+     POC_DATA_BAUD=${POC_DATA_BAUD}
+     WIRED_DEFAULT=${WIRED_DEFAULT}
++    W10_TIMEOUT_MS=${W10_TIMEOUT_MS} # W10DIAG: TEMP (remove with all W10DIAG)
+   )
+ 
++  # W10DIAG: TEMP --wrap intercepts for the 4-point HAL breadcrumbs (see w10diag.cmake). Remove with all W10DIAG.
++  include(${CMAKE_CURRENT_LIST_DIR}/w10diag.cmake) # W10DIAG
+   pico_add_extra_outputs(pico-bcon)
+ else()
+   project(pico-bcon-hostonly C)

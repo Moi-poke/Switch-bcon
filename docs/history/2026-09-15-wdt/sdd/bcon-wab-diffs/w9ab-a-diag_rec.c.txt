@@ -1,0 +1,212 @@
+/* W9DIAG: recorder implementation — entire file is W9-only (see diag_rec.h). */ /* W9DIAG */
+/* W9DIAG: Core0-only writer. No printf, no flash writes, no mutex, no IRQ. */ /* W9DIAG */
+#include "diag_rec.h" /* W9DIAG */
+#include <string.h> /* W9DIAG */
+#include "pico/stdlib.h" /* W9DIAG: time_us_32. */ /* W9DIAG */
+#include "hardware/structs/watchdog.h" /* W9DIAG: scratch mirror. */ /* W9DIAG */
+#include "btstack_run_loop.h" /* W9DIAG: PUBLIC timer-list head + next-timeout accessor. */ /* W9DIAG */
+#include "btstack_linked_list.h" /* W9DIAG: PUBLIC list-node type for the read-only walk. */ /* W9DIAG */
+/* W9DIAG: the ring itself. NOLOAD => crt0 leaves it alone => survives WDT reboot. */ /* W9DIAG */
+/* W9DIAG: No initializer here (NOLOAD memory is never zero-filled by startup). */ /* W9DIAG */
+/* W9DIAG */ static w9_state_t w9_state __attribute__((section(".uninitialized_data")));
+/* W9DIAG: FNV-1a/32 over the whole state with the crc word forced to zero. */ /* W9DIAG */
+/* W9DIAG */ static uint32_t w9_crc(void) {
+/* W9DIAG */     const uint8_t *p = (const uint8_t *)&w9_state;
+/* W9DIAG */     size_t i, n = sizeof(w9_state);
+/* W9DIAG */     size_t co = offsetof(w9_state_t, crc);
+/* W9DIAG */     uint32_t h = 2166136261u;
+/* W9DIAG */     for (i = 0; i < n; i++) {
+/* W9DIAG */         uint8_t b = (i >= co && i < co + sizeof(uint32_t)) ? 0u : p[i];
+/* W9DIAG */         h = (h ^ b) * 16777619u;
+/* W9DIAG */     }
+/* W9DIAG */     return h;
+/* W9DIAG */ }
+/* W9DIAG: mirror packed index+CRC into scratch[1] (low16 = slot, high16 = crc). */ /* W9DIAG */
+/* W9DIAG */ static void w9_mirror_index(void) {
+/* W9DIAG */     uint32_t slot = w9_state.idx % W9_NRING;
+/* W9DIAG */     watchdog_hw->scratch[W9_SCR_INDEX] = ((w9_state.crc >> 16) << 16) | slot;
+/* W9DIAG */ }
+/* W9DIAG: mirror boot epoch into scratch[3] (u32, debugger-visible). */ /* W9DIAG */
+/* W9DIAG */ static void w9_mirror_epoch(void) {
+/* W9DIAG */     watchdog_hw->scratch[W9_SCR_EPOCH] = w9_state.boot_epoch;
+/* W9DIAG */ }
+/* W9DIAG: commit one entry + refresh CRC + index mirror. */ /* W9DIAG */
+/* W9DIAG */ static void w9_push(uint16_t kind, uint16_t a1, uint32_t a2, uint32_t a3) {
+/* W9DIAG */     w9_entry_t *e = &w9_state.ring[w9_state.idx % W9_NRING];
+/* W9DIAG */     e->ts = time_us_32();
+/* W9DIAG */     e->kind = kind;
+/* W9DIAG */     e->a1 = a1;
+/* W9DIAG */     e->a2 = a2;
+/* W9DIAG */     e->a3 = a3;
+/* W9DIAG */     w9_state.idx++;
+/* W9DIAG */     w9_state.n++;
+/* W9DIAG */     w9_state.crc = w9_crc();
+/* W9DIAG */     w9_mirror_index();
+/* W9DIAG */ }
+/* W9DIAG: refresh CRC without pushing (for counter-only updates at 1ms cadence). */ /* W9DIAG */
+/* W9DIAG */ static void w9_touch(void) {
+/* W9DIAG */     w9_state.crc = w9_crc();
+/* W9DIAG */ }
+/* W9DIAG: strict init order per brief: validate previous-boot content first, */ /* W9DIAG */
+/* W9DIAG: keep its epoch as post_epoch, bump epoch into scratch[3], then */ /* W9DIAG */
+/* W9DIAG: snapshot the boot baseline before any timer arm or flash op. */ /* W9DIAG */
+/* W9DIAG: (WDT-reason flag is read first in main.c, before this call.) */ /* W9DIAG */
+/* W9DIAG */ void diag_rec_init(void) {
+/* W9DIAG */     uint8_t i;
+/* W9DIAG */     bool ok = (w9_state.magic == W9_MAGIC) && (w9_state.ver == W9_VER);
+/* W9DIAG */     if (ok) {
+/* W9DIAG */         ok = (w9_state.crc == w9_crc());
+/* W9DIAG */     }
+/* W9DIAG */     if (ok) {
+/* W9DIAG */         w9_state.post_epoch = w9_state.boot_epoch;
+/* W9DIAG */     } else {
+/* W9DIAG */         memset(&w9_state, 0, sizeof(w9_state));
+/* W9DIAG */         w9_state.magic = W9_MAGIC;
+/* W9DIAG */         w9_state.ver = W9_VER;
+/* W9DIAG */         w9_state.post_epoch = 0u;
+/* W9DIAG */     }
+/* W9DIAG */     w9_state.boot_epoch = w9_state.post_epoch + 1u;
+/* W9DIAG */     w9_state.base_epoch = w9_state.boot_epoch;
+/* W9DIAG */     for (i = 0u; i < 6u; i++) {
+/* W9DIAG */         w9_state.base_begins[i] = w9_state.begins[i];
+/* W9DIAG */         w9_state.base_ends[i] = w9_state.ends[i];
+/* W9DIAG */     }
+/* W9DIAG */     for (i = 0u; i < 4u; i++) {
+/* W9DIAG */         w9_state.base_tmr_add[i] = w9_state.tmr_add[i];
+/* W9DIAG */         w9_state.base_tmr_fire[i] = w9_state.tmr_fire[i];
+/* W9DIAG */     }
+/* W9DIAG */     w9_state.crc = w9_crc();
+/* W9DIAG */     watchdog_hw->scratch[W9_SCR_MAGIC] = W9_MAGIC;
+/* W9DIAG */     w9_mirror_index();
+/* W9DIAG */     w9_mirror_epoch();
+/* W9DIAG */ }
+/* W9DIAG */ void diag_rec_stage(uint8_t st) {
+/* W9DIAG */     uint8_t i;
+/* W9DIAG */     w9_state.stage_last = st;
+/* W9DIAG */     for (i = 0; i < 7; i++) {
+/* W9DIAG */         w9_state.stage_trail[i] = w9_state.stage_trail[i + 1];
+/* W9DIAG */     }
+/* W9DIAG */     w9_state.stage_trail[7] = st;
+/* W9DIAG */     w9_state.stage_n++;
+/* W9DIAG */     watchdog_hw->scratch[W9_SCR_STAGE] = st;
+/* W9DIAG */     w9_push(W9K_STAGE, st, w9_state.stage_n, 0u);
+/* W9DIAG */ }
+/* W9DIAG: 9a S-stage record into the dedicated S-only trail (poll traffic immune). */ /* W9DIAG */
+/* W9DIAG: Also mirrors 100+s to scratch[2] (disjoint from poll ids 1..10) and */ /* W9DIAG */
+/* W9DIAG: pushes a ring entry (a1 = 100+s) for full time ordering. */ /* W9DIAG */
+/* W9DIAG */ void diag_rec_opstage(uint8_t s) {
+/* W9DIAG */     uint8_t i;
+/* W9DIAG */     w9_state.opstage_last = s;
+/* W9DIAG */     for (i = 0; i < 7; i++) {
+/* W9DIAG */         w9_state.opstage_trail[i] = w9_state.opstage_trail[i + 1];
+/* W9DIAG */     }
+/* W9DIAG */     w9_state.opstage_trail[7] = s;
+/* W9DIAG */     w9_state.opstage_n++;
+/* W9DIAG */     watchdog_hw->scratch[W9_SCR_STAGE] = (uint32_t)(W9S_RING_BASE + s);
+/* W9DIAG */     w9_push(W9K_STAGE, (uint16_t)(W9S_RING_BASE + s), w9_state.opstage_n, 0u);
+/* W9DIAG */ }
+/* W9DIAG: FLASH record also stamps last_epoch[op] = current boot epoch. */ /* W9DIAG */
+/* W9DIAG */ void diag_rec_flash(uint8_t op, uint8_t phase, uint32_t a2, uint32_t a3) {
+/* W9DIAG */     uint16_t a1;
+/* W9DIAG */     if (op > 5u) {
+/* W9DIAG */         op = 0u;
+/* W9DIAG */     }
+/* W9DIAG */     a1 = (uint16_t)(((uint16_t)op << 1) | (phase & 1u));
+/* W9DIAG */     if (phase == W9PH_BEGIN) {
+/* W9DIAG */         w9_state.begins[op]++;
+/* W9DIAG */         w9_state.last_tag[op] = a2;
+/* W9DIAG */         w9_state.last_epoch[op] = w9_state.boot_epoch;
+/* W9DIAG */     } else {
+/* W9DIAG */         w9_state.ends[op]++;
+/* W9DIAG */         w9_state.last_rc[op] = (int32_t)a2;
+/* W9DIAG */         w9_state.last_dur[op] = a3;
+/* W9DIAG */         w9_state.last_epoch[op] = w9_state.boot_epoch;
+/* W9DIAG */     }
+/* W9DIAG */     w9_push(W9K_FLASH, a1, a2, a3);
+/* W9DIAG */ }
+/* W9DIAG */ void diag_rec_timer(uint8_t id, uint8_t act, uint32_t timeout_ms) {
+/* W9DIAG */     uint16_t a1;
+/* W9DIAG */     if (id > 3u) {
+/* W9DIAG */         id = 0u;
+/* W9DIAG */     }
+/* W9DIAG */     a1 = (uint16_t)(((uint16_t)id << 2) | (act & 3u));
+/* W9DIAG */     if (act == W9TA_ADD) {
+/* W9DIAG */         w9_state.tmr_add[id]++;
+/* W9DIAG */         w9_state.tmr_to[id] = timeout_ms;
+/* W9DIAG */     } else if (act == W9TA_REMOVE) {
+/* W9DIAG */         w9_state.tmr_rem[id]++;
+/* W9DIAG */     } else {
+/* W9DIAG */         w9_state.tmr_fire[id]++;
+/* W9DIAG */     }
+/* W9DIAG */     w9_push(W9K_TIMER, a1, timeout_ms, w9_state.tmr_fire[id]);
+/* W9DIAG */ }
+/* W9DIAG: last-BTstack-timer-service stamp (counter-only; the FIRE ring entry comes from diag_rec_timer). */ /* W9DIAG */
+/* W9DIAG */ void diag_rec_tmr_svc(uint8_t id) {
+/* W9DIAG */     if (id > 3u) {
+/* W9DIAG */         id = 0u;
+/* W9DIAG */     }
+/* W9DIAG */     w9_state.svc_us[id] = time_us_32();
+/* W9DIAG */     w9_touch();
+/* W9DIAG */ }
+/* W9DIAG: post-poll loop sample (2s-window liveness): PUBLIC timer-list head walk (capped, read-only) */ /* W9DIAG */
+/* W9DIAG: + PUBLIC next-timeout + IRQ snapshots. No ring push (1ms cadence would flood the ring). */ /* W9DIAG */
+/* W9DIAG: NOTE: our own usb_timer was already removed from the list before its callback runs, so */ /* W9DIAG */
+/* W9DIAG: loop_tmr_n counts the OTHER pending timers (BTstack-internal ones included). */ /* W9DIAG */
+/* W9DIAG */ void diag_rec_loop_sample(uint32_t now_ms) {
+/* W9DIAG */     btstack_linked_item_t *w9it = btstack_run_loop_base_timers;
+/* W9DIAG */     uint32_t w9n = 0u;
+/* W9DIAG */     w9_state.loop_us = time_us_32();
+/* W9DIAG */     w9_state.loop_trunc = 0u;
+/* W9DIAG */     w9_state.loop_first_to = 0u;
+/* W9DIAG */     while (w9it != NULL) {
+/* W9DIAG */         const btstack_timer_source_t *w9ts = (const btstack_timer_source_t *)w9it;
+/* W9DIAG */         if (w9n == 0u) {
+/* W9DIAG */             w9_state.loop_first_to = (uint32_t)w9ts->timeout;
+/* W9DIAG */         }
+/* W9DIAG */         w9n++;
+/* W9DIAG */         if (w9n >= W9_LOOP_WALK_CAP && w9it->next != NULL) {
+/* W9DIAG */             w9_state.loop_trunc = 1u;
+/* W9DIAG */             break;
+/* W9DIAG */         }
+/* W9DIAG */         w9it = w9it->next;
+/* W9DIAG */     }
+/* W9DIAG */     w9_state.loop_tmr_n = w9n;
+/* W9DIAG */     w9_state.loop_next_to = btstack_run_loop_base_get_time_until_timeout(now_ms);
+/* W9DIAG */     w9_state.loop_pm = w9_rd_primask();
+/* W9DIAG */     w9_state.loop_bp = w9_rd_basepri();
+/* W9DIAG */     w9_touch();
+/* W9DIAG */ }
+/* W9DIAG */ void diag_rec_tx_req(void) {
+/* W9DIAG */     w9_state.tx_req++;
+/* W9DIAG */     w9_touch();
+/* W9DIAG */ }
+/* W9DIAG */ void diag_rec_tx_grant(void) {
+/* W9DIAG */     w9_state.tx_grant++;
+/* W9DIAG */     w9_touch();
+/* W9DIAG */ }
+/* W9DIAG */ uint32_t diag_rec_force_fire(void) {
+/* W9DIAG */     w9_state.force_gen++;
+/* W9DIAG */     w9_state.force_n++;
+/* W9DIAG */     w9_push(W9K_FORCE, (uint16_t)(w9_state.force_gen & 0xFFFFu), w9_state.force_gen, w9_state.force_n);
+/* W9DIAG */     return w9_state.force_gen;
+/* W9DIAG */ }
+/* W9DIAG */ void diag_rec_s12(uint32_t primask, uint32_t basepri) {
+/* W9DIAG */     w9_state.s12_us = time_us_32();
+/* W9DIAG */     w9_state.s12_pm = primask;
+/* W9DIAG */     w9_state.s12_bp = basepri;
+/* W9DIAG */     w9_touch();
+/* W9DIAG */ }
+/* W9DIAG */ void diag_rec_ev(uint8_t ev) {
+/* W9DIAG */     w9_state.ev_last = ev;
+/* W9DIAG */     w9_state.ev_n++;
+/* W9DIAG */     w9_push(W9K_EV, ev, w9_state.ev_n, 0u);
+/* W9DIAG */ }
+/* W9DIAG */ bool diag_rec_valid(void) {
+/* W9DIAG */     if (w9_state.magic != W9_MAGIC || w9_state.ver != W9_VER) {
+/* W9DIAG */         return false;
+/* W9DIAG */     }
+/* W9DIAG */     return w9_state.crc == w9_crc();
+/* W9DIAG */ }
+/* W9DIAG */ const w9_state_t *diag_rec_state(void) {
+/* W9DIAG */     return &w9_state;
+/* W9DIAG */ }

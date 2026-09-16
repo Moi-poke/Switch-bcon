@@ -1,0 +1,40 @@
+﻿diff --git "a/C:\\Users\\moilo\\AppData\\Local\\Temp\\opencode\\bcon-wab\\backups\\fix-nest\\main.c.bak" "b/C:\\pico-bcon\\src\\main.c"
+index b0b9150..3f9b7d1 100644
+--- "a/C:\\Users\\moilo\\AppData\\Local\\Temp\\opencode\\bcon-wab\\backups\\fix-nest\\main.c.bak"
++++ "b/C:\\pico-bcon\\src\\main.c"
+@@ -569,8 +569,16 @@ static btstack_timer_source_t usb_timer;
+ static btstack_timer_source_t empty_timer;
+ static btstack_timer_source_t reconnect_timer;
+ 
++/* Death-B諱剃ｹ・ｯｾ遲悶・蜿ｯ隕ｳ貂ｬ諤ｧ: PRIMASK繧達CON縺ｫ蜃ｺ縺・(0=IRQ髢・縲Ｔtore蛛ｴguard縺ｨ蟇ｾ縲・*/
++static uint32_t pm_rd(void)
++{
++    uint32_t r;
++    __asm volatile ("mrs %0, primask" : "=r" (r) ::);
++    return r;
++}
++
+ static void stats_print(void) {
+-    char line[160];
++    char line[192];
+     usb_wired_stats_t ws;
+     bcon_shared_t cp;
+     mutex_enter_blocking(&g_m);
+@@ -581,7 +589,7 @@ static void stats_print(void) {
+              "BCON t=%lus hs=%d mnt=%d cid=%u wired=%d "
+              "cap=%d/%d/%d res=%d err=%02x rum=%lu+%lu "
+              "ibdrop=%lu obdrop=%u frames=%lu crc=%lu drop=%lu ovr=%lu "
+-             "rx80=%lu tx81=%lu tx21=%lu in30=%lu iters=%lu",
++             "rx80=%lu tx81=%lu tx21=%lu in30=%lu iters=%lu pm=%lu",
+              (unsigned long)(to_ms_since_boot(get_absolute_time()) / 1000),
+              usb_wired_handshake_done() ? 1 : 0,
+              usb_wired_is_configured() ? 1 : 0,
+@@ -596,7 +604,7 @@ static void stats_print(void) {
+              (unsigned long)cp.drop_ev, (unsigned long)cp.overruns,
+              (unsigned long)ws.rx80, (unsigned long)ws.tx81,
+              (unsigned long)ws.tx21, (unsigned long)ws.in30,
+-             (unsigned long)cp.iters);
++             (unsigned long)cp.iters, (unsigned long)pm_rd());
+     printf("%s\n", line);
+     if (g_vs.auto_status) {
+         send_status();

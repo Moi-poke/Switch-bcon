@@ -1,0 +1,36 @@
+﻿diff --git "a/C:\\Users\\moilo\\AppData\\Local\\Temp\\opencode\\bcon-wab\\backups\\w10\\main.c.bak" "b/C:\\pico-bcon\\src\\main.c"
+index b0b9150..4b40eec 100644
+--- "a/C:\\Users\\moilo\\AppData\\Local\\Temp\\opencode\\bcon-wab\\backups\\w10\\main.c.bak"
++++ "b/C:\\pico-bcon\\src\\main.c"
+@@ -41,6 +41,7 @@
+ #include "bt/cap.h"
+ #include "bt/switch_hid.h"
+ #include "bt/bt_compat.h"
++#include "w10_diag.h" // W10DIAG: TEMP HAL breadcrumb recorder (remove with all W10DIAG)
+ 
+ // ---- 蜑肴署繝斐Φ繝ｻ騾溷ｺｦ (spec ﾂｧ2: 譌｢螳・GP4/5繝ｻUART1繝ｻ1Mbps) ----
+ #define LOG_UART      uart0
+@@ -710,6 +711,13 @@ static void handle_hid_meta(uint8_t *packet) {
+                 bd_addr_t a;
+                 hid_subevent_connection_opened_get_bd_addr(packet, a);
+                 store_host(a);
++                { // W10DIAG: TEMP D-gate one-shot forced BCHO write (W9 recipe; remove with all W10DIAG)
++                    uint32_t w10g = w10_force_fire(); // W10DIAG
++                    store_host_force(a); // W10DIAG
++                    snprintf(msg, sizeof(msg), "w10fire var=D gen=%lu", // W10DIAG
++                             (unsigned long)w10g); // W10DIAG
++                    probe_line(msg); // W10DIAG
++                } // W10DIAG
+                 snprintf(msg, sizeof(msg), "hid open. host %s saved",
+                          bd_addr_to_str(a));
+                 probe_line(msg);
+@@ -866,6 +874,10 @@ int main(void) {
+     gpio_set_function(LOG_RX_PIN, GPIO_FUNC_UART);
+ 
+     printf("\n=== pico-bcon ===\n");
++    // W10DIAG: TEMP 窶・validate prev-boot HL breadcrumbs, then dump them BEFORE
++    // W10DIAG: TLV init/loads (which may themselves perform flash ops). Remove with all W10DIAG.
++    w10_init(); // W10DIAG
++    w10_dump(); // W10DIAG
+     // 豁｣隕乗焔谿ｵ縺ｧHardFault蝣ｱ蜻翫ｒ謗帙￠繧九・     exception_set_exclusive_handler(HARDFAULT_EXCEPTION, hardfault_reporter);
+     // 閾ｪ繧ｳ繧｢縺ｮMSPLIM (Core1蛛ｴ縺ｯcore1_entry縺ｧ)縲・

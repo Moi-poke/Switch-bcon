@@ -14,10 +14,11 @@ int usb_build_81_reply(const uint8_t *req, int req_len, uint8_t *out,
 bool usb_req_is_handshake(const uint8_t *req, int req_len);
 
 /* 0x01 サブコマンド応答 (64B の 0x21 レポート) の入力文脈。
- * btn は pack済み 3B、stick は PC 側 8bit 値、mac は自アドレス。 */
+ * btn は pack済み 3B、stick は 12bit 値（中央 0x800。LEN=8受信は取込時に<<4済み）、
+ * mac は自アドレス。 */
 typedef struct {
     uint8_t btn[3];
-    uint8_t lx, ly, rx, ry;
+    uint16_t lx, ly, rx, ry;
     uint8_t timer;
     uint8_t mac[6];
     uint8_t player;

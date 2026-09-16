@@ -1,0 +1,336 @@
+/* W10DIAG: W10 breadcrumb recorder (TEMP DIAGNOSTIC — MUST BE REVERTED). */ /* W10DIAG */
+/* W10DIAG: Core0-only writer. No printf inside hooks, no flash writes, no mutex, no IRQ. */ /* W10DIAG */
+/* W10DIAG: NOLOAD SRAM state survives WDT reset; magic+CRC validates it like W9 diag_rec. */ /* W10DIAG */
+/* W10C: TEMP extension (W10c): Death-B 2s-window crumbs (last timer service, 1ms loop */ /* W10C */
+/* W10C: sample with timer-list walk + IRQ state, poll-stage trail, HCI TX/RX liveness). */ /* W10C */
+#include "w10_diag.h" /* W10DIAG */
+#include <stdio.h> /* W10DIAG */
+#include <string.h> /* W10DIAG */
+#include "pico/stdlib.h" /* W10DIAG */
+#include "pico/time.h" /* W10DIAG: time_us_32. */ /* W10DIAG */
+#include "pico/flash.h" /* W10DIAG: __real_flash_safe_execute decl. */ /* W10DIAG */
+#include "pico/multicore.h" /* W10DIAG: __real_multicore_lockout_* decls. */ /* W10DIAG */
+#include "hardware/flash.h" /* W10DIAG: __real_flash_range_* decls. */ /* W10DIAG */
+#include "bt_compat.h" /* W10DIAG: probe_line (UART0 printf, main.c). */ /* W10DIAG */
+#include "btstack_run_loop.h" /* W10C: PUBLIC timer-list head + next-timeout accessor (W9-precedent; no tusb.h in this TU). */ /* W10C */
+#include "btstack_linked_list.h" /* W10C: PUBLIC list-node type for the read-only walk. */ /* W10C */
+
+#define W10_MAGIC 0x57443130u /* W10DIAG */
+#define W10_VER   3u /* W10C: layout same as W10c(2u) but fresh-epoch for task-15; cross-flash resets. */ /* W10C */
+#define W10_NRING 32u /* W10DIAG */
+
+enum { /* W10DIAG */
+    W10K_INIT = 1u, W10K_LK_REQ, W10K_LK_ACK, W10K_LK_END, /* W10DIAG */
+    W10K_FSE_OK, W10K_FSE_FAIL, /* W10DIAG */
+    W10K_ROMP_BEG, W10K_ROMP_END, W10K_ROME_BEG, W10K_ROME_END, /* W10DIAG */
+    W10K_FORCE /* W10DIAG */
+}; /* W10DIAG */
+
+#define W10_LOOP_WALK_CAP 16u /* W10C: read-only timer-list walk cap (W9-precedent). */ /* W10C */
+
+typedef struct { uint32_t ts, epoch, kind, a, b; } w10_ev_t; /* W10DIAG */
+
+typedef struct { /* W10DIAG */
+    uint32_t magic, ver, crc; /* W10DIAG */
+    uint32_t post_epoch, boot_epoch; /* W10DIAG */
+    uint32_t idx, n; /* W10DIAG */
+    w10_ev_t ring[W10_NRING]; /* W10DIAG */
+    uint32_t lk_req, lk_ack, lk_fail, lk_end; /* W10DIAG */
+    uint32_t fse_ok, fse_fail, fse_cap; /* W10DIAG */
+    uint32_t romp_beg, romp_end, rome_beg, rome_end; /* W10DIAG */
+    uint32_t force_gen, force_n; /* W10DIAG */
+    int32_t  last_rc; /* W10DIAG */
+    uint32_t last_dur; /* W10DIAG */
+    uint8_t  poll_last; /* W10C: last poll stage (W10S_*). */ /* W10C */
+    uint8_t  poll_trail[8]; /* W10C: last 8 poll stages (set at fixed points in poll_tick/usb_handler). */ /* W10C */
+    uint32_t poll_n; /* W10C */ /* W10C */
+    uint32_t loop_us; /* W10C: last post-poll 1ms sample (run-loop liveness proxy). */ /* W10C */
+    uint32_t loop_tmr_n; /* W10C: OTHER pending timers (own usb_timer already dequeued, W9-precedent). */ /* W10C */
+    int32_t  loop_next_to; /* W10C: ms until next timeout (-1 = empty). */ /* W10C */
+    uint32_t loop_first_to; /* W10C: head timeout tick. */ /* W10C */
+    uint8_t  loop_trunc; /* W10C: walk hit the cap (itself a corruption signal). */ /* W10C */
+    uint8_t  loop_pm; /* W10C: PRIMASK at sample (1 = IRQs masked). */ /* W10C */
+    uint8_t  loop_bp; /* W10C: BASEPRI at sample. */ /* W10C */
+    uint32_t svc_us[W10T_N]; /* W10C: last BTstack owned-timer FIRE stamp per timer. */ /* W10C */
+    uint32_t tmr_fire[W10T_N]; /* W10C */ /* W10C */
+    uint32_t tmr_add[W10T_N]; /* W10C */ /* W10C */
+    uint32_t tmr_to[W10T_N]; /* W10C: last re-arm interval per timer. */ /* W10C */
+    uint32_t tx_req; /* W10C: hid can-send-now requested. */ /* W10C */
+    uint32_t tx_grant; /* W10C: hid can-send-now granted. */ /* W10C */
+    uint32_t rx_n; /* W10C: HCI events seen in packet_handler. */ /* W10C */
+    uint8_t  rx_last; /* W10C: last HCI event byte. */ /* W10C */
+} w10_state_t; /* W10DIAG */
+
+static w10_state_t w10_s __attribute__((section(".uninitialized_data"))); /* W10DIAG */
+
+/* W10DIAG: FNV-1a/32 over the whole state with the crc word forced to zero. */ /* W10DIAG */
+static uint32_t w10_crc(void) { /* W10DIAG */
+    const uint8_t *p = (const uint8_t *)&w10_s; /* W10DIAG */
+    size_t i; /* W10DIAG */
+    uint32_t h = 2166136261u; /* W10DIAG */
+    size_t co = (size_t)((const uint8_t *)&w10_s.crc - p); /* W10DIAG */
+    for (i = 0; i < sizeof(w10_s); i++) { /* W10DIAG */
+        uint8_t b = (i >= co && i < co + sizeof(uint32_t)) ? 0u : p[i]; /* W10DIAG */
+        h = (h ^ b) * 16777619u; /* W10DIAG */
+    } /* W10DIAG */
+    return h; /* W10DIAG */
+} /* W10DIAG */
+
+/* W10C: refresh CRC without pushing (counter-only updates at 1ms cadence). */ /* W10C */
+static void w10_touch(void) { /* W10C */
+    w10_s.crc = w10_crc(); /* W10C */
+} /* W10C */
+
+void w10_ev(uint32_t kind, uint32_t a, uint32_t b) { /* W10DIAG */
+    w10_ev_t *e = &w10_s.ring[w10_s.idx % W10_NRING]; /* W10DIAG */
+    e->ts = time_us_32(); /* W10DIAG */
+    e->epoch = w10_s.boot_epoch; /* W10DIAG */
+    e->kind = kind; /* W10DIAG */
+    e->a = a; /* W10DIAG */
+    e->b = b; /* W10DIAG */
+    w10_s.idx++; /* W10DIAG */
+    w10_s.n++; /* W10DIAG */
+    w10_s.crc = w10_crc(); /* W10DIAG */
+} /* W10DIAG */
+
+void w10_init(void) { /* W10DIAG */
+    bool ok = (w10_s.magic == W10_MAGIC) && (w10_s.ver == W10_VER) && /* W10DIAG */
+              (w10_s.crc == w10_crc()); /* W10DIAG */
+    if (ok) { /* W10DIAG */
+        w10_s.post_epoch = w10_s.boot_epoch; /* W10DIAG */
+    } else { /* W10DIAG */
+        memset(&w10_s, 0, sizeof(w10_s)); /* W10DIAG */
+        w10_s.magic = W10_MAGIC; /* W10DIAG */
+        w10_s.ver = W10_VER; /* W10DIAG */
+        w10_s.post_epoch = 0u; /* W10DIAG */
+    } /* W10DIAG */
+    w10_s.boot_epoch = w10_s.post_epoch + 1u; /* W10DIAG */
+    w10_ev(W10K_INIT, 0u, 0u); /* W10DIAG */
+} /* W10DIAG */
+
+uint32_t w10_force_fire(void) { /* W10DIAG */
+    w10_s.force_gen++; /* W10DIAG */
+    w10_s.force_n++; /* W10DIAG */
+    w10_ev(W10K_FORCE, w10_s.force_gen, w10_s.force_n); /* W10DIAG */
+    return w10_s.force_gen; /* W10DIAG */
+} /* W10DIAG */
+
+/* W10C: ---- Death-B 2s-window mutators (counter/snapshot only, no ring push) ---- */ /* W10C */
+
+void w10_poll_stage(uint8_t st) { /* W10C */
+    uint8_t i; /* W10C */
+    w10_s.poll_last = st; /* W10C */
+    for (i = 0u; i < 7u; i++) { /* W10C */
+        w10_s.poll_trail[i] = w10_s.poll_trail[i + 1u]; /* W10C */
+    } /* W10C */
+    w10_s.poll_trail[7] = st; /* W10C */
+    w10_s.poll_n++; /* W10C */
+    w10_touch(); /* W10C */
+} /* W10C */
+
+void w10_tmr_svc(uint8_t id) { /* W10C */
+    if (id >= W10T_N) id = 0u; /* W10C */
+    w10_s.svc_us[id] = time_us_32(); /* W10C */
+    w10_s.tmr_fire[id]++; /* W10C */
+    w10_touch(); /* W10C */
+} /* W10C */
+
+void w10_tmr_add(uint8_t id, uint32_t timeout_ms) { /* W10C */
+    if (id >= W10T_N) id = 0u; /* W10C */
+    w10_s.tmr_add[id]++; /* W10C */
+    w10_s.tmr_to[id] = timeout_ms; /* W10C */
+    w10_touch(); /* W10C */
+} /* W10C */
+
+void w10_hci_ev(uint8_t ev) { /* W10C */
+    w10_s.rx_last = ev; /* W10C */
+    w10_s.rx_n++; /* W10C */
+    w10_touch(); /* W10C */
+} /* W10C */
+
+void w10_hci_tx_req(void) { /* W10C */
+    w10_s.tx_req++; /* W10C */
+    w10_touch(); /* W10C */
+} /* W10C */
+
+void w10_hci_tx_grant(void) { /* W10C */
+    w10_s.tx_grant++; /* W10C */
+    w10_touch(); /* W10C */
+} /* W10C */
+
+/* W10C: PRIMASK/BASEPRI snapshots: read-only mrs (exact __get_PRIMASK()/__get_BASEPRI() */ /* W10C */
+/* W10C: semantics, inline-asm so no header risk). 0/0 = IRQs open. */ /* W10C */
+static uint32_t w10c_rd_primask(void) { /* W10C */
+    uint32_t r; /* W10C */
+    __asm volatile ("mrs %0, primask" : "=r" (r) ::); /* W10C */
+    return r; /* W10C */
+} /* W10C */
+
+static uint32_t w10c_rd_basepri(void) { /* W10C */
+    uint32_t r; /* W10C */
+    __asm volatile ("mrs %0, basepri" : "=r" (r) ::); /* W10C */
+    return r; /* W10C */
+} /* W10C */
+
+/* W10C: post-poll 1ms sample (2s-window liveness): PUBLIC timer-list head walk (capped, */ /* W10C */
+/* W10C: read-only) + PUBLIC next-timeout + IRQ snapshots. No ring push (1ms cadence). */ /* W10C */
+/* W10C: NOTE: our own usb_timer was already removed from the list before its callback */ /* W10C */
+/* W10C: runs, so loop_tmr_n counts the OTHER pending timers (BTstack-internal included). */ /* W10C */
+void w10_loop_sample(uint32_t now_ms) { /* W10C */
+    btstack_linked_item_t *it = btstack_run_loop_base_timers; /* W10C */
+    uint32_t n = 0u; /* W10C */
+    w10_s.loop_us = time_us_32(); /* W10C */
+    w10_s.loop_trunc = 0u; /* W10C */
+    w10_s.loop_first_to = 0u; /* W10C */
+    while (it != NULL) { /* W10C */
+        const btstack_timer_source_t *ts = (const btstack_timer_source_t *)it; /* W10C */
+        if (n == 0u) { /* W10C */
+            w10_s.loop_first_to = (uint32_t)ts->timeout; /* W10C */
+        } /* W10C */
+        n++; /* W10C */
+        if (n >= W10_LOOP_WALK_CAP && it->next != NULL) { /* W10C */
+            w10_s.loop_trunc = 1u; /* W10C */
+            break; /* W10C */
+        } /* W10C */
+        it = it->next; /* W10C */
+    } /* W10C */
+    w10_s.loop_tmr_n = n; /* W10C */
+    w10_s.loop_next_to = btstack_run_loop_base_get_time_until_timeout(now_ms); /* W10C */
+    w10_s.loop_pm = (uint8_t)w10c_rd_primask(); /* W10C */
+    w10_s.loop_bp = (uint8_t)w10c_rd_basepri(); /* W10C */
+    w10_touch(); /* W10C */
+} /* W10C */
+
+void w10_dump(void) { /* W10DIAG */
+    char m[192]; /* W10DIAG */
+    uint32_t i; /* W10DIAG */
+    snprintf(m, sizeof(m), "w10epoch post=%lu current=%lu", /* W10DIAG */
+             (unsigned long)w10_s.post_epoch, (unsigned long)w10_s.boot_epoch); /* W10DIAG */
+    probe_line(m); /* W10DIAG */
+    snprintf(m, sizeof(m), /* W10DIAG */
+             "w10hal lk req=%lu ack=%lu fail=%lu end=%lu fse ok=%lu fail=%lu cap=%lu", /* W10DIAG */
+             (unsigned long)w10_s.lk_req, (unsigned long)w10_s.lk_ack, /* W10DIAG */
+             (unsigned long)w10_s.lk_fail, (unsigned long)w10_s.lk_end, /* W10DIAG */
+             (unsigned long)w10_s.fse_ok, (unsigned long)w10_s.fse_fail, /* W10DIAG */
+             (unsigned long)w10_s.fse_cap); /* W10DIAG */
+    probe_line(m); /* W10DIAG */
+    snprintf(m, sizeof(m), /* W10DIAG */
+             "w10rom p beg=%lu end=%lu e beg=%lu end=%lu last rc=%ld dur=%lu", /* W10DIAG */
+             (unsigned long)w10_s.romp_beg, (unsigned long)w10_s.romp_end, /* W10DIAG */
+             (unsigned long)w10_s.rome_beg, (unsigned long)w10_s.rome_end, /* W10DIAG */
+             (long)w10_s.last_rc, (unsigned long)w10_s.last_dur); /* W10DIAG */
+    probe_line(m); /* W10DIAG */
+    snprintf(m, sizeof(m), "w10ev n=%lu idx=%lu force gen=%lu n=%lu", /* W10DIAG */
+             (unsigned long)w10_s.n, (unsigned long)w10_s.idx, /* W10DIAG */
+             (unsigned long)w10_s.force_gen, (unsigned long)w10_s.force_n); /* W10DIAG */
+    probe_line(m); /* W10DIAG */
+    snprintf(m, sizeof(m), /* W10C */
+             "w10poll last=%lu n=%lu trail=%u,%u,%u,%u,%u,%u,%u,%u", /* W10C */
+             (unsigned long)w10_s.poll_last, (unsigned long)w10_s.poll_n, /* W10C */
+             w10_s.poll_trail[0], w10_s.poll_trail[1], w10_s.poll_trail[2], w10_s.poll_trail[3], /* W10C */
+             w10_s.poll_trail[4], w10_s.poll_trail[5], w10_s.poll_trail[6], w10_s.poll_trail[7]); /* W10C */
+    probe_line(m); /* W10C */
+    snprintf(m, sizeof(m), /* W10C */
+             "w10tmrsvc usb=%lu empty=%lu stats=%lu fire=%lu/%lu/%lu add=%lu/%lu/%lu", /* W10C */
+             (unsigned long)w10_s.svc_us[W10T_USB], (unsigned long)w10_s.svc_us[W10T_EMPTY], /* W10C */
+             (unsigned long)w10_s.svc_us[W10T_STATS], (unsigned long)w10_s.tmr_fire[W10T_USB], /* W10C */
+             (unsigned long)w10_s.tmr_fire[W10T_EMPTY], (unsigned long)w10_s.tmr_fire[W10T_STATS], /* W10C */
+             (unsigned long)w10_s.tmr_add[W10T_USB], (unsigned long)w10_s.tmr_add[W10T_EMPTY], /* W10C */
+             (unsigned long)w10_s.tmr_add[W10T_STATS]); /* W10C */
+    probe_line(m); /* W10C */
+    snprintf(m, sizeof(m), /* W10C */
+             "w10loop us=%lu tmr_n=%lu next_to=%ld first_to=%lu trunc=%lu pm=%lu bp=%lu", /* W10C */
+             (unsigned long)w10_s.loop_us, (unsigned long)w10_s.loop_tmr_n, /* W10C */
+             (long)w10_s.loop_next_to, (unsigned long)w10_s.loop_first_to, /* W10C */
+             (unsigned long)w10_s.loop_trunc, (unsigned long)w10_s.loop_pm, /* W10C */
+             (unsigned long)w10_s.loop_bp); /* W10C */
+    probe_line(m); /* W10C */
+    snprintf(m, sizeof(m), /* W10C */
+             "w10hci rx_n=%lu rx_last=0x%02lx tx_req=%lu tx_grant=%lu", /* W10C */
+             (unsigned long)w10_s.rx_n, (unsigned long)w10_s.rx_last, /* W10C */
+             (unsigned long)w10_s.tx_req, (unsigned long)w10_s.tx_grant); /* W10C */
+    probe_line(m); /* W10C */
+    for (i = 0u; i < W10_NRING; i++) { /* W10DIAG */
+        const w10_ev_t *e = &w10_s.ring[(w10_s.idx + i) % W10_NRING]; /* W10DIAG */
+        if (e->kind == 0u) continue; /* W10DIAG */
+        snprintf(m, sizeof(m), "w10e ep=%lu ts=%lu k=%lu a=0x%lx b=%lu", /* W10DIAG */
+                 (unsigned long)e->epoch, (unsigned long)e->ts, /* W10DIAG */
+                 (unsigned long)e->kind, (unsigned long)e->a, /* W10DIAG */
+                 (unsigned long)e->b); /* W10DIAG */
+        probe_line(m); /* W10DIAG */
+    } /* W10DIAG */
+} /* W10DIAG */
+
+/* W10DIAG: ---- --wrap intercepts (see w10diag.cmake) ---- */ /* W10DIAG */
+
+extern int __real_flash_safe_execute(void (*func)(void *), void *param, uint32_t timeout_ms); /* W10DIAG */
+extern bool __real_multicore_lockout_start_timeout_us(uint64_t timeout_us); /* W10DIAG */
+extern bool __real_multicore_lockout_end_timeout_us(uint64_t timeout_us); /* W10DIAG */
+extern void __real_flash_range_program(uint32_t flash_offs, const uint8_t *data, size_t count); /* W10DIAG */
+extern void __real_flash_range_erase(uint32_t flash_offs, size_t count); /* W10DIAG */
+
+/* W10DIAG: P2/P4 point A: flash_safe_execute wrapper. W10_TIMEOUT_MS>0 caps the HAL's */ /* W10DIAG */
+/* W10DIAG: UINT32_MAX timeout (diagnostic only; NOT a permanent fix). rc is recorded. */ /* W10DIAG */
+int __wrap_flash_safe_execute(void (*func)(void *), void *param, uint32_t timeout_ms) { /* W10DIAG */
+    uint32_t eff = timeout_ms; /* W10DIAG */
+#if W10_TIMEOUT_MS > 0 /* W10DIAG */
+    if (timeout_ms == UINT32_MAX) { /* W10DIAG */
+        eff = (uint32_t)W10_TIMEOUT_MS; /* W10DIAG */
+        w10_s.fse_cap++; /* W10DIAG */
+    } /* W10DIAG */
+#endif /* W10DIAG */
+    uint32_t t0 = time_us_32(); /* W10DIAG */
+    int rc = __real_flash_safe_execute(func, param, eff); /* W10DIAG */
+    uint32_t dur = time_us_32() - t0; /* W10DIAG */
+    w10_s.last_rc = (int32_t)rc; /* W10DIAG */
+    w10_s.last_dur = dur; /* W10DIAG */
+    if (rc == PICO_OK) { /* W10DIAG */
+        w10_s.fse_ok++; /* W10DIAG */
+        w10_ev(W10K_FSE_OK, (uint32_t)rc, dur); /* W10DIAG */
+    } else { /* W10DIAG */
+        w10_s.fse_fail++; /* W10DIAG */
+        w10_ev(W10K_FSE_FAIL, (uint32_t)rc, dur); /* W10DIAG */
+    } /* W10DIAG */
+    return rc; /* W10DIAG */
+} /* W10DIAG */
+
+/* W10DIAG: P1/P2: lockout request just before, ack just after (requester side). */ /* W10DIAG */
+bool __wrap_multicore_lockout_start_timeout_us(uint64_t timeout_us) { /* W10DIAG */
+    uint32_t inf = (timeout_us >= 1000000000ull) ? 1u : 0u; /* W10DIAG */
+    uint32_t ms = inf ? 0u : (uint32_t)(timeout_us / 1000ull); /* W10DIAG */
+    w10_s.lk_req++; /* W10DIAG */
+    w10_ev(W10K_LK_REQ, inf, ms); /* W10DIAG */
+    uint32_t t0 = time_us_32(); /* W10DIAG */
+    bool ok = __real_multicore_lockout_start_timeout_us(timeout_us); /* W10DIAG */
+    uint32_t dur = time_us_32() - t0; /* W10DIAG */
+    if (ok) w10_s.lk_ack++; else w10_s.lk_fail++; /* W10DIAG */
+    w10_ev(W10K_LK_ACK, ok ? 1u : 0u, dur); /* W10DIAG */
+    return ok; /* W10DIAG */
+} /* W10DIAG */
+
+bool __wrap_multicore_lockout_end_timeout_us(uint64_t timeout_us) { /* W10DIAG */
+    uint32_t t0 = time_us_32(); /* W10DIAG */
+    bool ok = __real_multicore_lockout_end_timeout_us(timeout_us); /* W10DIAG */
+    w10_s.lk_end++; /* W10DIAG */
+    w10_ev(W10K_LK_END, ok ? 1u : 0u, time_us_32() - t0); /* W10DIAG */
+    return ok; /* W10DIAG */
+} /* W10DIAG */
+
+/* W10DIAG: P3/P4: ROM (QMI program/erase) call just before / just after. */ /* W10DIAG */
+void __wrap_flash_range_program(uint32_t flash_offs, const uint8_t *data, size_t count) { /* W10DIAG */
+    w10_s.romp_beg++; /* W10DIAG */
+    w10_ev(W10K_ROMP_BEG, flash_offs, (uint32_t)count); /* W10DIAG */
+    uint32_t t0 = time_us_32(); /* W10DIAG */
+    __real_flash_range_program(flash_offs, data, count); /* W10DIAG */
+    w10_s.romp_end++; /* W10DIAG */
+    w10_ev(W10K_ROMP_END, flash_offs, time_us_32() - t0); /* W10DIAG */
+} /* W10DIAG */
+
+void __wrap_flash_range_erase(uint32_t flash_offs, size_t count) { /* W10DIAG */
+    w10_s.rome_beg++; /* W10DIAG */
+    w10_ev(W10K_ROME_BEG, flash_offs, (uint32_t)count); /* W10DIAG */
+    uint32_t t0 = time_us_32(); /* W10DIAG */
+    __real_flash_range_erase(flash_offs, count); /* W10DIAG */
+    w10_s.rome_end++; /* W10DIAG */
+    w10_ev(W10K_ROME_END, flash_offs, time_us_32() - t0); /* W10DIAG */
+} /* W10DIAG */

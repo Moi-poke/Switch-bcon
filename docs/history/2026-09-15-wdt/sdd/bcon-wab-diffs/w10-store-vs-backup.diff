@@ -1,0 +1,36 @@
+﻿diff --git "a/C:\\Users\\moilo\\AppData\\Local\\Temp\\opencode\\bcon-wab\\backups\\w10\\store.c.bak" "b/C:\\pico-bcon\\src\\bt\\store.c"
+index 2ffb710..1139fee 100644
+--- "a/C:\\Users\\moilo\\AppData\\Local\\Temp\\opencode\\bcon-wab\\backups\\w10\\store.c.bak"
++++ "b/C:\\pico-bcon\\src\\bt\\store.c"
+@@ -73,11 +73,11 @@ static int tag_store_safe(const btstack_tlv_t *tlv, void *ctx, uint32_t tag,
+ 
+ static uint32_t s_host_save_count;
+ 
+-void store_host(bd_addr_t addr)
+-{
++static void store_host_inner(const bd_addr_t addr, bool force) /* W10DIAG: force param (W9/diag D-gate) 窶・TEMP */
++{ /* W10DIAG */
+     const btstack_tlv_t *tlv = NULL;
+     void *ctx = NULL;
+-    if (probe_host_known && memcmp(probe_host_addr, addr, 6) == 0) {
++    if (!force && probe_host_known && memcmp(probe_host_addr, addr, 6) == 0) { /* W10DIAG: force bypasses dedupe */
+         return; /* unchanged: no flash wear, no timer risk */
+     }
+     if (!get_tlv(&tlv, &ctx)) {
+@@ -97,6 +97,16 @@ void store_host(bd_addr_t addr)
+     }
+ }
+ 
++void store_host(bd_addr_t addr) /* W10DIAG: thin wrapper (behavior unchanged) */
++{ /* W10DIAG */
++    store_host_inner(addr, false); /* W10DIAG */
++} /* W10DIAG */
++/* W10DIAG */
++void store_host_force(const bd_addr_t addr) /* W10DIAG: TEMP D-gate (dedupe bypass; payload = true peer addr) */
++{ /* W10DIAG */
++    store_host_inner(addr, true); /* W10DIAG */
++} /* W10DIAG */
++/* W10DIAG */
+ void store_host_forget(void)
+ {
+     const btstack_tlv_t *tlv = NULL;

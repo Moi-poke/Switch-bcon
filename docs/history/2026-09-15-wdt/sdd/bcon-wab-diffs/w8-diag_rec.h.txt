@@ -1,0 +1,113 @@
+/* W8DIAG: unified diagnostic flight recorder with epoch + boot baseline (W8). Entire file is W8-only. */
+/* W8DIAG: RAM ring in .uninitialized_data (NOLOAD: survives WDT reboot). */
+/* W8DIAG: Single-writer discipline: Core0 context only. No IRQ writes, */
+/* W8DIAG: no printf, no flash writes, no mutex. Deleted at W8 restore. */
+#pragma once /* W8DIAG */
+#include <stdint.h> /* W8DIAG */
+#include <stdbool.h> /* W8DIAG */
+#include <stddef.h> /* W8DIAG */
+#ifdef __cplusplus /* W8DIAG */
+extern "C" { /* W8DIAG */
+#endif /* W8DIAG */
+/* W8DIAG: recorder magic 0xD1A6nnnn (nnnn = format id 0008). */
+/* W8DIAG */ #define W8_MAGIC 0xD1A60008u
+/* W8DIAG */ #define W8_VER 8u
+/* W8DIAG */ #define W8_NRING 96u
+/* W8DIAG: watchdog scratch ownership: we use [0..3]; SDK owns [4..7]. */
+/* W8DIAG: [0]=magic/ver [1]=index+CRC [2]=stage mirror [3]=boot epoch. */
+/* W8DIAG: SDK [4..7] = watchdog_enable/reboot magic + pc/sp. Never touch. */
+/* W8DIAG */ #define W8_SCR_MAGIC 0
+/* W8DIAG */ #define W8_SCR_INDEX 1
+/* W8DIAG */ #define W8_SCR_STAGE 2
+/* W8DIAG */ #define W8_SCR_EPOCH 3
+/* W8DIAG: entry kinds. */
+/* W8DIAG */ #define W8K_FLASH 1u
+/* W8DIAG */ #define W8K_STAGE 2u
+/* W8DIAG */ #define W8K_TIMER 3u
+/* W8DIAG */ #define W8K_EV 4u
+/* W8DIAG: flash-op ids (FLASH entry a1 = (op<<1)|phase). */
+/* W8DIAG */ #define W8OP_STORE_SAFE 1u
+/* W8DIAG */ #define W8OP_STORE_TAG 2u
+/* W8DIAG */ #define W8OP_DELETE_TAG 3u
+/* W8DIAG */ #define W8OP_LK_PUT 4u
+/* W8DIAG */ #define W8OP_LK_DEL 5u
+/* W8DIAG */ #define W8PH_BEGIN 0u
+/* W8DIAG */ #define W8PH_END 1u
+/* W8DIAG: owned-timer ids (usb/empty/stats only; reconnect_timer untouched). */
+/* W8DIAG */ #define W8TMR_USB 1u
+/* W8DIAG */ #define W8TMR_EMPTY 2u
+/* W8DIAG */ #define W8TMR_STATS 3u
+/* W8DIAG */ #define W8TA_ADD 1u
+/* W8DIAG */ #define W8TA_REMOVE 2u
+/* W8DIAG */ #define W8TA_FIRE 3u
+/* W8DIAG: poll-vs-rearm stage chain (latest mirrored to scratch[2]). */
+/* W8DIAG */ #define W8ST_POLL_ENTER 1u
+/* W8DIAG */ #define W8ST_POLL_BODY_DONE 2u
+/* W8DIAG */ #define W8ST_WDT_UPDATE_DONE 3u
+/* W8DIAG */ #define W8ST_POLL_TAIL_DONE 4u
+/* W8DIAG */ #define W8ST_POLL_RETURN_IMMINENT 5u
+/* W8DIAG */ #define W8ST_USB_HANDLER_ENTER 6u
+/* W8DIAG */ #define W8ST_POLL_RETURNED 7u
+/* W8DIAG */ #define W8ST_SET_TIMER_DONE 8u
+/* W8DIAG */ #define W8ST_ADD_TIMER_DONE 9u
+/* W8DIAG */ #define W8ST_USB_HANDLER_RETURN_IMMINENT 10u
+/* W8DIAG: one ring entry: timestamp_us + kind + args (16 B, fixed). */
+/* W8DIAG */ typedef struct {
+/* W8DIAG */     uint32_t ts;
+/* W8DIAG */     uint16_t kind;
+/* W8DIAG */     uint16_t a1;
+/* W8DIAG */     uint32_t a2;
+/* W8DIAG */     uint32_t a3;
+/* W8DIAG */ } w8_entry_t;
+/* W8DIAG: persisted state (lives in .uninitialized_data; CRC-guarded). */
+/* W8DIAG: No secrets ever stored (no BD_ADDR, no keys, no tag payloads). */
+/* W8DIAG: boot_epoch = this boot (mirrored to scratch[3]); post_epoch = previous boot. */
+/* W8DIAG: last_epoch[op] = epoch of the last op of that kind (U3 disambiguation). */
+/* W8DIAG: base_* = snapshot at boot after epoch increment; boot delta = current - base. */
+/* W8DIAG */ typedef struct {
+/* W8DIAG */     uint32_t magic;
+/* W8DIAG */     uint32_t crc;
+/* W8DIAG */     uint32_t ver;
+/* W8DIAG */     uint32_t idx;
+/* W8DIAG */     uint32_t n;
+/* W8DIAG */     uint32_t boot_epoch;
+/* W8DIAG */     uint32_t post_epoch;
+/* W8DIAG */     uint32_t begins[6];
+/* W8DIAG */     uint32_t ends[6];
+/* W8DIAG */     uint32_t last_tag[6];
+/* W8DIAG */     int32_t last_rc[6];
+/* W8DIAG */     uint32_t last_dur[6];
+/* W8DIAG */     uint32_t last_epoch[6];
+/* W8DIAG */     uint32_t tmr_add[4];
+/* W8DIAG */     uint32_t tmr_rem[4];
+/* W8DIAG */     uint32_t tmr_fire[4];
+/* W8DIAG */     uint32_t tmr_to[4];
+/* W8DIAG */     uint32_t base_begins[6];
+/* W8DIAG */     uint32_t base_ends[6];
+/* W8DIAG */     uint32_t base_tmr_add[4];
+/* W8DIAG */     uint32_t base_tmr_fire[4];
+/* W8DIAG */     uint32_t base_epoch;
+/* W8DIAG */     uint32_t stage_last;
+/* W8DIAG */     uint32_t stage_n;
+/* W8DIAG */     uint8_t stage_trail[8];
+/* W8DIAG */     uint32_t ev_last;
+/* W8DIAG */     uint32_t ev_n;
+/* W8DIAG */     w8_entry_t ring[W8_NRING];
+/* W8DIAG */ } w8_state_t;
+/* W8DIAG: init (keeps a valid recorder across WDT reboot; resets if bad). */
+/* W8DIAG: strict order: keep post_epoch, bump epoch+scratch[3], snapshot baseline. */
+/* W8DIAG */ void diag_rec_init(void);
+/* W8DIAG: record helpers (Core0 only; RAM-only; never print). */
+/* W8DIAG */ void diag_rec_stage(uint8_t st);
+/* W8DIAG: FLASH record: begin => a2 = tag (0 when n/a), a3 = len-or-0. */
+/* W8DIAG: FLASH record: end   => a2 = rc (as u32), a3 = duration_us. */
+/* W8DIAG: Both phases stamp last_epoch[op] = boot_epoch. */
+/* W8DIAG */ void diag_rec_flash(uint8_t op, uint8_t phase, uint32_t a2, uint32_t a3);
+/* W8DIAG */ void diag_rec_timer(uint8_t id, uint8_t act, uint32_t timeout_ms);
+/* W8DIAG */ void diag_rec_ev(uint8_t ev);
+/* W8DIAG: boot-dump support (boot context only; the recorder never prints). */
+/* W8DIAG */ bool diag_rec_valid(void);
+/* W8DIAG */ const w8_state_t *diag_rec_state(void);
+#ifdef __cplusplus /* W8DIAG */
+} /* W8DIAG */
+#endif /* W8DIAG */

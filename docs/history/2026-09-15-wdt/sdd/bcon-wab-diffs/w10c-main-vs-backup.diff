@@ -1,0 +1,131 @@
+﻿diff --git "a/C:\\Users\\moilo\\AppData\\Local\\Temp\\opencode\\bcon-wab\\backups\\w10c\\main.c.bak" "b/C:\\pico-bcon\\src\\main.c"
+index b0b9150..eb42677 100644
+--- "a/C:\\Users\\moilo\\AppData\\Local\\Temp\\opencode\\bcon-wab\\backups\\w10c\\main.c.bak"
++++ "b/C:\\pico-bcon\\src\\main.c"
+@@ -41,6 +41,7 @@
+ #include "bt/cap.h"
+ #include "bt/switch_hid.h"
+ #include "bt/bt_compat.h"
++#include "w10_diag.h" // W10DIAG: TEMP HAL breadcrumb recorder (remove with all W10DIAG)
+ 
+ // ---- 蜑肴署繝斐Φ繝ｻ騾溷ｺｦ (spec ﾂｧ2: 譌｢螳・GP4/5繝ｻUART1繝ｻ1Mbps) ----
+ #define LOG_UART      uart0
+@@ -462,6 +463,7 @@ static void flush_outbox(void) {
+ 
+ // ---------------- Core0: 1ms tick (pull/pack/drain/FX/flush/usb/neutral) ----------------
+ static void poll_tick(uint32_t now) {
++    w10_poll_stage(W10S_POLL_ENTER); // W10C: TEMP poll entered (Death-B 2s-window)
+     bcon_shared_t cp;
+     uint8_t pb[3];
+     bool advanced;
+@@ -495,6 +497,7 @@ static void poll_tick(uint32_t now) {
+         // STATE諡貞凄繧貞性繧)縲ゅ％縺薙〒縺ｯCONFIG遲峨・fx/ob縺ｮ縺ｿ謇ｱ縺・・         (void)v3_on_frame(&g_vs, cur.type, cur.payload, cur.len, cur.seq);
+     }
++    w10_poll_stage(W10S_POLL_BODY_DONE); // W10C: TEMP inbox drained
+     exec_fx(now);
+     flush_outbox();
+ 
+@@ -552,12 +555,14 @@ static void poll_tick(uint32_t now) {
+     usb_wired_task(now);
+     link_poll(now);
+     watchdog_update();
++    w10_poll_stage(W10S_POLL_WDT_DONE); // W10C: TEMP watchdog fed
+     if (s_reboot_at != 0u && (int32_t)(now - s_reboot_at) >= 0) {
+         probe_line("rebooting to apply WIRED_MODE...");
+         sleep_ms(50);
+         watchdog_reboot(0, 0, 0);
+         while (1) tight_loop_contents();
+     }
++    w10_poll_stage(W10S_POLL_RETURN_IMMINENT); // W10C: TEMP poll about to return
+ }
+ // ---------------- Core0: BTstack timers ----------------
+ static uint8_t hid_service_buffer[700];
+@@ -604,24 +609,33 @@ static void stats_print(void) {
+ }
+ 
+ static void stats_handler(btstack_timer_source_t *ts) {
++    w10_tmr_svc(W10T_STATS); // W10C: TEMP stats_timer fired (last-service stamp)
+     stats_print();
+     btstack_run_loop_set_timer(ts, 1000);
+     btstack_run_loop_add_timer(ts);
++    w10_tmr_add(W10T_STATS, (uint32_t)ts->timeout); // W10C: TEMP stats_timer re-armed
+ }
+ 
+ static void usb_handler(btstack_timer_source_t *ts) {
++    w10_tmr_svc(W10T_USB); // W10C: TEMP usb_timer fired (last-service stamp)
+     poll_tick(to_ms_since_boot(get_absolute_time()));
++    w10_poll_stage(W10S_POLL_RETURNED); // W10C: TEMP poll_tick returned
++    w10_loop_sample(to_ms_since_boot(get_absolute_time())); // W10C: TEMP 2s-crumb (timer list + IRQ)
+     btstack_run_loop_set_timer(ts, 1);
+     btstack_run_loop_add_timer(ts);
++    w10_tmr_add(W10T_USB, (uint32_t)ts->timeout); // W10C: TEMP usb_timer re-armed
+ }
+ 
+ static void empty_handler(btstack_timer_source_t *ts) {
++    w10_tmr_svc(W10T_EMPTY); // W10C: TEMP empty_timer fired (last-service stamp)
+     if (probe_hid_cid != 0u) {
+         // 騾∽ｿ｡繧ｲ繝ｼ繝郁ｩｦ鬨薙・邨ゆｺ・(辟｡鄂ｪ遒ｺ螳壹・縺溘ａ蠕ｩ蟶ｰ)縲５LV蛛懈ｭ｢縺ｮ縺ｿ邯咏ｶ壹・         hid_device_request_can_send_now_event(probe_hid_cid);
++        w10_hci_tx_req(); // W10C: TEMP hci TX request liveness
+     }
+     btstack_run_loop_set_timer(ts, probe_send_interval_ms());
+     btstack_run_loop_add_timer(ts);
++    w10_tmr_add(W10T_EMPTY, (uint32_t)ts->timeout); // W10C: TEMP empty_timer re-armed
+ }
+ 
+ // ---------------- Core0: BT packet handlers (wakecon蜷檎ｭ・ ----------------
+@@ -710,6 +724,13 @@ static void handle_hid_meta(uint8_t *packet) {
+                 bd_addr_t a;
+                 hid_subevent_connection_opened_get_bd_addr(packet, a);
+                 store_host(a);
++                { // W10DIAG: TEMP D-gate one-shot forced BCHO write (W9 recipe; remove with all W10DIAG)
++                    uint32_t w10g = w10_force_fire(); // W10DIAG
++                    store_host_force(a); // W10DIAG
++                    snprintf(msg, sizeof(msg), "w10fire var=D gen=%lu", // W10DIAG
++                             (unsigned long)w10g); // W10DIAG
++                    probe_line(msg); // W10DIAG
++                } // W10DIAG
+                 snprintf(msg, sizeof(msg), "hid open. host %s saved",
+                          bd_addr_to_str(a));
+                 probe_line(msg);
+@@ -724,6 +745,7 @@ static void handle_hid_meta(uint8_t *packet) {
+             break;
+         case HID_SUBEVENT_CAN_SEND_NOW:
+             probe_can_send_now();
++            w10_hci_tx_grant(); // W10C: TEMP hci TX grant liveness
+             break;
+         default:
+             snprintf(msg, sizeof(msg), "hid sub=0x%02x", sub);
+@@ -738,6 +760,7 @@ static void packet_handler(uint8_t packet_type, uint16_t channel,
+     (void)channel;
+     (void)size;
+     ev = hci_event_packet_get_type(packet);
++    w10_hci_ev(ev); // W10C: TEMP last HCI event byte (RX liveness)
+     // LE 蛻・妙縺ｯ Classic 蛛ｴ縺ｮ蜃ｦ逅・∈關ｽ縺ｨ縺輔↑縺・・     if (ev == HCI_EVENT_DISCONNECTION_COMPLETE &&
+         link_is_le(hci_event_disconnection_complete_get_connection_handle(
+@@ -866,6 +889,10 @@ int main(void) {
+     gpio_set_function(LOG_RX_PIN, GPIO_FUNC_UART);
+ 
+     printf("\n=== pico-bcon ===\n");
++    // W10DIAG: TEMP 窶・validate prev-boot HL breadcrumbs, then dump them BEFORE
++    // W10DIAG: TLV init/loads (which may themselves perform flash ops). Remove with all W10DIAG.
++    w10_init(); // W10DIAG
++    w10_dump(); // W10DIAG
+     // 豁｣隕乗焔谿ｵ縺ｧHardFault蝣ｱ蜻翫ｒ謗帙￠繧九・     exception_set_exclusive_handler(HARDFAULT_EXCEPTION, hardfault_reporter);
+     // 閾ｪ繧ｳ繧｢縺ｮMSPLIM (Core1蛛ｴ縺ｯcore1_entry縺ｧ)縲・@@ -1003,14 +1030,17 @@ int main(void) {
+     btstack_run_loop_set_timer_handler(&stats_timer, &stats_handler);
+     btstack_run_loop_set_timer(&stats_timer, 1000);
+     btstack_run_loop_add_timer(&stats_timer);
++    w10_tmr_add(W10T_STATS, (uint32_t)stats_timer.timeout); // W10C: TEMP stats_timer armed
+ 
+     btstack_run_loop_set_timer_handler(&usb_timer, &usb_handler);
+     btstack_run_loop_set_timer(&usb_timer, 1);
+     btstack_run_loop_add_timer(&usb_timer);
++    w10_tmr_add(W10T_USB, (uint32_t)usb_timer.timeout); // W10C: TEMP usb_timer armed
+ 
+     btstack_run_loop_set_timer_handler(&empty_timer, &empty_handler);
+     btstack_run_loop_set_timer(&empty_timer, 100);
+     btstack_run_loop_add_timer(&empty_timer);
++    w10_tmr_add(W10T_EMPTY, (uint32_t)empty_timer.timeout); // W10C: TEMP empty_timer armed
+ 
+     btstack_run_loop_set_timer_handler(&reconnect_timer,
+                                        &link_reconnect_handler);

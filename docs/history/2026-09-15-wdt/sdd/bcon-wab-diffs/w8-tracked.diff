@@ -1,0 +1,1193 @@
+﻿diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 2fd057c..27c9605 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -32,6 +32,9 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
+   # POC_DATA_BAUD: UART1 baud (譌｢螳・000000=spec騾壹ｊ)縲・15200荳企剞繧｢繝繝励ち縺ｮ
+   # derated隧ｦ鬨捺凾縺ｯ -DPOC_DATA_BAUD=115200 縺ｧ讒区・縺吶ｋ (build/縺ｯgit邂｡逅・､・縲・   set(POC_DATA_BAUD 1000000 CACHE STRING "PoC UART1 baud rate")
++  # WIRED_DEFAULT: TLV譛ｪ菫晏ｭ俶凾縺ｮ襍ｷ蜍輔Δ繝ｼ繝・(1=譛臥ｷ壽里螳・縲・+  # 辟｡邱夊ｵｷ蜍輔・隧ｦ鬨捺凾縺ｯ -DWIRED_DEFAULT=0 縺ｧ蛻･讒区・縺吶ｋ縲・+  set(WIRED_DEFAULT 1 CACHE STRING "Default boot mode when TLV unwritten (1=wired)")
+   add_executable(poc_dualcore
+     src/poc_dualcore/main.c
+     src/poc_dualcore/poc_usb.c
+@@ -76,17 +79,26 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
+ 
+   pico_add_extra_outputs(poc_dualcore)
+ 
+-  # Task 3: 譛臥ｷ哥W譛ｬ菴・(辟｡邱唹FF縲・YW43/BTstack縺ｪ縺励ゅラ繝・け蛻玲嫌縺ｮ縺溘ａ)縲・-  # Core0 = 1ms poll (u32竊恥ack竊置sb_wired)・詰og・祈lash隧ｦ鬨薙・+  # Task 4: 邨ｱ蜷・W (USB + Classic BT + BLE wake縲ら┌邱壹・WIRED_MODE邂｡逅・縲・+  # Core0 = BTstack run loop・亀inyUSB・気YW43 (wakecon蜷畦ib繝ｻ蜷悟・譛溷喧鬆・縲・   # Core1 = UART1 DMA・久3 parser・砧utex push縲・   add_executable(pico-bcon
+     src/main.c
+     src/proto/protocol.c
+     src/proto/pack.c
+     src/proto/spi.c
++    src/proto/dispatch.c
+     src/usb/usb_descriptors.c
+     src/usb/usb_hid.c
+     src/usb/usb_wired.c
++    src/bt/hid.c
++    src/bt/link.c
++    src/bt/link_conn.c
++    src/bt/link_cap.c
++    src/bt/link_beacon.c
++    src/bt/cap.c
++    src/bt/store.c
++    src/diag_rec.c # W8DIAG: diagnostic flight recorder (W8-only; delete at restore).
+   )
+ 
+   pico_set_program_name(pico-bcon "pico-bcon")
+@@ -100,6 +112,7 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
+     ${CMAKE_CURRENT_LIST_DIR}/src
+     ${CMAKE_CURRENT_LIST_DIR}/src/usb
+     ${CMAKE_CURRENT_LIST_DIR}/src/proto
++    ${CMAKE_CURRENT_LIST_DIR}/src/bt
+   )
+ 
+   target_link_libraries(pico-bcon
+@@ -107,9 +120,15 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
+     hardware_uart
+     hardware_dma
+     hardware_flash
++    hardware_watchdog
+     pico_flash
+     pico_multicore
+     pico_unique_id
++    pico_btstack_classic
++    pico_btstack_ble
++    pico_btstack_cyw43
++    pico_cyw43_arch_none
++    pico_btstack_flash_bank
+     tinyusb_device
+     tinyusb_board
+   )
+@@ -117,6 +136,7 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
+   target_compile_definitions(pico-bcon PRIVATE
+     CFG_TUSB_OS=OPT_OS_PICO
+     POC_DATA_BAUD=${POC_DATA_BAUD}
++    WIRED_DEFAULT=${WIRED_DEFAULT}
+   )
+ 
+   pico_add_extra_outputs(pico-bcon)
+diff --git a/src/main.c b/src/main.c
+index fe36e23..b97d931 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -1,12 +1,14 @@
+-// main.c -- pico-bcon 譛臥ｷ哥W (Task 3)縲・-// PC 竊・UART1)竊・Pico 竊・USB-HID蜈ｬ蠑襲roCon)竊・Switch 1/2繝峨ャ繧ｯ縲・+// main.c -- pico-bcon 邨ｱ蜷・W (USB + Classic BT + BLE wake)縲・+// PC 竊・UART1)竊・Pico 竊・USB-HID / Classic BT)竊・Switch 1縲・LE縺ｯwake蜿冶ｾｼ蜀咲函縺ｮ縺ｿ縲・ //
+-// 讒区・ (spec ﾂｧ12): 辟｡邱・(CYW43/BTstack) 縺ｯ荳翫￡縺ｪ縺・・-// CYW43/BT蜍穂ｽ應ｸｭ縺ｯSwitch 2繝峨ャ繧ｯ縺袈SB蛻玲嫌縺励↑縺・ｮ滓ｸｬ (wakecon遏･隕・ 縺ｮ縺溘ａ縲・-// 辟｡邱壹・蠕ｩ蟶ｰ縺ｯ Task 4 (WIRED_MODE邂｡逅・ 縺ｧ陦後≧縲・-//
+-// 蠖ｹ蜑ｲ蛻・球 (PoC遒ｺ螳・: Core1・拔ART1 DMA・却arser・砧utex push縺ｮ縺ｿ縲・-// Core0・・ms poll (蜈ｱ譛疫32竊恥ack竊鍛con_*竊置sb_wired_task)・詰og・祈lash隧ｦ鬨薙・+// 讒区・:
++//   Core1: UART1 DMA謗貞・・久3 parser・砧utex push縺ｮ縺ｿ (PoC遒ｺ螳・縲・+//          STATE驕ｩ逕ｨ縺ｯ state_accept (UNSUPPORTED譎ゅ・縺ｿfalse)縲¨EUTRAL縺ｯ蟶ｸ譎ゅ・+//          STATE莉･螟悶・蜿嶺ｿ｡frame縺ｯ inbox (8slot) 縺ｸ縲・lash/USB/BT遖∵ｭ｢縲・+//   Core0: BTstack run loop・亀inyUSB・気YW43 (wakecon縺ｨ蜷畦ib繝ｻ蜷悟・譛溷喧鬆・縲・+//          1ms timer縺ｧ inbox drain竊壇ispatch竊巽X螳溯｡娯・outbox flush竊恥ack竊置sb縲・+//          辟｡邱壹・隕∝凄縺ｯ WIRED_MODE (Flash菫晏ｭ・ 縺ｧ邂｡逅・(link_radio_update)縲・+// 蜷域・Flash隧ｦ鬨・(PoC) 縺ｯ蟒・ｭ｢縲５LV螳滓嶌霎ｼ縺熊lash豢ｻ蜍輔↓縺ｪ繧九・ 
+ #include <stdio.h>
+ #include <string.h>
+@@ -16,14 +18,33 @@
+ #include "pico/mutex.h"
+ #include "pico/flash.h"
+ #include "pico/unique_id.h"
++#include "pico/cyw43_arch.h"
+ #include "hardware/uart.h"
+ #include "hardware/dma.h"
+ #include "hardware/flash.h"
+ #include "hardware/sync.h"
++#include "hardware/watchdog.h"
++#include "hardware/exception.h" // HardFault蝣ｱ蜻翫・謗帙￠譖ｿ縺医↓菴ｿ逕ｨ
++#include "btstack.h"
++#include "btstack_tlv_flash_bank.h"
++#include "classic/btstack_link_key_db_tlv.h"
++#include "pico/btstack_flash_bank.h"
++/* W8DIAG: hci_dump ON for comparability (W6-proven inert). REMOVE with all W8DIAG. */
++#include "hci_dump.h" /* W8DIAG */
++#include "hci_dump_embedded_stdout.h" /* W8DIAG */
+ 
+ #include "protocol.h"
++#include "dispatch.h"
+ #include "pack.h"
++#include "spi.h"
+ #include "usb_wired.h"
++#include "bt/hid.h"
++#include "bt/link.h"
++#include "bt/store.h"
++#include "bt/cap.h"
++#include "bt/switch_hid.h"
++#include "bt/bt_compat.h"
++#include "diag_rec.h" /* W8DIAG: unified diagnostic flight recorder. REMOVE with all W8DIAG. */
+ 
+ // ---- 蜑肴署繝斐Φ繝ｻ騾溷ｺｦ (spec ﾂｧ2: 譌｢螳・GP4/5繝ｻUART1繝ｻ1Mbps) ----
+ #define LOG_UART      uart0
+@@ -38,38 +59,149 @@
+ #define DATA_TX_PIN   4
+ #define DATA_RX_PIN   5
+ 
+-// ---- DMA ring: 16KB (PoC遒ｺ螳壹・lash stall ~39ms縺ｫ蟇ｾ縺怜香蛻・↑菴呵｣・ ----
++#define TIMEOUT_NEUTRAL_MS 200u // spec ﾂｧ8 (逶ｴ霑全TATE縺九ｉ200ms辟｡蜿嶺ｿ｡縺ｧ蜈ｨ隗｣謾ｾ)
++
++// ---- DMA ring: 16KB (PoC遒ｺ螳・ ----
+ #define RING_BITS 14
+ #define RING_SIZE (1u << RING_BITS)
+ static uint8_t dma_ring[RING_SIZE] __attribute__((aligned(RING_SIZE)));
+ 
+-// ---- Flash隧ｦ鬨・ 譛邨・K繧ｻ繧ｯ繧ｿ (PoC縺ｨ蜷御ｸ縲・W譛ｬ菴薙→驥阪↑繧後・skip) ----
+-#define BCON_FLASH_OFFS (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
+-#define BCON_FLASH_MAGIC "BCONPOC1"
+-extern char __flash_binary_end[];
++// ---- Core1 -> Core0 inbox (STATE/NEUTRAL莉･螟悶・蜿嶺ｿ｡frame) ----
++#define IB_N 8
++typedef struct {
++    uint8_t type, len, seq;
++    uint8_t payload[PROTO_MAX_PAYLOAD];
++} ib_msg_t;
+ 
+ // ---- Core1 -> Core0 蜈ｱ譛臥憾諷・(mutex菫晁ｭｷ縲・ore1縺ｯpush縺ｮ縺ｿ) ----
+ typedef struct {
+     ctrl_state_t state;   // 譛譁ｰSTATE (u32・虐ticks)
+     uint8_t  last_seq;
+     uint8_t  last_type;
++    uint8_t  perrcode;    // parser errcode mirror (STATUS逕ｨ)
+     uint32_t frames;
+     uint32_t crc_err;
+     uint32_t drop_ev;
+-    uint32_t iters;       // Core1 drain loop蜿榊ｾｩ (逕溷ｭ倩ｨｼ譏・
++    uint32_t iters;
+     uint32_t overruns;
+     uint32_t boot_code;   // 0=boot荳ｭ 1=selftest PASS 2=FAIL 3=襍ｰ陦御ｸｭ
+     uint32_t boot_detail;
++    volatile bool state_accept; // Core0譖ｸ霎ｼ繝ｻCore1隱ｭ霎ｼ (譌｢螳嗾rue)
++    ib_msg_t ib[IB_N];
++    volatile uint8_t ib_w, ib_r;
++    uint32_t ib_drop;
+ } bcon_shared_t;
+ 
+ static mutex_t g_m;
+ static bcon_shared_t g_s;
+ static volatile bool g_core1_booted = false;
+ 
+-// ---- USB螻､縺ｸ縺ｮ萓帷ｵｦ (謇譛牙・縺ｯCore0縲Ｖsb_wired.c縺ｯ隱ｭ縺ｿ縺ｮ縺ｿ) ----
++// ---- USB/BT螻､縺ｸ縺ｮ萓帷ｵｦ (謇譛牙・縺ｯCore0縲ょ推螻､縺ｯ隱ｭ縺ｿ縺ｮ縺ｿ) ----
+ uint8_t bcon_btn[3];
+ uint8_t bcon_lx = 0x80u, bcon_ly = 0x80u, bcon_rx = 0x80u, bcon_ry = 0x80u;
+-uint8_t bcon_mac[6]; // 蠢懃ｭ秘・(蛻晄悄蛹悶〒蜿崎ｻ｢貂医∩)
++uint8_t bcon_mac[6]; // 蠢懃ｭ秘・(蛻晄悄蛹悶〒蜿崎ｻ｢貂医∩縲・T addr縺ｨ蜷御ｸ讖溷勣)
++
++// ---- RUMBLE蜿嶺ｿ｡險域焚 (Step 2: ACK・狗ｴ譽・＠險域焚縺ｮ縺ｿ縲Ｗ1縺ｯPC縺ｸ霆｢騾√＠縺ｪ縺・ ----
++uint32_t bcon_usb_rumble_n;
++uint32_t bcon_bt_rumble_n;
++
++// ---- v3繧ｻ繝・す繝ｧ繝ｳ (dispatch謇譛峨・ore0縺ｮ縺ｿ隗ｦ繧・ ----
++static v3_session_t g_vs;
++static uint8_t g_tx_seq; // Pico->PC 譁ｹ蜷全EQ (譁ｹ蜷醍峡遶九・mod256)
++static bool s_wired = true;
++static bool s_neutral_hold; // timeout-neutral荳ｭ (STATUS bit2)
++static uint32_t s_last_state_ms;
++static uint32_t s_last_frames;
++static uint32_t s_rumble_reported; // 蜑榊屓STATUS譎ゅ・rumble蜷郁ｨ・+static bool s_wdt_recovered;
++static bool s_bt_init; // BTstack蛻晄悄蛹匁ｸ医∩ (辟｡邱夊ｵｷ蜍墓凾縺ｮ縺ｿtrue)
++static uint32_t s_reboot_at; // 0莉･螟悶・謖・ｮ嗄s縺ｧwatchdog reboot (WIRED蛻・崛驕ｩ逕ｨ)
++
++// bt_compat.h (probe_line) 縺ｮ螳滉ｽ薙６ART0 printf縲・+void probe_line(const char *s) {
++    if (s != NULL) {
++        printf("%s\n", s);
++    }
++}
++
++// ---- Fault蜿ｯ隕門喧 ----
++// hid open逶ｴ蠕後・WDT逋ｺ轣ｫ縺後ワ繝ｳ繧ｰ縺祈ault蛛懈ｭ｢縺九ｒ蛻・ｊ蛻・￠繧九・+// Fault譎ゅ・遨阪∪繧後◆PC/LR遲峨ｒ逕欟ART縺ｸ蜃ｺ縺・(stdio縺ｯIRQ蛛懈ｭ｢譎ゅ↓隧ｰ繧)縲・+// 蠕ｩ蟶ｰ縺帙★縺ｶ繧我ｸ九′繧翫仝DT縺悟屓蜿弱☆繧・(wdt=1)縲・+static void fault_raw_putc(char c)
++{
++    while (!uart_is_writable(LOG_UART)) {
++    }
++    uart_putc_raw(LOG_UART, (uint8_t)c);
++}
++
++static void fault_raw_hex(uint32_t v)
++{
++    int k;
++    for (k = 28; k >= 0; k -= 4) {
++        uint32_t n = (v >> (uint32_t)k) & 0xFu;
++        fault_raw_putc((char)(n < 10u ? (uint32_t)'0' + n : (uint32_t)'a' + (n - 10u)));
++    }
++}
++
++static void fault_raw_str(const char *s)
++{
++    while (*s != '\0') {
++        fault_raw_putc(*s++);
++    }
++}
++
++/* EXC_RETURN(bit2)縺ｧMSP/PSP繧帝∈縺ｳ縲，FSR/HFSR/MMFAR/BFAR繧貞・縺吶・+ * snprintf/printf縺ｯ菴ｿ繧上↑縺・(貅｢繧後せ繧ｿ繝・け荳翫〒縺ｮ蜀阪ヵ繧ｩ繝ｫ繝亥屓驕ｿ)縲・*/
++__attribute__((used)) static void fault_entry_ex(uint32_t excret, uint32_t *sp)
++{
++    /* sp: r0 r1 r2 r3 r12 lr pc psr */
++    fault_raw_str("FAULT lr=");
++    fault_raw_hex(excret);
++    fault_raw_str(" pc=");
++    fault_raw_hex(sp[6]);
++    fault_raw_str(" slr=");
++    fault_raw_hex(sp[5]);
++    fault_raw_str(" cfsr=");
++    fault_raw_hex(*((volatile uint32_t *)0xE000ED28u));
++    fault_raw_str(" hfsr=");
++    fault_raw_hex(*((volatile uint32_t *)0xE000ED2Cu));
++    fault_raw_str(" mmfar=");
++    fault_raw_hex(*((volatile uint32_t *)0xE000ED34u));
++    fault_raw_str(" bfar=");
++    fault_raw_hex(*((volatile uint32_t *)0xE000ED38u));
++    fault_raw_putc('\n');
++    while (1) {
++        tight_loop_contents();
++    }
++}
++
++/* SDK縺ｮ繝吶け繧ｿ縺ｯHardFault_Handler繧定ｦ九↑縺・(isr_invalid辟｡險蛛懈ｭ｢) 縺溘ａ縲・+ * exception_set_exclusive_handler縺ｧ謗帙￠繧九・縺梧ｭ｣隕乗焔谿ｵ縲・+ * C髢｢謨ｰ蛹悶☆繧九→繝励Ο繝ｭ繝ｼ繧ｰpush縺ｧSP縺後★繧檎ｩ阪∩繝輔Ξ繝ｼ繝繧貞､悶☆縺溘ａnaked蠢・医・*/
++__attribute__((naked)) static void hardfault_reporter(void)
++{
++    __asm volatile (
++        "mrs r1, msp\n"   /* r1 = sp蛟呵｣・*/
++        "mov r0, lr\n"    /* r0 = EXC_RETURN */
++        "tst r0, #4\n"    /* bit2: 0=MSP, 1=PSP */
++        "beq 1f\n"
++        "mrs r1, psp\n"
++        "1: b fault_entry_ex\n" /* tail-call (r0=excret, r1=sp)縲Ｑush縺ｪ縺・*/
++    );
++}
++
++/* 繧ｹ繧ｿ繝・け繧ｬ繝ｼ繝・(MSPLIM)縲・+ * SDK譌｢螳壹〒縺ｯ辟｡蜉ｹ (PICO_USE_STACK_GUARDS=0) 縺ｮ縺溘ａ謇九〒蜈･繧後ｋ縲・+ * 貅｢繧後・辟｡險遐ｴ螢翫ｒSTKOF遒ｺ螳哥ault蛹悶☆繧九・ore0/Core1縺昴ｌ縺槭ｌ縺ｮ閾ｪ繧ｳ繧｢縺ｧ蜻ｼ縺ｶ縲・*/
++extern uint32_t __StackBottom;
++extern uint32_t __StackOneBottom;
++static void stack_guard_install(uint32_t *bottom)
++{
++    __asm volatile ("msr msplim, %0" :: "r" (bottom));
++}
++
++// ---------------- Core1: parser callback (mutex push縺ｮ縺ｿ) ----------------
+ 
+ // ---------------- Core1: parser callback (mutex push縺ｮ縺ｿ) ----------------
+ static link_stats_t s_pst;
+@@ -80,17 +212,34 @@ static void bcon_frame_cb(uint8_t type, const uint8_t *p, uint8_t len,
+     (void)user;
+     mutex_enter_blocking(&g_m);
+     if (type == T_STATE && len == 8) {
+-        g_s.state.buttons =
+-            (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+-            ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+-        g_s.state.lx = p[4];
+-        g_s.state.ly = p[5];
+-        g_s.state.rx = p[6];
+-        g_s.state.ry = p[7];
++        if (g_s.state_accept) {
++            g_s.state.buttons =
++                (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
++                ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
++            g_s.state.lx = p[4];
++            g_s.state.ly = p[5];
++            g_s.state.rx = p[6];
++            g_s.state.ry = p[7];
++        }
+     } else if (type == T_NEUTRAL && len == 0) {
++        // 螳牙・蛛懈ｭ｢縺ｯUNSUPPORTED荳九〒繧る←逕ｨ縺吶ｋ (dispatch縺ｨ蜷檎ｾｩ)縲・         g_s.state.buttons = 0u;
+         g_s.state.lx = g_s.state.ly = 0x80u;
+         g_s.state.rx = g_s.state.ry = 0x80u;
++    } else {
++        // CONFIG/HELLO/PING遲峨・ inbox 縺ｸ縲・ore0縺慧ispatch縺吶ｋ
++        // (Flash譖ｸ霎ｼ繧剃ｼｴ縺・◆繧，ore1縺ｧ縺ｯ螳溯｡後＠縺ｪ縺・縲・+        uint8_t nw = (uint8_t)((g_s.ib_w + 1u) % IB_N);
++        if (nw == g_s.ib_r) {
++            g_s.ib_drop++;
++        } else {
++            ib_msg_t *m = &g_s.ib[g_s.ib_w];
++            m->type = type;
++            m->len = (len > PROTO_MAX_PAYLOAD) ? PROTO_MAX_PAYLOAD : len;
++            m->seq = seq;
++            if (p != NULL && m->len > 0) memcpy(m->payload, p, m->len);
++            g_s.ib_w = nw;
++        }
+     }
+     g_s.last_seq = seq;
+     g_s.last_type = type;
+@@ -117,8 +266,9 @@ static uint32_t core1_selftest(void) {
+     if (g_s.frames != 3) return 0x10 + g_s.frames;
+     if (s_pst.err_crc != 0 || s_pst.err_drop != 0) return 0x20;
+     if (g_s.last_type != T_PING || g_s.last_seq != 0x12) return 0x30;
+-    // NEUTRAL驕ｩ逕ｨ縺ｮ遒ｺ隱・(蜈ｨ荳ｭ遶九↓謌ｻ縺｣縺ｦ縺・ｋ莠・縲・     if (g_s.state.buttons != 0u || g_s.state.lx != 0x80u) return 0x40;
++    // PING縺ｯinbox縺ｫ螻翫＞縺ｦ縺・ｋ莠・(STATE/NEUTRAL縺ｯlive驕ｩ逕ｨ縺ｮ縺溘ａinbox螟・縲・+    if (g_s.ib_w != 1u) return 0x50;
+     return 0;
+ }
+ 
+@@ -126,6 +276,7 @@ static int g_dma_ch = -1;
+ static uint32_t g_rd = 0;
+ 
+ static void core1_entry(void) {
++    stack_guard_install(&__StackOneBottom); // MSPLIM繧ｬ繝ｼ繝・     // PoC遒ｺ螳・ lockout victim蛻晄悄蛹・(flash_safe_execute縺ｮ逶ｸ謇句・)縲・     bool ok_init = flash_safe_execute_core_init();
+     (void)ok_init;
+@@ -134,11 +285,14 @@ static void core1_entry(void) {
+     parser_init(&s_parser, bcon_frame_cb, NULL, &s_pst);
+     g_s.state.lx = g_s.state.ly = 0x80u;
+     g_s.state.rx = g_s.state.ry = 0x80u;
++    g_s.state_accept = true;
+ 
+     uint32_t st = core1_selftest();
+     mutex_enter_blocking(&g_m);
+     g_s.boot_code = (st == 0) ? 1u : 2u;
+     g_s.boot_detail = st;
++    // selftest縺ｮinbox谿区ｸ｣繧呈昏縺ｦ繧・(襍ｷ蜍墓凾1蝗槭・縺ｿ)縲・+    g_s.ib_r = g_s.ib_w;
+     mutex_exit(&g_m);
+ 
+     uart_init(DATA_UART, POC_DATA_BAUD);
+@@ -190,167 +344,788 @@ static void core1_entry(void) {
+             g_s.overruns = ovr;
+             g_s.crc_err = s_pst.err_crc;
+             g_s.drop_ev = s_pst.err_drop;
++            g_s.last_seq = s_pst.last_seq;
++            g_s.perrcode = s_pst.errcode;
+             mutex_exit(&g_m);
+         }
+     }
+ }
+ 
+-// ---------------- Core0: Flash隧ｦ鬨・(PoC縺ｨ蜷御ｸ繝ｻ5遘貞捉譛・ ----------------
+-static uint32_t s_fok = 0, s_ffail = 0, s_fmax_us = 0, s_fseq = 0;
+-static bool s_flash_ok = false;
+-static uint8_t s_flash_page[FLASH_PAGE_SIZE];
++// ---------------- Core0: UART1 TX (Pico->PC縲３X DMA縺ｨ譁ｹ蜷代′迢ｬ遶・ ----------------
++static void uart_tx_frame(uint8_t type, const uint8_t *payload, uint8_t len) {
++    uint8_t out[PROTO_FRAME_MAX];
++    size_t n = frame_build(out, type, payload, len, g_tx_seq);
++    g_tx_seq++;
++    if (n > 0) {
++        uart_write_blocking(DATA_UART, out, n);
++    }
++}
+ 
+-static void bcon_flash_erase_fn(void *param) {
+-    flash_range_erase(*(const uint32_t *)param, FLASH_SECTOR_SIZE);
++// ---------------- Core0: STATUS邨・ｫ・(譁ｰ魄ｮ縺ｪHW迥ｶ諷九〒菴懊ｋ) ----------------
++static void send_status(void) {
++    uint8_t flags = 0u;
++    uint8_t payload[7];
++    bcon_shared_t cp;
++    usb_wired_stats_t ws;
++    uint32_t rumble_total;
++    mutex_enter_blocking(&g_m);
++    cp = g_s;
++    mutex_exit(&g_m);
++    usb_wired_get_stats(&ws);
++    if (usb_wired_is_configured()) flags |= ST_USB_MOUNTED;
++    if (probe_hid_cid != 0u || usb_wired_handshake_done()) flags |= ST_SWITCH_READY;
++    if (s_neutral_hold) flags |= ST_TIMEOUT_NEUTRAL;
++    if (s_wdt_recovered) flags |= ST_WDT_RECOVERED;
++    if (cp.overruns > 0u) flags |= ST_UART_OVERRUN;
++    if (s_wired) flags |= ST_WIRED_MODE;
++    if (probe_hid_cid != 0u) flags |= ST_BT_CONNECTED;
++    rumble_total = bcon_usb_rumble_n + bcon_bt_rumble_n;
++    if (rumble_total != s_rumble_reported) {
++        flags |= ST_RUMBLE_SEEN;
++        s_rumble_reported = rumble_total;
++    }
++    v3_pack_status(flags, cp.last_seq, cp.crc_err, cp.drop_ev,
++                   (g_vs.errcode != 0u) ? g_vs.errcode : cp.perrcode, payload);
++    uart_tx_frame(T_STATUS, payload, 7);
+ }
+ 
+-typedef struct {
+-    uint32_t offs;
+-    const uint8_t *data;
+-} bcon_prog_arg_t;
++// ---------------- Core0: FX螳溯｡・(dispatch蜿礼炊縺ｮ蜉ｹ譫・ ----------------
++// 豕ｨ諢・ BT譛ｪ蛻晄悄蛹・(譛臥ｷ夊ｵｷ蜍・ 縺ｧ縺ｯ髮ｻ豕｢邉ｻFX縺ｯ諡貞凄縺吶ｋ (gap/hci蜻ｼ蜃ｺ荳榊庄)縲・+static void exec_fx(uint32_t now_ms) {
++    switch (g_vs.fx) {
++        case FX_NONE:
++            break;
++        case FX_CAPTURE_START:
++            if (!s_bt_init || !link_cap_start(g_vs.fx_arg)) {
++                g_vs.errcode = (uint8_t)(0x10u | (T_CAPTURE_START & 0x0Fu));
++            }
++            break;
++        case FX_BEACON_START:
++            if (!s_bt_init || !link_beacon_start()) {
++                g_vs.errcode = (uint8_t)(0x10u | (T_BEACON_START & 0x0Fu));
++            }
++            break;
++        case FX_COLOR_SET:
++            memcpy(spi_color_6050, g_vs.color, 12);
++            store_color();
++            probe_color_set_count++;
++            break;
++        case FX_KEY_DELETE:
++            if (s_bt_init) {
++                gap_delete_all_link_keys();
++            }
++            store_host_forget();
++            probe_line("keys deleted (classic + host tag)");
++            break;
++        case FX_WIRED_MODE: {
++            bool w = g_vs.fx_arg != 0u;
++            if (w == s_wired) {
++                break; // 螟牙喧縺ｪ縺励ょ・襍ｷ蜍輔＠縺ｪ縺・・+            }
++            s_wired = w;
++            store_wired(w);
++            usb_wired_set_enabled(w);
++            if (s_bt_init) {
++                link_apply_wired_mode(w);
++            }
++            // 蛻・崛縺ｯ蜀崎ｵｷ蜍輔〒驕ｩ逕ｨ (CYW43/BTstack縺ｮ譛臥┌縺瑚ｵｷ蜍墓凾遒ｺ螳壹・縺溘ａ)縲・+            // 蜷御ｸtick縺ｮoutbox flush蠕後↓關ｽ縺｡繧九ｈ縺・00ms迪ｶ莠医・+            s_reboot_at = now_ms + 500u;
++            probe_line(w ? "WIRED_MODE=1 -> reboot to wired"
++                         : "WIRED_MODE=0 -> reboot to wireless");
++            break;
++        }
++    }
++    g_vs.fx = FX_NONE;
++}
++
++// ---------------- Core0: outbox flush ----------------
++static void flush_outbox(void) {
++    for (uint8_t i = 0u; i < g_vs.ob_n; i++) {
++        v3_ob_t *o = &g_vs.ob[i];
++        if (o->act == ACT_SEND_STATUS) {
++            send_status();
++        } else if (o->act == ACT_SEND_PONG) {
++            uart_tx_frame(T_PONG, &o->arg, 1);
++        } else if (o->act == ACT_SEND_HELLO_ACK) {
++            uint8_t ack[4];
++            ack[0] = PROTO_VER;
++            ack[1] = FW_MAJOR;
++            ack[2] = FW_MINOR;
++            ack[3] = g_vs.result;
++            uart_tx_frame(T_HELLO_ACK, ack, 4);
++        }
++    }
++    g_vs.ob_n = 0u;
++}
++
++// ---------------- Core0: 1ms tick (pull/pack/drain/FX/flush/usb/neutral) ----------------
++static void poll_tick(uint32_t now) {
++    diag_rec_stage(W8ST_POLL_ENTER); /* W8DIAG: poll entered. */
++    bcon_shared_t cp;
++    uint8_t pb[3];
++    bool advanced;
++    mutex_enter_blocking(&g_m);
++    cp = g_s;
++    mutex_exit(&g_m);
++
++    // inbox drain 竊・dispatch縲Ｍive index縺ｧ遨ｺ縺ｫ縺ｪ繧九∪縺ｧ蝗槭☆縲・+    // (譌ｧ繧ｳ繝ｼ繝峨・繧ｹ繝翫ャ繝励す繝ｧ繝・ヨ蛻､螳壹〒辟｡髯舌Ν繝ｼ繝励＠縺溘◆繧〕ive index縺ｧ蝗槭☆縲・
++    g_vs.cap_valid = probe_cap_valid;
++    for (;;) {
++        ib_msg_t cur;
++        bool empty;
++        mutex_enter_blocking(&g_m);
++        empty = (g_s.ib_r == g_s.ib_w);
++        if (!empty) {
++            // payload譛螟ｧ32B繧貞ｱ謇隍・・ (mutex蜀・〒dispatch縺励↑縺・縲・+            cur = g_s.ib[g_s.ib_r];
++            g_s.ib_r = (uint8_t)((g_s.ib_r + 1u) % IB_N);
++        }
++        mutex_exit(&g_m);
++        if (empty) {
++            break;
++        }
++        // STATE/NEUTRAL縺ｮlive驕ｩ逕ｨ縺ｯCore1鬮倬溯ｷｯ縺梧球縺・(UNSUPPORTED荳九・
++        // STATE諡貞凄繧貞性繧)縲ゅ％縺薙〒縺ｯCONFIG遲峨・fx/ob縺ｮ縺ｿ謇ｱ縺・・+        (void)v3_on_frame(&g_vs, cur.type, cur.payload, cur.len, cur.seq);
++    }
++    diag_rec_stage(W8ST_POLL_BODY_DONE); /* W8DIAG: inbox drained. */
++    exec_fx(now);
++    flush_outbox();
++
++    // 蜈ｱ譛疫32 竊・pack 竊・bcon_*/probe_* (Core0蜊倡峡)縲・+    ctrl_pack_btn3(&cp.state, pb);
++    bcon_btn[0] = pb[0];
++    bcon_btn[1] = pb[1];
++    bcon_btn[2] = pb[2];
++    bcon_lx = cp.state.lx;
++    bcon_ly = cp.state.ly;
++    bcon_rx = cp.state.rx;
++    bcon_ry = cp.state.ry;
++    probe_btn[0] = pb[0];
++    probe_btn[1] = pb[1];
++    probe_btn[2] = pb[2];
++    probe_lx = cp.state.lx;
++    probe_ly = cp.state.ly;
++    probe_rx = cp.state.rx;
++    probe_ry = cp.state.ry;
++
++    // STATE蛻ｰ逹霑ｽ霍｡・逆imeout-neutral (200ms縲Ｔpec ﾂｧ8)縲・+    advanced = (cp.frames != s_last_frames);
++    if (advanced) {
++        s_last_frames = cp.frames;
++        s_last_state_ms = now;
++        if (s_neutral_hold) {
++            s_neutral_hold = false;
++        }
++        // 豁｣蟶ｸ蜿嶺ｿ｡縺ｧCONFIG諡貞凄繧ｳ繝ｼ繝峨ｒ謌ｻ縺・(spec ﾂｧ5.5)縲・+        if (g_vs.errcode != 0u && cp.frames > 0u) {
++            g_vs.errcode = 0u;
++        }
++    } else if (!s_neutral_hold &&
++               (int32_t)(now - s_last_state_ms) >= (int32_t)TIMEOUT_NEUTRAL_MS) {
++        bool live;
++        mutex_enter_blocking(&g_m);
++        live = (g_s.state.buttons != 0u || g_s.state.lx != 0x80u ||
++                g_s.state.ly != 0x80u || g_s.state.rx != 0x80u ||
++                g_s.state.ry != 0x80u);
++        if (live) {
++            g_s.state.buttons = 0u;
++            g_s.state.lx = g_s.state.ly = 0x80u;
++            g_s.state.rx = g_s.state.ry = 0x80u;
++        }
++        mutex_exit(&g_m);
++        if (live ||
++            probe_btn[0] != 0u || probe_btn[1] != 0u || probe_btn[2] != 0u) {
++            probe_input_reset();
++            probe_request_send();
++            probe_line("timeout-neutral");
++        }
++        s_neutral_hold = true;
++    }
++
++    usb_wired_task(now);
++    link_poll(now);
++    watchdog_update();
++    diag_rec_stage(W8ST_WDT_UPDATE_DONE); /* W8DIAG: watchdog fed. */
++    if (s_reboot_at != 0u && (int32_t)(now - s_reboot_at) >= 0) {
++        probe_line("rebooting to apply WIRED_MODE...");
++        sleep_ms(50);
++        watchdog_reboot(0, 0, 0);
++        while (1) tight_loop_contents();
++    }
++    diag_rec_stage(W8ST_POLL_TAIL_DONE); /* W8DIAG */
++    diag_rec_stage(W8ST_POLL_RETURN_IMMINENT); /* W8DIAG: about to return. */
++}
++// ---------------- Core0: BTstack timers ----------------
++static uint8_t hid_service_buffer[700];
++static uint8_t pnp_service_buffer[200];
++
++static btstack_packet_callback_registration_t hci_events;
++static btstack_timer_source_t stats_timer;
++static btstack_timer_source_t usb_timer;
++static btstack_timer_source_t empty_timer;
++static btstack_timer_source_t reconnect_timer;
++
++static void stats_print(void) {
++    char line[160];
++    usb_wired_stats_t ws;
++    bcon_shared_t cp;
++    mutex_enter_blocking(&g_m);
++    cp = g_s;
++    mutex_exit(&g_m);
++    usb_wired_get_stats(&ws);
++    snprintf(line, sizeof(line),
++             "BCON t=%lus hs=%d mnt=%d cid=%u wired=%d "
++             "cap=%d/%d/%d res=%d err=%02x rum=%lu+%lu "
++             "ibdrop=%lu obdrop=%u frames=%lu crc=%lu drop=%lu ovr=%lu "
++             "rx80=%lu tx81=%lu tx21=%lu in30=%lu iters=%lu",
++             (unsigned long)(to_ms_since_boot(get_absolute_time()) / 1000),
++             usb_wired_handshake_done() ? 1 : 0,
++             usb_wired_is_configured() ? 1 : 0,
++             (unsigned)probe_hid_cid, s_wired ? 1 : 0,
++             probe_cap_valid ? 1 : 0, probe_scanning ? 1 : 0,
++             probe_beacon ? 1 : 0,
++             g_vs.result, g_vs.errcode,
++             (unsigned long)bcon_usb_rumble_n,
++             (unsigned long)bcon_bt_rumble_n,
++             (unsigned long)cp.ib_drop, g_vs.ob_dropped,
++             (unsigned long)cp.frames, (unsigned long)cp.crc_err,
++             (unsigned long)cp.drop_ev, (unsigned long)cp.overruns,
++             (unsigned long)ws.rx80, (unsigned long)ws.tx81,
++             (unsigned long)ws.tx21, (unsigned long)ws.in30,
++             (unsigned long)cp.iters);
++    printf("%s\n", line);
++    if (g_vs.auto_status) {
++        send_status();
++    }
++}
+ 
+-static void bcon_flash_prog_fn(void *param) {
+-    const bcon_prog_arg_t *a = (const bcon_prog_arg_t *)param;
+-    flash_range_program(a->offs, a->data, FLASH_PAGE_SIZE);
++static void stats_handler(btstack_timer_source_t *ts) {
++    diag_rec_timer(W8TMR_STATS, W8TA_FIRE, 0u); /* W8DIAG: stats_timer fired. */
++    stats_print();
++    btstack_run_loop_set_timer(ts, 1000);
++    btstack_run_loop_add_timer(ts);
++    diag_rec_timer(W8TMR_STATS, W8TA_ADD, (uint32_t)ts->timeout); /* W8DIAG: stats_timer re-armed. */
+ }
+ 
+-static void bcon_flash_test(void) {
+-    if (!s_flash_ok) return;
+-    uint32_t t0 = time_us_32();
+-    s_fseq++;
+-    memset(s_flash_page, 0, sizeof(s_flash_page));
+-    memcpy(s_flash_page, BCON_FLASH_MAGIC, 8);
+-    s_flash_page[8] = (uint8_t)(s_fseq & 0xFFu);
+-    s_flash_page[9] = (uint8_t)((s_fseq >> 8) & 0xFFu);
+-    s_flash_page[10] = (uint8_t)((s_fseq >> 16) & 0xFFu);
+-    s_flash_page[11] = (uint8_t)((s_fseq >> 24) & 0xFFu);
+-    for (size_t i = 16; i < sizeof(s_flash_page); i++) {
+-        s_flash_page[i] = (uint8_t)((i ^ s_fseq) & 0xFFu);
+-    }
+-    uint32_t offs = BCON_FLASH_OFFS;
+-    int rc1 = flash_safe_execute(bcon_flash_erase_fn, &offs, UINT32_MAX);
+-    bcon_prog_arg_t arg = { offs, s_flash_page };
+-    int rc2 = flash_safe_execute(bcon_flash_prog_fn, &arg, UINT32_MAX);
+-    uint32_t dt = time_us_32() - t0;
+-    if (dt > s_fmax_us) s_fmax_us = dt;
+-    const uint8_t *rb = (const uint8_t *)(XIP_BASE + offs);
+-    if (rc1 == PICO_OK && rc2 == PICO_OK &&
+-        memcmp(rb, s_flash_page, sizeof(s_flash_page)) == 0) {
+-        s_fok++;
++static void usb_handler(btstack_timer_source_t *ts) {
++    diag_rec_timer(W8TMR_USB, W8TA_FIRE, 0u); /* W8DIAG: usb_timer fired. */
++    diag_rec_stage(W8ST_USB_HANDLER_ENTER); /* W8DIAG */
++    poll_tick(to_ms_since_boot(get_absolute_time()));
++    diag_rec_stage(W8ST_POLL_RETURNED); /* W8DIAG: poll_tick returned. */
++    btstack_run_loop_set_timer(ts, 1);
++    diag_rec_stage(W8ST_SET_TIMER_DONE); /* W8DIAG */
++    btstack_run_loop_add_timer(ts);
++    diag_rec_timer(W8TMR_USB, W8TA_ADD, (uint32_t)ts->timeout); /* W8DIAG: usb_timer re-armed. */
++    diag_rec_stage(W8ST_ADD_TIMER_DONE); /* W8DIAG */
++    diag_rec_stage(W8ST_USB_HANDLER_RETURN_IMMINENT); /* W8DIAG */
++}
++
++static void empty_handler(btstack_timer_source_t *ts) {
++    diag_rec_timer(W8TMR_EMPTY, W8TA_FIRE, 0u); /* W8DIAG: empty_timer fired. */
++    if (probe_hid_cid != 0u) {
++        // 騾∽ｿ｡繧ｲ繝ｼ繝郁ｩｦ鬨薙・邨ゆｺ・(辟｡鄂ｪ遒ｺ螳壹・縺溘ａ蠕ｩ蟶ｰ)縲５LV蛛懈ｭ｢縺ｮ縺ｿ邯咏ｶ壹・+        hid_device_request_can_send_now_event(probe_hid_cid);
++    }
++    btstack_run_loop_set_timer(ts, probe_send_interval_ms());
++    btstack_run_loop_add_timer(ts);
++    diag_rec_timer(W8TMR_EMPTY, W8TA_ADD, (uint32_t)ts->timeout); /* W8DIAG: empty_timer re-armed. */
++}
++
++// ---------------- Core0: BT packet handlers (wakecon蜷檎ｭ・ ----------------
++static void handle_bt_ready(uint8_t *packet) {
++    char msg[96];
++    (void)packet;
++    if (btstack_event_state_get_state(packet) != HCI_STATE_WORKING) {
++        link_note_bt_working(false);
++        return;
++    }
++    link_note_bt_working(true);
++    probe_line("BT READY");
++    snprintf(msg, sizeof(msg), "link keys=%d", link_key_count());
++    probe_line(msg);
++    if (probe_host_known) {
++        /* remove-before-add: idempotent, no-op when unscheduled */
++        btstack_run_loop_remove_timer(&reconnect_timer);
++        btstack_run_loop_set_timer(&reconnect_timer, 2000);
++        btstack_run_loop_add_timer(&reconnect_timer);
+     } else {
+-        s_ffail++;
++        probe_line("no host. pair from Switch Change-Grip screen");
++    }
++    probe_line(probe_cap_valid ? "cap saved. send BEACON_START" :
++                                 "cap none. send CAPTURE_START");
++}
++
++static void handle_conn_complete(uint8_t *packet) {
++    char msg[96];
++    uint8_t cst = hci_event_connection_complete_get_status(packet);
++    snprintf(msg, sizeof(msg), "conn status=0x%02x%s", cst,
++             (cst == ERROR_CODE_SUCCESS) ? " ok" : " FAIL");
++    probe_line(msg);
++    if (cst == 0x04u) {
++        probe_line("0x04=Page Timeout (peer silent)");
++    }
++    if (cst != ERROR_CODE_SUCCESS) {
++        return;
+     }
++    probe_connected_at_ms = to_ms_since_boot(get_absolute_time());
++    probe_ssp_count = 0u;
+ }
+ 
++static void handle_disc(uint8_t *packet) {
++    char msg[96];
++    uint8_t reason =
++        hci_event_disconnection_complete_get_reason(packet);
++    uint32_t held_ms = to_ms_since_boot(get_absolute_time()) -
++        probe_connected_at_ms;
++    snprintf(msg, sizeof(msg), "disc reason=0x%02x held=%lums",
++             reason, (unsigned long)held_ms);
++    probe_line(msg);
++    if (reason == 0x05u && probe_ssp_count == 0u && held_ms < 200u) {
++        probe_line("console stall (no SSP). power OFF Switch, or K + re-pair");
++    } else if (probe_ssp_count > 0u) {
++        snprintf(msg, sizeof(msg), "ssp=%u ok", probe_ssp_count);
++        probe_line(msg);
++    }
++    probe_hid_cid = 0u;
++    link_note_disconnected();
++    probe_line("reconnect armed");
++}
++
++static void handle_hid_meta(uint8_t *packet) {
++    char msg[96];
++    uint8_t sub = hci_event_hid_meta_get_subevent_code(packet);
++    switch (sub) {
++        case HID_SUBEVENT_CONNECTION_OPENED: {
++            uint8_t st =
++                hid_subevent_connection_opened_get_status(packet);
++            if (st != ERROR_CODE_SUCCESS) {
++                snprintf(msg, sizeof(msg),
++                         "hid open FAIL status=0x%02x", st);
++                probe_line(msg);
++                if (st == 0x66u || st == 0x6au) {
++                    probe_line("0x66/0x6a=refused security. "
++                               "delete pairing on BOTH sides + re-pair");
++                }
++                probe_hid_cid = 0u;
++                link_note_disconnected();
++                break;
++            }
++            probe_hid_cid =
++                hid_subevent_connection_opened_get_hid_cid(packet);
++            probe_hid_reset();
++            {
++                bd_addr_t a;
++                hid_subevent_connection_opened_get_bd_addr(packet, a);
++                store_host(a);
++                snprintf(msg, sizeof(msg), "hid open. host %s saved",
++                         bd_addr_to_str(a));
++                probe_line(msg);
++            }
++            link_mark_connected();
++            break;
++        }
++        case HID_SUBEVENT_CONNECTION_CLOSED:
++            probe_hid_cid = 0u;
++            link_note_disconnected();
++            probe_line("hid closed");
++            break;
++        case HID_SUBEVENT_CAN_SEND_NOW:
++            probe_can_send_now();
++            break;
++        default:
++            snprintf(msg, sizeof(msg), "hid sub=0x%02x", sub);
++            probe_line(msg);
++            break;
++    }
++}
++
++static void packet_handler(uint8_t packet_type, uint16_t channel,
++                           uint8_t *packet, uint16_t size) {
++    uint8_t ev;
++    (void)channel;
++    (void)size;
++    ev = hci_event_packet_get_type(packet);
++    diag_rec_ev(ev); /* W8DIAG: last HCI event byte (replaces W3 ev). */
++    // LE 蛻・妙縺ｯ Classic 蛛ｴ縺ｮ蜃ｦ逅・∈關ｽ縺ｨ縺輔↑縺・・+    if (ev == HCI_EVENT_DISCONNECTION_COMPLETE &&
++        link_is_le(hci_event_disconnection_complete_get_connection_handle(
++            packet))) {
++        link_le_packet(packet_type, packet, size);
++        return;
++    }
++    link_le_packet(packet_type, packet, size);
++    // SSP/pairing蜿ｯ隕門喧 (wakecon蜷檎ｭ峨る嵯縺ｮ遘伜ｯ・・蜃ｺ縺輔↑縺・縲・+    // 0x31/0x36=SSP begin/end縲・x32/0x33繧４SP縲・x0e=BDADDR蠢懃ｭ斐・+    if (ev == 0x31u || ev == 0x32u || ev == 0x33u || ev == 0x36u) {
++        if (probe_ssp_count < 255u) {
++            probe_ssp_count++;
++        }
++    }
++    if (ev == 0x0eu && size >= 12u && packet[3] == 0x01u &&
++        packet[4] == 0x09u && packet[5] == 0x10u) {
++        char msg[96];
++        snprintf(msg, sizeof(msg), "BDADDR=%02x%02x%02x%02x%02x%02x",
++                 packet[11], packet[10], packet[9],
++                 packet[8], packet[7], packet[6]);
++        probe_line(msg);
++    }
++    switch (ev) {
++        case BTSTACK_EVENT_STATE:
++            handle_bt_ready(packet);
++            break;
++        case HCI_EVENT_CONNECTION_REQUEST: {
++            // 謗･邯夊ｦ∵ｱょ・縺ｮ逶ｴ謗･險倬鹸 (陦檎ぜ荳榊､・縲・+            // peer BD_ADDR遞句ｺｦ縺ｯ蜿ｯ (遘伜ｯ・・蜃ｺ縺輔↑縺・縲・+            bd_addr_t a;
++            char msg[64];
++            hci_event_connection_request_get_bd_addr(packet, a);
++            snprintf(msg, sizeof(msg), "conn request peer=%02x%02x%02x%02x%02x%02x lt=%u",
++                     a[0], a[1], a[2], a[3], a[4], a[5],
++                     (unsigned)hci_event_connection_request_get_link_type(packet));
++            probe_line(msg);
++            break;
++        }
++        case HCI_EVENT_CONNECTION_COMPLETE:
++            handle_conn_complete(packet);
++            break;
++        case HCI_EVENT_DISCONNECTION_COMPLETE:
++            handle_disc(packet);
++            break;
++        case HCI_EVENT_HID_META:
++            handle_hid_meta(packet);
++            break;
++        case GAP_EVENT_ADVERTISING_REPORT:
++            if (packet_type == HCI_EVENT_PACKET) {
++                link_cap_report(packet);
++            }
++            break;
++        // 隱崎ｨｼ莠､謠帙・逶ｴ謗･險倬鹸 (陦檎ぜ荳榊､・縲る嵯縺ｮ遘伜ｯ・・蜃ｺ縺輔↑縺・・+        case HCI_EVENT_LINK_KEY_REQUEST: {
++            bd_addr_t a;
++            char msg[64];
++            hci_event_link_key_request_get_bd_addr(packet, a);
++            snprintf(msg, sizeof(msg), "linkkey req peer=%02x%02x%02x%02x%02x%02x",
++                     a[0], a[1], a[2], a[3], a[4], a[5]);
++            probe_line(msg);
++            break;
++        }
++        case HCI_EVENT_AUTHENTICATION_COMPLETE: {
++            char msg[64];
++            uint8_t auth_status =
++                hci_event_authentication_complete_get_status(packet);
++            snprintf(msg, sizeof(msg), "auth complete status=0x%02x",
++                     auth_status);
++            probe_line(msg);
++            if (auth_status != 0) {
++                /* Stale key: forget it so the next attempt re-pairs cleanly. */
++                gap_delete_all_link_keys();
++                probe_line("auth fail: keys dropped, re-pair");
++            }
++            break;
++        }
++        case HCI_EVENT_ENCRYPTION_CHANGE: {
++            char msg[64];
++            snprintf(msg, sizeof(msg), "encrypt change status=0x%02x en=%u",
++                     hci_event_encryption_change_get_status(packet),
++                     (unsigned)hci_event_encryption_change_get_encryption_enabled(packet));
++            probe_line(msg);
++            break;
++        }
++        default:
++            break;
++    }
++}
++
++// 譛臥ｷ夊ｵｷ蜍輔・Core0 loop (BTstack縺ｪ縺励・CYW43縺ｪ縺・縲・+// CYW43邨ｦ髮ｻ荳ｭ縺ｯSwitch 2繝峨ャ繧ｯ縺袈SB蛻玲嫌縺励↑縺・ｮ滓ｸｬ縺ｮ縺溘ａ縲∵怏邱壽凾縺ｯ
++// 辟｡邱壻ｸ蠑上ｒ荳翫￡縺ｪ縺・・ms tick・・遘値og縲ら┌邱壹∈縺ｮ蛻・崛縺ｯ蜀崎ｵｷ蜍暮←逕ｨ縲・+static void wired_loop(void) {
++    uint32_t last_ms = 0u, last_log = 0u;
++    printf("ready. feed UART1 GP4/5 %lu baud v3 frames. log=UART0 115200\n",
++           (unsigned long)POC_DATA_BAUD);
++    watchdog_enable(2000, 1);
++    for (;;) {
++        uint32_t now = to_ms_since_boot(get_absolute_time());
++        if (now == last_ms) {
++            tight_loop_contents();
++            continue;
++        }
++        last_ms = now;
++        poll_tick(now);
++        if (now - last_log >= 1000u) {
++            last_log = now;
++            stats_print();
++        }
++    }
++}
++
++/* W8DIAG: link-key-db shim (wrapper layer only; no BTstack/SDK edits). */
++/* W8DIAG: Forwards all 9 methods to the TLV instance; counts put/delete. */
++/* W8DIAG: Static storage; exact signatures from btstack_link_key_db.h. */
++static const btstack_link_key_db_t *w8_lk_inner; /* W8DIAG */
++/* W8DIAG */ static void w8_lk_open(void) { w8_lk_inner->open(); }
++/* W8DIAG */ static void w8_lk_set_local_bd_addr(bd_addr_t bd_addr) { w8_lk_inner->set_local_bd_addr(bd_addr); }
++/* W8DIAG */ static void w8_lk_close(void) { w8_lk_inner->close(); }
++/* W8DIAG */ static int w8_lk_get(bd_addr_t bd_addr, link_key_t link_key, link_key_type_t *type) { return w8_lk_inner->get_link_key(bd_addr, link_key, type); }
++/* W8DIAG */ static void w8_lk_put(bd_addr_t bd_addr, link_key_t link_key, link_key_type_t type) { uint32_t w8_t0 = time_us_32(); diag_rec_flash(W8OP_LK_PUT, W8PH_BEGIN, 0u, 0u); w8_lk_inner->put_link_key(bd_addr, link_key, type); diag_rec_flash(W8OP_LK_PUT, W8PH_END, 0u, time_us_32() - w8_t0); }
++/* W8DIAG */ static void w8_lk_del(bd_addr_t bd_addr) { uint32_t w8_t0 = time_us_32(); diag_rec_flash(W8OP_LK_DEL, W8PH_BEGIN, 0u, 0u); w8_lk_inner->delete_link_key(bd_addr); diag_rec_flash(W8OP_LK_DEL, W8PH_END, 0u, time_us_32() - w8_t0); }
++/* W8DIAG */ static int w8_lk_iter_init(btstack_link_key_iterator_t *it) { return w8_lk_inner->iterator_init(it); }
++/* W8DIAG */ static int w8_lk_iter_next(btstack_link_key_iterator_t *it, bd_addr_t bd_addr, link_key_t link_key, link_key_type_t *type) { return w8_lk_inner->iterator_get_next(it, bd_addr, link_key, type); }
++/* W8DIAG */ static void w8_lk_iter_done(btstack_link_key_iterator_t *it) { w8_lk_inner->iterator_done(it); }
++/* W8DIAG */ static const btstack_link_key_db_t w8_lk_shim = {
++/* W8DIAG */     .open = w8_lk_open,
++/* W8DIAG */     .set_local_bd_addr = w8_lk_set_local_bd_addr,
++/* W8DIAG */     .close = w8_lk_close,
++/* W8DIAG */     .get_link_key = w8_lk_get,
++/* W8DIAG */     .put_link_key = w8_lk_put,
++/* W8DIAG */     .delete_link_key = w8_lk_del,
++/* W8DIAG */     .iterator_init = w8_lk_iter_init,
++/* W8DIAG */     .iterator_get_next = w8_lk_iter_next,
++/* W8DIAG */     .iterator_done = w8_lk_iter_done,
++/* W8DIAG */ };
++/* W8DIAG: boot-time recorder summary with epoch + boot deltas (boot context only, never IRQ). */
++/* W8DIAG: Prints via probe_line; the recorder itself never prints. */
++/* W8DIAG: *-boot lines = current-minus-baseline (this boot only). */
++/* W8DIAG */ static void w8_boot_dump(void) {
++/* W8DIAG */     const w8_state_t *s = diag_rec_state();
++/* W8DIAG */     char w8m[160];
++/* W8DIAG */     if (!diag_rec_valid()) {
++/* W8DIAG */         probe_line("w8rec invalid (fresh boot; ring reset)");
++/* W8DIAG */         return;
++/* W8DIAG */     }
++/* W8DIAG */     snprintf(w8m, sizeof(w8m), "w8epoch post=%lu current=%lu",
++/* W8DIAG */              (unsigned long)s->post_epoch, (unsigned long)s->boot_epoch);
++/* W8DIAG */     probe_line(w8m);
++/* W8DIAG */     snprintf(w8m, sizeof(w8m), "w8flash-total safe=%lu/%lu tag=%lu/%lu del=%lu/%lu lkput=%lu/%lu lkdel=%lu/%lu",
++/* W8DIAG */              (unsigned long)s->begins[W8OP_STORE_SAFE], (unsigned long)s->ends[W8OP_STORE_SAFE],
++/* W8DIAG */              (unsigned long)s->begins[W8OP_STORE_TAG], (unsigned long)s->ends[W8OP_STORE_TAG],
++/* W8DIAG */              (unsigned long)s->begins[W8OP_DELETE_TAG], (unsigned long)s->ends[W8OP_DELETE_TAG],
++/* W8DIAG */              (unsigned long)s->begins[W8OP_LK_PUT], (unsigned long)s->ends[W8OP_LK_PUT],
++/* W8DIAG */              (unsigned long)s->begins[W8OP_LK_DEL], (unsigned long)s->ends[W8OP_LK_DEL]);
++/* W8DIAG */     probe_line(w8m);
++/* W8DIAG */     snprintf(w8m, sizeof(w8m), "w8flash-boot safe=%lu/%lu tag=%lu/%lu del=%lu/%lu lkput=%lu/%lu lkdel=%lu/%lu",
++/* W8DIAG */              (unsigned long)(s->begins[W8OP_STORE_SAFE] - s->base_begins[W8OP_STORE_SAFE]), (unsigned long)(s->ends[W8OP_STORE_SAFE] - s->base_ends[W8OP_STORE_SAFE]),
++/* W8DIAG */              (unsigned long)(s->begins[W8OP_STORE_TAG] - s->base_begins[W8OP_STORE_TAG]), (unsigned long)(s->ends[W8OP_STORE_TAG] - s->base_ends[W8OP_STORE_TAG]),
++/* W8DIAG */              (unsigned long)(s->begins[W8OP_DELETE_TAG] - s->base_begins[W8OP_DELETE_TAG]), (unsigned long)(s->ends[W8OP_DELETE_TAG] - s->base_ends[W8OP_DELETE_TAG]),
++/* W8DIAG */              (unsigned long)(s->begins[W8OP_LK_PUT] - s->base_begins[W8OP_LK_PUT]), (unsigned long)(s->ends[W8OP_LK_PUT] - s->base_ends[W8OP_LK_PUT]),
++/* W8DIAG */              (unsigned long)(s->begins[W8OP_LK_DEL] - s->base_begins[W8OP_LK_DEL]), (unsigned long)(s->ends[W8OP_LK_DEL] - s->base_ends[W8OP_LK_DEL]));
++/* W8DIAG */     probe_line(w8m);
++/* W8DIAG */     snprintf(w8m, sizeof(w8m), "w8last store tag=%lx epoch=%lu rc=%ld dur=%lu",
++/* W8DIAG */              (unsigned long)s->last_tag[W8OP_STORE_SAFE],
++/* W8DIAG */              (unsigned long)s->last_epoch[W8OP_STORE_SAFE],
++/* W8DIAG */              (long)s->last_rc[W8OP_STORE_SAFE],
++/* W8DIAG */              (unsigned long)s->last_dur[W8OP_STORE_SAFE]);
++/* W8DIAG */     probe_line(w8m);
++/* W8DIAG */     snprintf(w8m, sizeof(w8m), "w8last delete tag=%lx epoch=%lu rc=%ld dur=%lu",
++/* W8DIAG */              (unsigned long)s->last_tag[W8OP_DELETE_TAG],
++/* W8DIAG */              (unsigned long)s->last_epoch[W8OP_DELETE_TAG],
++/* W8DIAG */              (long)s->last_rc[W8OP_DELETE_TAG],
++/* W8DIAG */              (unsigned long)s->last_dur[W8OP_DELETE_TAG]);
++/* W8DIAG */     probe_line(w8m);
++/* W8DIAG */     snprintf(w8m, sizeof(w8m), "w8tmr-total usb a=%lu f=%lu to=%lu empty a=%lu f=%lu to=%lu stats a=%lu f=%lu to=%lu",
++/* W8DIAG */              (unsigned long)s->tmr_add[W8TMR_USB], (unsigned long)s->tmr_fire[W8TMR_USB],
++/* W8DIAG */              (unsigned long)s->tmr_to[W8TMR_USB],
++/* W8DIAG */              (unsigned long)s->tmr_add[W8TMR_EMPTY], (unsigned long)s->tmr_fire[W8TMR_EMPTY],
++/* W8DIAG */              (unsigned long)s->tmr_to[W8TMR_EMPTY],
++/* W8DIAG */              (unsigned long)s->tmr_add[W8TMR_STATS], (unsigned long)s->tmr_fire[W8TMR_STATS],
++/* W8DIAG */              (unsigned long)s->tmr_to[W8TMR_STATS]);
++/* W8DIAG */     probe_line(w8m);
++/* W8DIAG */     snprintf(w8m, sizeof(w8m), "w8tmr-boot usb a=%lu f=%lu empty a=%lu f=%lu stats a=%lu f=%lu",
++/* W8DIAG */              (unsigned long)(s->tmr_add[W8TMR_USB] - s->base_tmr_add[W8TMR_USB]), (unsigned long)(s->tmr_fire[W8TMR_USB] - s->base_tmr_fire[W8TMR_USB]),
++/* W8DIAG */              (unsigned long)(s->tmr_add[W8TMR_EMPTY] - s->base_tmr_add[W8TMR_EMPTY]), (unsigned long)(s->tmr_fire[W8TMR_EMPTY] - s->base_tmr_fire[W8TMR_EMPTY]),
++/* W8DIAG */              (unsigned long)(s->tmr_add[W8TMR_STATS] - s->base_tmr_add[W8TMR_STATS]), (unsigned long)(s->tmr_fire[W8TMR_STATS] - s->base_tmr_fire[W8TMR_STATS]));
++/* W8DIAG */     probe_line(w8m);
++/* W8DIAG */     snprintf(w8m, sizeof(w8m), "w8stage last=%lu n=%lu trail=%u,%u,%u,%u,%u,%u,%u,%u",
++/* W8DIAG */              (unsigned long)s->stage_last, (unsigned long)s->stage_n,
++/* W8DIAG */              s->stage_trail[0], s->stage_trail[1], s->stage_trail[2], s->stage_trail[3],
++/* W8DIAG */              s->stage_trail[4], s->stage_trail[5], s->stage_trail[6], s->stage_trail[7]);
++/* W8DIAG */     probe_line(w8m);
++/* W8DIAG */     snprintf(w8m, sizeof(w8m), "w8ev last=0x%02lx n=%lu",
++/* W8DIAG */              (unsigned long)s->ev_last, (unsigned long)s->ev_n);
++/* W8DIAG */     probe_line(w8m);
++/* W8DIAG */ }
+ // ---------------- Core0 main ----------------
+ int main(void) {
++    hid_sdp_record_t hid_params = {
++        SWITCH_CLASS_OF_DEVICE,
++        33, 1, 1, 1, 0, 0, 0xFFFF, 0xFFFF, 3200,
++        switch_bt_report_descriptor,
++        sizeof(switch_bt_report_descriptor),
++        SWITCH_HID_NAME,
++    };
+     stdio_init_all();
+     uart_init(LOG_UART, LOG_BAUD);
+     gpio_set_function(LOG_TX_PIN, GPIO_FUNC_UART);
+     gpio_set_function(LOG_RX_PIN, GPIO_FUNC_UART);
+ 
+-    printf("\n=== pico-bcon wired (Task 3) ===\n");
++    printf("\n=== pico-bcon ===\n");
++    s_wdt_recovered = watchdog_caused_reboot(); /* W8DIAG: WDT flag first (strict order; pure read, original assignment kept). */
++    diag_rec_init(); /* W8DIAG: flight recorder (continues across WDT reboot; epoch+baseline). */
++    // 豁｣隕乗焔谿ｵ縺ｧHardFault蝣ｱ蜻翫ｒ謗帙￠繧九・+    exception_set_exclusive_handler(HARDFAULT_EXCEPTION, hardfault_reporter);
++    // 閾ｪ繧ｳ繧｢縺ｮMSPLIM (Core1蛛ｴ縺ｯcore1_entry縺ｧ)縲・+    stack_guard_install(&__StackBottom);
++    // UDF逍朱夂｢ｺ隱阪・revert貂医∩ (蜍穂ｽ懃｢ｺ隱弘K)縲・+
++    // WDT蠕ｩ蟶ｰ縺ｮ險倬鹸 (STATUS bit3)縲Ｆnable蜑阪・蛟､繧定ｪｭ繧縲・+    s_wdt_recovered = watchdog_caused_reboot();
+ 
+-    // 閾ｪMAC: unique ID逕ｱ譚･ (蠢懃ｭ秘・↓蜿崎ｻ｢縺励※菫晄戟)縲５ask 4縺ｮlink螻､縺檎ｶ呎価縺吶ｋ縲・+    // 閾ｪMAC: OUI 7C:BB:8A・丘nique譛ｫ蟆ｾ (wakecon link_init縺ｨ蜷御ｸ)縲・+    link_init();
+     {
+-        pico_unique_board_id_t uid;
+-        uint8_t mb[6];
+-        pico_get_unique_board_id(&uid);
+-        for (int k = 0; k < 6; k++) mb[k] = uid.id[2 + k];
+-        mb[0] |= 0x02u; // locally administered
+-        for (int k = 0; k < 6; k++) bcon_mac[k] = mb[5 - k];
++        int k;
++        for (k = 0; k < 6; k++) bcon_mac[k] = probe_addr[5 - k];
+         printf("mac %02x:%02x:%02x:%02x:%02x:%02x\n",
+-               mb[0], mb[1], mb[2], mb[3], mb[4], mb[5]);
++               probe_addr[0], probe_addr[1], probe_addr[2],
++               probe_addr[3], probe_addr[4], probe_addr[5]);
+     }
+ 
+-    uintptr_t bend = (uintptr_t)&__flash_binary_end;
+-    if (bend < (uintptr_t)(XIP_BASE + BCON_FLASH_OFFS)) {
+-        s_flash_ok = true;
+-        printf("flash test region ok (end=0x%08lx)\n", (unsigned long)bend);
+-    } else {
+-        printf("flash test region NG: binary too big, flash test skipped\n");
++    // TLV豌ｸ邯壼喧縺ｮ蛻晄悄蛹・(host/color/cap/wired・気lassic繝ｪ繝ｳ繧ｯ骰ｵ)縲・+    // btstack_tlv_get_instance 縺ｯ險ｭ螳壹＠縺溯・′蜍昴■縲よ悴險ｭ螳壹□縺ｨ蜈ｨstore邉ｻ縺・+    // 繧ｵ繧､繝ｬ繝ｳ繝育┌蜉ｹ縺ｫ縺ｪ繧・(wakecon縺九ｉ縺ｮ邯呎価貍上ｌ蟇ｾ遲・縲・+    // Core1襍ｷ蜍募燕縺ｮ邏燃AM險ｭ螳壹・縺溘ａFlash菫晁ｭｷ縺ｯ荳崎ｦ√・+    {
++        static btstack_tlv_flash_bank_t tlv_bank_ctx;
++        const btstack_tlv_t *tlv_impl;
++        tlv_impl = btstack_tlv_flash_bank_init_instance(
++            &tlv_bank_ctx, pico_flash_bank_instance(), NULL);
++        btstack_tlv_set_instance(tlv_impl, &tlv_bank_ctx);
++        w8_lk_inner = btstack_link_key_db_tlv_get_instance(tlv_impl, &tlv_bank_ctx); /* W8DIAG: shim target. */
++        hci_set_link_key_db(&w8_lk_shim); /* W8DIAG: counted shim (was direct TLV instance). */
++        printf("tlv=%d\n", (tlv_impl != NULL) ? 1 : 0);
+     }
+ 
++    // TLV隱ｭ霎ｼ縺ｯCore1襍ｷ蜍募燕縺ｫ貂医∪縺帙ｋ (XIP逶ｴ隱ｭ縺ｮ縺溘ａ菫晁ｭｷ荳崎ｦ・縲・+    store_color_load();
++    store_host_load();
++    store_cap_load();
++    s_wired = store_wired_load_def(WIRED_DEFAULT != 0); // 譛ｪ菫晏ｭ俶凾縺ｮ譌｢螳・+    printf("wired=%d(wdef=%d) host=%d cap=%d wdt=%d\n", s_wired ? 1 : 0, WIRED_DEFAULT,
++           probe_host_known ? 1 : 0, probe_cap_valid ? 1 : 0,
++           s_wdt_recovered ? 1 : 0);
++    w8_boot_dump(); /* W8DIAG: flight-recorder summary with epoch+boot deltas (boot context only). */
++
+     mutex_init(&g_m);
+     memset(&g_s, 0, sizeof(g_s));
+     g_s.state.lx = g_s.state.ly = 0x80u;
+     g_s.state.rx = g_s.state.ry = 0x80u;
++    g_s.state_accept = true;
++    v3_session_init(&g_vs);
+     multicore_launch_core1(core1_entry);
+ 
+-    uint32_t w0 = to_ms_since_boot(get_absolute_time());
+-    while (!g_core1_booted) {
+-        if (to_ms_since_boot(get_absolute_time()) - w0 > 2000) {
+-            printf("NG: core1 boot timeout\n");
+-            while (1) tight_loop_contents();
++    {
++        uint32_t w0 = to_ms_since_boot(get_absolute_time());
++        while (!g_core1_booted) {
++            if (to_ms_since_boot(get_absolute_time()) - w0 > 2000) {
++                printf("NG: core1 boot timeout\n");
++                while (1) tight_loop_contents();
++            }
+         }
+     }
+     printf("core1 boot=%lu detail=%lu victim=%d\n",
+            (unsigned long)g_s.boot_code, (unsigned long)g_s.boot_detail,
+            (int)multicore_lockout_victim_is_initialized(1));
+ 
+-    // 譛臥ｷ哥W縺ｯ辟｡邱壹ｒ荳翫￡縺ｪ縺・(spec ﾂｧ12)縲ゅラ繝・け蛻玲嫌縺ｮ縺溘ａ縲・+    // 譛臥ｷ夊ｵｷ蜍輔〒縺ｯBT繧医ｊ蜈医↓USB (蛻玲嫌蜑埼崕豬∝宛髯舌↓縺九°繧峨↑縺・ｈ縺・縲・     usb_wired_init();
+-    usb_wired_set_enabled(true);
+-    printf("ready. feed UART1 GP4/5 %lu baud v3 frames. log=UART0 115200\n",
+-           (unsigned long)POC_DATA_BAUD);
++    usb_wired_set_enabled(s_wired);
+ 
+-    uint32_t last_ms = 0u, last_log = 0u, last_flash = 0u;
+-    for (;;) {
+-        uint32_t now = to_ms_since_boot(get_absolute_time());
+-        if (now == last_ms) {
+-            tight_loop_contents();
+-            continue;
+-        }
+-        last_ms = now;
++    if (s_wired) {
++        wired_loop(); // 謌ｻ繧峨↑縺・ら┌邱壻ｸ蠑上・荳翫￡縺ｪ縺・(蛻玲嫌蟷ｲ貂峨・縺溘ａ)縲・+    }
++    // 莉･荳九・辟｡邱夊ｵｷ蜍輔・縺ｿ縲・Tstack・気YW43・矩崕豕｢縺ゅｊ縲・ 
+-        // 蜈ｱ譛疫32 竊・pack 竊・bcon_* (Core0蜊倡峡縲・ms tick)縲・-        {
+-            bcon_shared_t cp;
+-            uint8_t pb[3];
+-            mutex_enter_blocking(&g_m);
+-            cp = g_s;
+-            mutex_exit(&g_m);
+-            ctrl_pack_btn3(&cp.state, pb);
+-            bcon_btn[0] = pb[0];
+-            bcon_btn[1] = pb[1];
+-            bcon_btn[2] = pb[2];
+-            bcon_lx = cp.state.lx;
+-            bcon_ly = cp.state.ly;
+-            bcon_rx = cp.state.rx;
+-            bcon_ry = cp.state.ry;
+-        }
++    if (cyw43_arch_init() != 0) {
++        printf("NG: cyw43_arch_init\n");
++        while (1) tight_loop_contents();
++    }
++    printf("cyw43 ok\n");
++    usb_wired_pump();
++    link_init();
++    // link_init縺ｯMAC蜀咲函謌舌・縺溘ａbcon_mac繧呈寺縺醍峩縺吶・+    {
++        int k;
++        for (k = 0; k < 6; k++) bcon_mac[k] = probe_addr[5 - k];
++    }
+ 
+-        usb_wired_task(now);
++    gap_discoverable_control(1);
++    gap_connectable_control(1);
++    gap_set_class_of_device(SWITCH_CLASS_OF_DEVICE);
++    gap_set_local_name(SWITCH_GAP_NAME);
++    // Switch 2 requires SNIFF acceptance: without it the console never sends
++    // SUB after HID open and drops the link with 0x13 after ~1s (AB1 proven).
++    gap_set_default_link_policy_settings(LM_LINK_POLICY_ENABLE_ROLE_SWITCH |
++                                         LM_LINK_POLICY_ENABLE_SNIFF_MODE);
++    gap_set_allow_role_switch(true);
++    gap_ssp_set_io_capability(SSP_IO_CAPABILITY_NO_INPUT_NO_OUTPUT);
++    gap_ssp_set_auto_accept(true);
+ 
+-        if (now - last_flash >= 5000u) {
+-            last_flash = now;
+-            bcon_flash_test();
+-        }
++    usb_wired_pump();
++    l2cap_init();
++    sdp_init();
+ 
+-        if (now - last_log >= 1000u) {
+-            usb_wired_stats_t ws;
+-            bcon_shared_t cp;
+-            last_log = now;
+-            usb_wired_get_stats(&ws);
+-            mutex_enter_blocking(&g_m);
+-            cp = g_s;
+-            mutex_exit(&g_m);
+-            printf("BCON t=%lus hs=%d mnt=%d rx80=%lu last=%02x tx81=%lu "
+-                   "tx21=%lu in30=%lu sof=%lu f01=%02x%02x%02x%02x "
+-                   "spi=%04x:%u frames=%lu crc=%lu drop=%lu ovr=%lu "
+-                   "fok=%lu ffail=%lu\n",
+-                   (unsigned long)(now / 1000),
+-                   usb_wired_handshake_done() ? 1 : 0,
+-                   usb_wired_is_configured() ? 1 : 0,
+-                   (unsigned long)ws.rx80, ws.last80,
+-                   (unsigned long)ws.tx81, (unsigned long)ws.tx21,
+-                   (unsigned long)ws.in30, (unsigned long)ws.sof,
+-                   ws.first8[0], ws.first8[1], ws.first8[2], ws.first8[3],
+-                   ws.spi_a, ws.spi_n,
+-                   (unsigned long)cp.frames, (unsigned long)cp.crc_err,
+-                   (unsigned long)cp.drop_ev, (unsigned long)cp.overruns,
+-                   (unsigned long)s_fok, (unsigned long)s_ffail);
+-        }
+-    }
++    memset(hid_service_buffer, 0, sizeof(hid_service_buffer));
++    hid_create_sdp_record(hid_service_buffer,
++                          sdp_create_service_record_handle(), &hid_params);
++    btstack_assert(de_get_len(hid_service_buffer) <= sizeof(hid_service_buffer));
++    sdp_register_service(hid_service_buffer);
++
++    memset(pnp_service_buffer, 0, sizeof(pnp_service_buffer));
++    device_id_create_sdp_record(pnp_service_buffer,
++                                sdp_create_service_record_handle(),
++                                DEVICE_ID_VENDOR_ID_SOURCE_USB,
++                                SWITCH_VENDOR_ID, SWITCH_PRODUCT_ID,
++                                SWITCH_PRODUCT_VERSION);
++    btstack_assert(de_get_len(pnp_service_buffer) <= sizeof(pnp_service_buffer));
++    sdp_register_service(pnp_service_buffer);
++
++    hid_device_init(1, sizeof(switch_bt_report_descriptor),
++                    switch_bt_report_descriptor);
++    hid_device_accept_truncated_hid_reports(true);
++    hid_device_register_report_data_callback(&probe_report_handler);
++    hid_device_register_packet_handler(&packet_handler);
++
++    hci_events.callback = &packet_handler;
++    hci_add_event_handler(&hci_events);
++
++    /* W8DIAG: hci_dump (W6-proven inert; comparability). */ hci_dump_init(hci_dump_embedded_stdout_get_instance());
++    /* W8DIAG */ hci_dump_enable_packet_log(true);
++    hci_set_bd_addr(probe_addr);
++    usb_wired_pump();
++
++    // 譛臥ｷ・辟｡邱壹・蛻晄悄蜿肴丐 (髮ｻ豕｢繝ｻ蠕・■蜿励￠繝ｻUSB蜀榊・謖吶・豎ｺ螳・縲・+    // 辟｡邱夊ｵｷ蜍輔・縺溘ａ s_wired==false 縺ｮ縺ｯ縺壹・T蜻ｼ縺ｳ蜃ｺ縺励・縺薙％縺九ｉ縺ｮ縺ｿ縲・+    link_apply_wired_mode(s_wired);
++    s_bt_init = true;
++
++    btstack_run_loop_set_timer_handler(&stats_timer, &stats_handler);
++    btstack_run_loop_set_timer(&stats_timer, 1000);
++    btstack_run_loop_add_timer(&stats_timer);
++    diag_rec_timer(W8TMR_STATS, W8TA_ADD, (uint32_t)stats_timer.timeout); /* W8DIAG: stats_timer armed. */
++
++    btstack_run_loop_set_timer_handler(&usb_timer, &usb_handler);
++    btstack_run_loop_set_timer(&usb_timer, 1);
++    btstack_run_loop_add_timer(&usb_timer);
++    diag_rec_timer(W8TMR_USB, W8TA_ADD, (uint32_t)usb_timer.timeout); /* W8DIAG: usb_timer armed. */
++
++    btstack_run_loop_set_timer_handler(&empty_timer, &empty_handler);
++    btstack_run_loop_set_timer(&empty_timer, 100);
++    btstack_run_loop_add_timer(&empty_timer);
++    diag_rec_timer(W8TMR_EMPTY, W8TA_ADD, (uint32_t)empty_timer.timeout); /* W8DIAG: empty_timer armed. */
++
++    btstack_run_loop_set_timer_handler(&reconnect_timer,
++                                       &link_reconnect_handler);
++
++    printf("ready. feed UART1 GP4/5 %lu baud v3 frames. log=UART0 115200\n",
++           (unsigned long)POC_DATA_BAUD);
++
++    // 逕溷ｭ聾DT 2s (spec ﾂｧ8)縲Ｖsb tick (1ms) 縺ｧ譖ｴ譁ｰ縲Ｅebug荳ｭ縺ｯ蛛懈ｭ｢縲・+    watchdog_enable(2000, 1);
++    btstack_run_loop_execute();
++
++    while (1) tight_loop_contents();
+     return 0;
+ }

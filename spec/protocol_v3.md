@@ -72,7 +72,7 @@ Offset  Field    Size  説明
 
 ## 5. ペイロード定義
 
-### 5.1 STATE (LEN=8)
+### 5.1 STATE (LEN=8 / LEN=12)
 
 ```
 Off  Field  Size  説明
@@ -104,6 +104,11 @@ BTNビット（1=押下）：
 * 予約bitは0固定で送信。受信側は予約bitを無視する（将来拡張のため拒否しない）。
 * スティックY反転・12bit化等の座標変換はPC送信ラッパ1箇所に集約。Picoは8bit値をそのまま保持し、輸送pack時に12bit化する。
 
+LEN=12形式（12bitスティック拡張）：BTN 4BはLEN=8と同一。続く8BがLX・LY・RX・RYの
+u16LE（0-4095、中央0x0800）。Picoは12bit域で保持し、Y反転（4096-Y・4095 clamp）は
+pack時にLEN=8と同一式で適用する。LEN=8受信値は取込時に<<4して12bit化するため、
+0x80は0x800と等価。parser/dispatchは8/12のみ受理し、他のLENはERR_BAD_LEN。
+
 ### 5.2 NEUTRAL (LEN=0)
 
 BTN=0・全スティック0x80を即時適用。STATE全中立と等価の短縮形。
@@ -123,8 +128,9 @@ Picoはv3のみ話す。HELLO前のSTATUS自動送信はしない。FLAGS bit0�
 
 ```
 Off  Field        Size  説明
- 0   STATE_FLAGS   1    bit0 USB mounted／bit1 Switch ready／bit2 timeout-neutral中
-                        bit3 WDT recovered／bit4 UART overrun／bit5 wired mode／bit6 BT connected
+  0   STATE_FLAGS   1    bit0 USB mounted／bit1 Switch ready／bit2 timeout-neutral中
+                         bit3 WDT recovered／bit4 UART overrun／bit5 wired mode／bit6 BT connected
+                         bit7 RUMBLE受信あり (前回STATUS以降にSwitch振動出力を受信)
  1   LAST_SEQ      1    直近受理PC→Pico seq
  2   ERR_CRC       2    CRC/形式リジェクト累計（u16 LE、飽和）
  4   ERR_DROP      2    SEQ欠番イベント累計（mod256、飽和）
@@ -141,6 +147,11 @@ ERRCODE：`0x00 正常／0x01 LEN不正／0x02 CRC不一致／0x03 SEQ欠番／0
 * COLOR_SET：`[0..11]=RGB×4（本体・ボタン・左・右）`。有線中は再列挙して読み直させる。
 * KEY_DELETE：LEN0。Classic鍵全削除（Switch側登録解除も要案内）。
 * WIRED_MODE：`[0]=0/1`。範囲外拒否（0x14）。Flash保存・起動時復元。
+  切替は再起動で適用する (CYW43/BTstackの有無が起動時確定のため。
+  受理後約500msで自発再起動する)。有線起動では無線一式を上げない
+  (CYW43給電中はSwitch 2ドックがUSB列挙しない実測のため)。
+  取込・再生 (CAPTURE/BEACON) は無線起動でのみ有効。有線中の要求は
+  ERRCODE `0x10`/`0x11` で拒否する (先にWIRED_MODE=0＋再起動が必要)。
 * STATUS_REQ：LEN0。即時STATUS返送（errcode=0x00）。
 
 ### 5.7 RUMBLE (LEN=2、予約)

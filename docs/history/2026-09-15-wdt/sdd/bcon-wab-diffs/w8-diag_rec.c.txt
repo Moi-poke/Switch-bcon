@@ -1,0 +1,136 @@
+/* W8DIAG: recorder implementation — entire file is W8-only (see diag_rec.h). */
+/* W8DIAG: Core0-only writer. No printf, no flash writes, no mutex, no IRQ. */
+#include "diag_rec.h" /* W8DIAG */
+#include <string.h> /* W8DIAG */
+#include "pico/stdlib.h" /* W8DIAG: time_us_32. */
+#include "hardware/structs/watchdog.h" /* W8DIAG: scratch mirror. */
+/* W8DIAG: the ring itself. NOLOAD => crt0 leaves it alone => survives WDT reboot. */
+/* W8DIAG: No initializer here (NOLOAD memory is never zero-filled by startup). */
+/* W8DIAG */ static w8_state_t w8_state __attribute__((section(".uninitialized_data")));
+/* W8DIAG: FNV-1a/32 over the whole state with the crc word forced to zero. */
+/* W8DIAG */ static uint32_t w8_crc(void) {
+/* W8DIAG */     const uint8_t *p = (const uint8_t *)&w8_state;
+/* W8DIAG */     size_t i, n = sizeof(w8_state);
+/* W8DIAG */     size_t co = offsetof(w8_state_t, crc);
+/* W8DIAG */     uint32_t h = 2166136261u;
+/* W8DIAG */     for (i = 0; i < n; i++) {
+/* W8DIAG */         uint8_t b = (i >= co && i < co + sizeof(uint32_t)) ? 0u : p[i];
+/* W8DIAG */         h = (h ^ b) * 16777619u;
+/* W8DIAG */     }
+/* W8DIAG */     return h;
+/* W8DIAG */ }
+/* W8DIAG: mirror packed index+CRC into scratch[1] (low16 = slot, high16 = crc). */
+/* W8DIAG */ static void w8_mirror_index(void) {
+/* W8DIAG */     uint32_t slot = w8_state.idx % W8_NRING;
+/* W8DIAG */     watchdog_hw->scratch[W8_SCR_INDEX] = ((w8_state.crc >> 16) << 16) | slot;
+/* W8DIAG */ }
+/* W8DIAG: mirror boot epoch into scratch[3] (u32, debugger-visible). */
+/* W8DIAG */ static void w8_mirror_epoch(void) {
+/* W8DIAG */     watchdog_hw->scratch[W8_SCR_EPOCH] = w8_state.boot_epoch;
+/* W8DIAG */ }
+/* W8DIAG: commit one entry + refresh CRC + index mirror. */
+/* W8DIAG */ static void w8_push(uint16_t kind, uint16_t a1, uint32_t a2, uint32_t a3) {
+/* W8DIAG */     w8_entry_t *e = &w8_state.ring[w8_state.idx % W8_NRING];
+/* W8DIAG */     e->ts = time_us_32();
+/* W8DIAG */     e->kind = kind;
+/* W8DIAG */     e->a1 = a1;
+/* W8DIAG */     e->a2 = a2;
+/* W8DIAG */     e->a3 = a3;
+/* W8DIAG */     w8_state.idx++;
+/* W8DIAG */     w8_state.n++;
+/* W8DIAG */     w8_state.crc = w8_crc();
+/* W8DIAG */     w8_mirror_index();
+/* W8DIAG */ }
+/* W8DIAG: strict init order per brief: validate previous-boot content first, */
+/* W8DIAG: keep its epoch as post_epoch, bump epoch into scratch[3], then */
+/* W8DIAG: snapshot the boot baseline before any timer arm or flash op. */
+/* W8DIAG: (WDT-reason flag is read first in main.c, before this call.) */
+/* W8DIAG */ void diag_rec_init(void) {
+/* W8DIAG */     uint8_t i;
+/* W8DIAG */     bool ok = (w8_state.magic == W8_MAGIC) && (w8_state.ver == W8_VER);
+/* W8DIAG */     if (ok) {
+/* W8DIAG */         ok = (w8_state.crc == w8_crc());
+/* W8DIAG */     }
+/* W8DIAG */     if (ok) {
+/* W8DIAG */         w8_state.post_epoch = w8_state.boot_epoch;
+/* W8DIAG */     } else {
+/* W8DIAG */         memset(&w8_state, 0, sizeof(w8_state));
+/* W8DIAG */         w8_state.magic = W8_MAGIC;
+/* W8DIAG */         w8_state.ver = W8_VER;
+/* W8DIAG */         w8_state.post_epoch = 0u;
+/* W8DIAG */     }
+/* W8DIAG */     w8_state.boot_epoch = w8_state.post_epoch + 1u;
+/* W8DIAG */     w8_state.base_epoch = w8_state.boot_epoch;
+/* W8DIAG */     for (i = 0u; i < 6u; i++) {
+/* W8DIAG */         w8_state.base_begins[i] = w8_state.begins[i];
+/* W8DIAG */         w8_state.base_ends[i] = w8_state.ends[i];
+/* W8DIAG */     }
+/* W8DIAG */     for (i = 0u; i < 4u; i++) {
+/* W8DIAG */         w8_state.base_tmr_add[i] = w8_state.tmr_add[i];
+/* W8DIAG */         w8_state.base_tmr_fire[i] = w8_state.tmr_fire[i];
+/* W8DIAG */     }
+/* W8DIAG */     w8_state.crc = w8_crc();
+/* W8DIAG */     watchdog_hw->scratch[W8_SCR_MAGIC] = W8_MAGIC;
+/* W8DIAG */     w8_mirror_index();
+/* W8DIAG */     w8_mirror_epoch();
+/* W8DIAG */ }
+/* W8DIAG */ void diag_rec_stage(uint8_t st) {
+/* W8DIAG */     uint8_t i;
+/* W8DIAG */     w8_state.stage_last = st;
+/* W8DIAG */     for (i = 0; i < 7; i++) {
+/* W8DIAG */         w8_state.stage_trail[i] = w8_state.stage_trail[i + 1];
+/* W8DIAG */     }
+/* W8DIAG */     w8_state.stage_trail[7] = st;
+/* W8DIAG */     w8_state.stage_n++;
+/* W8DIAG */     watchdog_hw->scratch[W8_SCR_STAGE] = st;
+/* W8DIAG */     w8_push(W8K_STAGE, st, w8_state.stage_n, 0u);
+/* W8DIAG */ }
+/* W8DIAG: FLASH record also stamps last_epoch[op] = current boot epoch. */
+/* W8DIAG */ void diag_rec_flash(uint8_t op, uint8_t phase, uint32_t a2, uint32_t a3) {
+/* W8DIAG */     uint16_t a1;
+/* W8DIAG */     if (op > 5u) {
+/* W8DIAG */         op = 0u;
+/* W8DIAG */     }
+/* W8DIAG */     a1 = (uint16_t)(((uint16_t)op << 1) | (phase & 1u));
+/* W8DIAG */     if (phase == W8PH_BEGIN) {
+/* W8DIAG */         w8_state.begins[op]++;
+/* W8DIAG */         w8_state.last_tag[op] = a2;
+/* W8DIAG */         w8_state.last_epoch[op] = w8_state.boot_epoch;
+/* W8DIAG */     } else {
+/* W8DIAG */         w8_state.ends[op]++;
+/* W8DIAG */         w8_state.last_rc[op] = (int32_t)a2;
+/* W8DIAG */         w8_state.last_dur[op] = a3;
+/* W8DIAG */         w8_state.last_epoch[op] = w8_state.boot_epoch;
+/* W8DIAG */     }
+/* W8DIAG */     w8_push(W8K_FLASH, a1, a2, a3);
+/* W8DIAG */ }
+/* W8DIAG */ void diag_rec_timer(uint8_t id, uint8_t act, uint32_t timeout_ms) {
+/* W8DIAG */     uint16_t a1;
+/* W8DIAG */     if (id > 3u) {
+/* W8DIAG */         id = 0u;
+/* W8DIAG */     }
+/* W8DIAG */     a1 = (uint16_t)(((uint16_t)id << 2) | (act & 3u));
+/* W8DIAG */     if (act == W8TA_ADD) {
+/* W8DIAG */         w8_state.tmr_add[id]++;
+/* W8DIAG */         w8_state.tmr_to[id] = timeout_ms;
+/* W8DIAG */     } else if (act == W8TA_REMOVE) {
+/* W8DIAG */         w8_state.tmr_rem[id]++;
+/* W8DIAG */     } else {
+/* W8DIAG */         w8_state.tmr_fire[id]++;
+/* W8DIAG */     }
+/* W8DIAG */     w8_push(W8K_TIMER, a1, timeout_ms, w8_state.tmr_fire[id]);
+/* W8DIAG */ }
+/* W8DIAG */ void diag_rec_ev(uint8_t ev) {
+/* W8DIAG */     w8_state.ev_last = ev;
+/* W8DIAG */     w8_state.ev_n++;
+/* W8DIAG */     w8_push(W8K_EV, ev, w8_state.ev_n, 0u);
+/* W8DIAG */ }
+/* W8DIAG */ bool diag_rec_valid(void) {
+/* W8DIAG */     if (w8_state.magic != W8_MAGIC || w8_state.ver != W8_VER) {
+/* W8DIAG */         return false;
+/* W8DIAG */     }
+/* W8DIAG */     return w8_state.crc == w8_crc();
+/* W8DIAG */ }
+/* W8DIAG */ const w8_state_t *diag_rec_state(void) {
+/* W8DIAG */     return &w8_state;
+/* W8DIAG */ }

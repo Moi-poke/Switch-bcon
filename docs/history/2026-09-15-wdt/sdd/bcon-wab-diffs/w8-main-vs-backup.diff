@@ -1,0 +1,240 @@
+﻿diff --git "a/C:\\Users\\moilo\\AppData\\Local\\Temp\\opencode\\bcon-wab\\backups\\w8\\src_main.c.bak" b/src/main.c
+index efc6a8d..b97d931 100644
+--- "a/C:\\Users\\moilo\\AppData\\Local\\Temp\\opencode\\bcon-wab\\backups\\w8\\src_main.c.bak"
++++ b/src/main.c
+@@ -29,6 +29,9 @@
+ #include "btstack_tlv_flash_bank.h"
+ #include "classic/btstack_link_key_db_tlv.h"
+ #include "pico/btstack_flash_bank.h"
++/* W8DIAG: hci_dump ON for comparability (W6-proven inert). REMOVE with all W8DIAG. */
++#include "hci_dump.h" /* W8DIAG */
++#include "hci_dump_embedded_stdout.h" /* W8DIAG */
+ 
+ #include "protocol.h"
+ #include "dispatch.h"
+@@ -41,6 +44,7 @@
+ #include "bt/cap.h"
+ #include "bt/switch_hid.h"
+ #include "bt/bt_compat.h"
++#include "diag_rec.h" /* W8DIAG: unified diagnostic flight recorder. REMOVE with all W8DIAG. */
+ 
+ // ---- 蜑肴署繝斐Φ繝ｻ騾溷ｺｦ (spec ﾂｧ2: 譌｢螳・GP4/5繝ｻUART1繝ｻ1Mbps) ----
+ #define LOG_UART      uart0
+@@ -457,6 +461,7 @@ static void flush_outbox(void) {
+ 
+ // ---------------- Core0: 1ms tick (pull/pack/drain/FX/flush/usb/neutral) ----------------
+ static void poll_tick(uint32_t now) {
++    diag_rec_stage(W8ST_POLL_ENTER); /* W8DIAG: poll entered. */
+     bcon_shared_t cp;
+     uint8_t pb[3];
+     bool advanced;
+@@ -485,6 +490,7 @@ static void poll_tick(uint32_t now) {
+         // STATE諡貞凄繧貞性繧)縲ゅ％縺薙〒縺ｯCONFIG遲峨・fx/ob縺ｮ縺ｿ謇ｱ縺・・         (void)v3_on_frame(&g_vs, cur.type, cur.payload, cur.len, cur.seq);
+     }
++    diag_rec_stage(W8ST_POLL_BODY_DONE); /* W8DIAG: inbox drained. */
+     exec_fx(now);
+     flush_outbox();
+ 
+@@ -542,12 +548,15 @@ static void poll_tick(uint32_t now) {
+     usb_wired_task(now);
+     link_poll(now);
+     watchdog_update();
++    diag_rec_stage(W8ST_WDT_UPDATE_DONE); /* W8DIAG: watchdog fed. */
+     if (s_reboot_at != 0u && (int32_t)(now - s_reboot_at) >= 0) {
+         probe_line("rebooting to apply WIRED_MODE...");
+         sleep_ms(50);
+         watchdog_reboot(0, 0, 0);
+         while (1) tight_loop_contents();
+     }
++    diag_rec_stage(W8ST_POLL_TAIL_DONE); /* W8DIAG */
++    diag_rec_stage(W8ST_POLL_RETURN_IMMINENT); /* W8DIAG: about to return. */
+ }
+ // ---------------- Core0: BTstack timers ----------------
+ static uint8_t hid_service_buffer[700];
+@@ -594,24 +603,35 @@ static void stats_print(void) {
+ }
+ 
+ static void stats_handler(btstack_timer_source_t *ts) {
++    diag_rec_timer(W8TMR_STATS, W8TA_FIRE, 0u); /* W8DIAG: stats_timer fired. */
+     stats_print();
+     btstack_run_loop_set_timer(ts, 1000);
+     btstack_run_loop_add_timer(ts);
++    diag_rec_timer(W8TMR_STATS, W8TA_ADD, (uint32_t)ts->timeout); /* W8DIAG: stats_timer re-armed. */
+ }
+ 
+ static void usb_handler(btstack_timer_source_t *ts) {
++    diag_rec_timer(W8TMR_USB, W8TA_FIRE, 0u); /* W8DIAG: usb_timer fired. */
++    diag_rec_stage(W8ST_USB_HANDLER_ENTER); /* W8DIAG */
+     poll_tick(to_ms_since_boot(get_absolute_time()));
++    diag_rec_stage(W8ST_POLL_RETURNED); /* W8DIAG: poll_tick returned. */
+     btstack_run_loop_set_timer(ts, 1);
++    diag_rec_stage(W8ST_SET_TIMER_DONE); /* W8DIAG */
+     btstack_run_loop_add_timer(ts);
++    diag_rec_timer(W8TMR_USB, W8TA_ADD, (uint32_t)ts->timeout); /* W8DIAG: usb_timer re-armed. */
++    diag_rec_stage(W8ST_ADD_TIMER_DONE); /* W8DIAG */
++    diag_rec_stage(W8ST_USB_HANDLER_RETURN_IMMINENT); /* W8DIAG */
+ }
+ 
+ static void empty_handler(btstack_timer_source_t *ts) {
++    diag_rec_timer(W8TMR_EMPTY, W8TA_FIRE, 0u); /* W8DIAG: empty_timer fired. */
+     if (probe_hid_cid != 0u) {
+         // 騾∽ｿ｡繧ｲ繝ｼ繝郁ｩｦ鬨薙・邨ゆｺ・(辟｡鄂ｪ遒ｺ螳壹・縺溘ａ蠕ｩ蟶ｰ)縲５LV蛛懈ｭ｢縺ｮ縺ｿ邯咏ｶ壹・         hid_device_request_can_send_now_event(probe_hid_cid);
+     }
+     btstack_run_loop_set_timer(ts, probe_send_interval_ms());
+     btstack_run_loop_add_timer(ts);
++    diag_rec_timer(W8TMR_EMPTY, W8TA_ADD, (uint32_t)ts->timeout); /* W8DIAG: empty_timer re-armed. */
+ }
+ 
+ // ---------------- Core0: BT packet handlers (wakecon蜷檎ｭ・ ----------------
+@@ -728,6 +748,7 @@ static void packet_handler(uint8_t packet_type, uint16_t channel,
+     (void)channel;
+     (void)size;
+     ev = hci_event_packet_get_type(packet);
++    diag_rec_ev(ev); /* W8DIAG: last HCI event byte (replaces W3 ev). */
+     // LE 蛻・妙縺ｯ Classic 蛛ｴ縺ｮ蜃ｦ逅・∈關ｽ縺ｨ縺輔↑縺・・     if (ev == HCI_EVENT_DISCONNECTION_COMPLETE &&
+         link_is_le(hci_event_disconnection_complete_get_connection_handle(
+@@ -841,6 +862,91 @@ static void wired_loop(void) {
+     }
+ }
+ 
++/* W8DIAG: link-key-db shim (wrapper layer only; no BTstack/SDK edits). */
++/* W8DIAG: Forwards all 9 methods to the TLV instance; counts put/delete. */
++/* W8DIAG: Static storage; exact signatures from btstack_link_key_db.h. */
++static const btstack_link_key_db_t *w8_lk_inner; /* W8DIAG */
++/* W8DIAG */ static void w8_lk_open(void) { w8_lk_inner->open(); }
++/* W8DIAG */ static void w8_lk_set_local_bd_addr(bd_addr_t bd_addr) { w8_lk_inner->set_local_bd_addr(bd_addr); }
++/* W8DIAG */ static void w8_lk_close(void) { w8_lk_inner->close(); }
++/* W8DIAG */ static int w8_lk_get(bd_addr_t bd_addr, link_key_t link_key, link_key_type_t *type) { return w8_lk_inner->get_link_key(bd_addr, link_key, type); }
++/* W8DIAG */ static void w8_lk_put(bd_addr_t bd_addr, link_key_t link_key, link_key_type_t type) { uint32_t w8_t0 = time_us_32(); diag_rec_flash(W8OP_LK_PUT, W8PH_BEGIN, 0u, 0u); w8_lk_inner->put_link_key(bd_addr, link_key, type); diag_rec_flash(W8OP_LK_PUT, W8PH_END, 0u, time_us_32() - w8_t0); }
++/* W8DIAG */ static void w8_lk_del(bd_addr_t bd_addr) { uint32_t w8_t0 = time_us_32(); diag_rec_flash(W8OP_LK_DEL, W8PH_BEGIN, 0u, 0u); w8_lk_inner->delete_link_key(bd_addr); diag_rec_flash(W8OP_LK_DEL, W8PH_END, 0u, time_us_32() - w8_t0); }
++/* W8DIAG */ static int w8_lk_iter_init(btstack_link_key_iterator_t *it) { return w8_lk_inner->iterator_init(it); }
++/* W8DIAG */ static int w8_lk_iter_next(btstack_link_key_iterator_t *it, bd_addr_t bd_addr, link_key_t link_key, link_key_type_t *type) { return w8_lk_inner->iterator_get_next(it, bd_addr, link_key, type); }
++/* W8DIAG */ static void w8_lk_iter_done(btstack_link_key_iterator_t *it) { w8_lk_inner->iterator_done(it); }
++/* W8DIAG */ static const btstack_link_key_db_t w8_lk_shim = {
++/* W8DIAG */     .open = w8_lk_open,
++/* W8DIAG */     .set_local_bd_addr = w8_lk_set_local_bd_addr,
++/* W8DIAG */     .close = w8_lk_close,
++/* W8DIAG */     .get_link_key = w8_lk_get,
++/* W8DIAG */     .put_link_key = w8_lk_put,
++/* W8DIAG */     .delete_link_key = w8_lk_del,
++/* W8DIAG */     .iterator_init = w8_lk_iter_init,
++/* W8DIAG */     .iterator_get_next = w8_lk_iter_next,
++/* W8DIAG */     .iterator_done = w8_lk_iter_done,
++/* W8DIAG */ };
++/* W8DIAG: boot-time recorder summary with epoch + boot deltas (boot context only, never IRQ). */
++/* W8DIAG: Prints via probe_line; the recorder itself never prints. */
++/* W8DIAG: *-boot lines = current-minus-baseline (this boot only). */
++/* W8DIAG */ static void w8_boot_dump(void) {
++/* W8DIAG */     const w8_state_t *s = diag_rec_state();
++/* W8DIAG */     char w8m[160];
++/* W8DIAG */     if (!diag_rec_valid()) {
++/* W8DIAG */         probe_line("w8rec invalid (fresh boot; ring reset)");
++/* W8DIAG */         return;
++/* W8DIAG */     }
++/* W8DIAG */     snprintf(w8m, sizeof(w8m), "w8epoch post=%lu current=%lu",
++/* W8DIAG */              (unsigned long)s->post_epoch, (unsigned long)s->boot_epoch);
++/* W8DIAG */     probe_line(w8m);
++/* W8DIAG */     snprintf(w8m, sizeof(w8m), "w8flash-total safe=%lu/%lu tag=%lu/%lu del=%lu/%lu lkput=%lu/%lu lkdel=%lu/%lu",
++/* W8DIAG */              (unsigned long)s->begins[W8OP_STORE_SAFE], (unsigned long)s->ends[W8OP_STORE_SAFE],
++/* W8DIAG */              (unsigned long)s->begins[W8OP_STORE_TAG], (unsigned long)s->ends[W8OP_STORE_TAG],
++/* W8DIAG */              (unsigned long)s->begins[W8OP_DELETE_TAG], (unsigned long)s->ends[W8OP_DELETE_TAG],
++/* W8DIAG */              (unsigned long)s->begins[W8OP_LK_PUT], (unsigned long)s->ends[W8OP_LK_PUT],
++/* W8DIAG */              (unsigned long)s->begins[W8OP_LK_DEL], (unsigned long)s->ends[W8OP_LK_DEL]);
++/* W8DIAG */     probe_line(w8m);
++/* W8DIAG */     snprintf(w8m, sizeof(w8m), "w8flash-boot safe=%lu/%lu tag=%lu/%lu del=%lu/%lu lkput=%lu/%lu lkdel=%lu/%lu",
++/* W8DIAG */              (unsigned long)(s->begins[W8OP_STORE_SAFE] - s->base_begins[W8OP_STORE_SAFE]), (unsigned long)(s->ends[W8OP_STORE_SAFE] - s->base_ends[W8OP_STORE_SAFE]),
++/* W8DIAG */              (unsigned long)(s->begins[W8OP_STORE_TAG] - s->base_begins[W8OP_STORE_TAG]), (unsigned long)(s->ends[W8OP_STORE_TAG] - s->base_ends[W8OP_STORE_TAG]),
++/* W8DIAG */              (unsigned long)(s->begins[W8OP_DELETE_TAG] - s->base_begins[W8OP_DELETE_TAG]), (unsigned long)(s->ends[W8OP_DELETE_TAG] - s->base_ends[W8OP_DELETE_TAG]),
++/* W8DIAG */              (unsigned long)(s->begins[W8OP_LK_PUT] - s->base_begins[W8OP_LK_PUT]), (unsigned long)(s->ends[W8OP_LK_PUT] - s->base_ends[W8OP_LK_PUT]),
++/* W8DIAG */              (unsigned long)(s->begins[W8OP_LK_DEL] - s->base_begins[W8OP_LK_DEL]), (unsigned long)(s->ends[W8OP_LK_DEL] - s->base_ends[W8OP_LK_DEL]));
++/* W8DIAG */     probe_line(w8m);
++/* W8DIAG */     snprintf(w8m, sizeof(w8m), "w8last store tag=%lx epoch=%lu rc=%ld dur=%lu",
++/* W8DIAG */              (unsigned long)s->last_tag[W8OP_STORE_SAFE],
++/* W8DIAG */              (unsigned long)s->last_epoch[W8OP_STORE_SAFE],
++/* W8DIAG */              (long)s->last_rc[W8OP_STORE_SAFE],
++/* W8DIAG */              (unsigned long)s->last_dur[W8OP_STORE_SAFE]);
++/* W8DIAG */     probe_line(w8m);
++/* W8DIAG */     snprintf(w8m, sizeof(w8m), "w8last delete tag=%lx epoch=%lu rc=%ld dur=%lu",
++/* W8DIAG */              (unsigned long)s->last_tag[W8OP_DELETE_TAG],
++/* W8DIAG */              (unsigned long)s->last_epoch[W8OP_DELETE_TAG],
++/* W8DIAG */              (long)s->last_rc[W8OP_DELETE_TAG],
++/* W8DIAG */              (unsigned long)s->last_dur[W8OP_DELETE_TAG]);
++/* W8DIAG */     probe_line(w8m);
++/* W8DIAG */     snprintf(w8m, sizeof(w8m), "w8tmr-total usb a=%lu f=%lu to=%lu empty a=%lu f=%lu to=%lu stats a=%lu f=%lu to=%lu",
++/* W8DIAG */              (unsigned long)s->tmr_add[W8TMR_USB], (unsigned long)s->tmr_fire[W8TMR_USB],
++/* W8DIAG */              (unsigned long)s->tmr_to[W8TMR_USB],
++/* W8DIAG */              (unsigned long)s->tmr_add[W8TMR_EMPTY], (unsigned long)s->tmr_fire[W8TMR_EMPTY],
++/* W8DIAG */              (unsigned long)s->tmr_to[W8TMR_EMPTY],
++/* W8DIAG */              (unsigned long)s->tmr_add[W8TMR_STATS], (unsigned long)s->tmr_fire[W8TMR_STATS],
++/* W8DIAG */              (unsigned long)s->tmr_to[W8TMR_STATS]);
++/* W8DIAG */     probe_line(w8m);
++/* W8DIAG */     snprintf(w8m, sizeof(w8m), "w8tmr-boot usb a=%lu f=%lu empty a=%lu f=%lu stats a=%lu f=%lu",
++/* W8DIAG */              (unsigned long)(s->tmr_add[W8TMR_USB] - s->base_tmr_add[W8TMR_USB]), (unsigned long)(s->tmr_fire[W8TMR_USB] - s->base_tmr_fire[W8TMR_USB]),
++/* W8DIAG */              (unsigned long)(s->tmr_add[W8TMR_EMPTY] - s->base_tmr_add[W8TMR_EMPTY]), (unsigned long)(s->tmr_fire[W8TMR_EMPTY] - s->base_tmr_fire[W8TMR_EMPTY]),
++/* W8DIAG */              (unsigned long)(s->tmr_add[W8TMR_STATS] - s->base_tmr_add[W8TMR_STATS]), (unsigned long)(s->tmr_fire[W8TMR_STATS] - s->base_tmr_fire[W8TMR_STATS]));
++/* W8DIAG */     probe_line(w8m);
++/* W8DIAG */     snprintf(w8m, sizeof(w8m), "w8stage last=%lu n=%lu trail=%u,%u,%u,%u,%u,%u,%u,%u",
++/* W8DIAG */              (unsigned long)s->stage_last, (unsigned long)s->stage_n,
++/* W8DIAG */              s->stage_trail[0], s->stage_trail[1], s->stage_trail[2], s->stage_trail[3],
++/* W8DIAG */              s->stage_trail[4], s->stage_trail[5], s->stage_trail[6], s->stage_trail[7]);
++/* W8DIAG */     probe_line(w8m);
++/* W8DIAG */     snprintf(w8m, sizeof(w8m), "w8ev last=0x%02lx n=%lu",
++/* W8DIAG */              (unsigned long)s->ev_last, (unsigned long)s->ev_n);
++/* W8DIAG */     probe_line(w8m);
++/* W8DIAG */ }
+ // ---------------- Core0 main ----------------
+ int main(void) {
+     hid_sdp_record_t hid_params = {
+@@ -856,6 +962,8 @@ int main(void) {
+     gpio_set_function(LOG_RX_PIN, GPIO_FUNC_UART);
+ 
+     printf("\n=== pico-bcon ===\n");
++    s_wdt_recovered = watchdog_caused_reboot(); /* W8DIAG: WDT flag first (strict order; pure read, original assignment kept). */
++    diag_rec_init(); /* W8DIAG: flight recorder (continues across WDT reboot; epoch+baseline). */
+     // 豁｣隕乗焔谿ｵ縺ｧHardFault蝣ｱ蜻翫ｒ謗帙￠繧九・     exception_set_exclusive_handler(HARDFAULT_EXCEPTION, hardfault_reporter);
+     // 閾ｪ繧ｳ繧｢縺ｮMSPLIM (Core1蛛ｴ縺ｯcore1_entry縺ｧ)縲・@@ -885,8 +993,8 @@ int main(void) {
+         tlv_impl = btstack_tlv_flash_bank_init_instance(
+             &tlv_bank_ctx, pico_flash_bank_instance(), NULL);
+         btstack_tlv_set_instance(tlv_impl, &tlv_bank_ctx);
+-        hci_set_link_key_db(
+-            btstack_link_key_db_tlv_get_instance(tlv_impl, &tlv_bank_ctx));
++        w8_lk_inner = btstack_link_key_db_tlv_get_instance(tlv_impl, &tlv_bank_ctx); /* W8DIAG: shim target. */
++        hci_set_link_key_db(&w8_lk_shim); /* W8DIAG: counted shim (was direct TLV instance). */
+         printf("tlv=%d\n", (tlv_impl != NULL) ? 1 : 0);
+     }
+ 
+@@ -898,6 +1006,7 @@ int main(void) {
+     printf("wired=%d(wdef=%d) host=%d cap=%d wdt=%d\n", s_wired ? 1 : 0, WIRED_DEFAULT,
+            probe_host_known ? 1 : 0, probe_cap_valid ? 1 : 0,
+            s_wdt_recovered ? 1 : 0);
++    w8_boot_dump(); /* W8DIAG: flight-recorder summary with epoch+boot deltas (boot context only). */
+ 
+     mutex_init(&g_m);
+     memset(&g_s, 0, sizeof(g_s));
+@@ -982,6 +1091,8 @@ int main(void) {
+     hci_events.callback = &packet_handler;
+     hci_add_event_handler(&hci_events);
+ 
++    /* W8DIAG: hci_dump (W6-proven inert; comparability). */ hci_dump_init(hci_dump_embedded_stdout_get_instance());
++    /* W8DIAG */ hci_dump_enable_packet_log(true);
+     hci_set_bd_addr(probe_addr);
+     usb_wired_pump();
+ 
+@@ -993,14 +1104,17 @@ int main(void) {
+     btstack_run_loop_set_timer_handler(&stats_timer, &stats_handler);
+     btstack_run_loop_set_timer(&stats_timer, 1000);
+     btstack_run_loop_add_timer(&stats_timer);
++    diag_rec_timer(W8TMR_STATS, W8TA_ADD, (uint32_t)stats_timer.timeout); /* W8DIAG: stats_timer armed. */
+ 
+     btstack_run_loop_set_timer_handler(&usb_timer, &usb_handler);
+     btstack_run_loop_set_timer(&usb_timer, 1);
+     btstack_run_loop_add_timer(&usb_timer);
++    diag_rec_timer(W8TMR_USB, W8TA_ADD, (uint32_t)usb_timer.timeout); /* W8DIAG: usb_timer armed. */
+ 
+     btstack_run_loop_set_timer_handler(&empty_timer, &empty_handler);
+     btstack_run_loop_set_timer(&empty_timer, 100);
+     btstack_run_loop_add_timer(&empty_timer);
++    diag_rec_timer(W8TMR_EMPTY, W8TA_ADD, (uint32_t)empty_timer.timeout); /* W8DIAG: empty_timer armed. */
+ 
+     btstack_run_loop_set_timer_handler(&reconnect_timer,
+                                        &link_reconnect_handler);

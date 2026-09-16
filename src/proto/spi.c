@@ -18,9 +18,12 @@ static const uint8_t SPI_6010[16] = {
 /* 0x601B 単独読出用 (上記と同値。0x10ハンドラの完全一致検索のため)。 */
 static const uint8_t SPI_601B[1] = { 0x01 };
 
+/* L/R grips intentionally differ (verification): left #464646 (stock),
+ * right #FFFFFF. Identical L/R values make byte-order bugs invisible
+ * in logs and on the Switch UI. */
 uint8_t spi_color_6050[13] = {
     0x82, 0x82, 0x82, 0x0F, 0x0F, 0x0F,
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00
+    0x46, 0x46, 0x46, 0xFF, 0xFF, 0xFF, 0x00
 };
 
 static const uint8_t SPI_6080[24] = {

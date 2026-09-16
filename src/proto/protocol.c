@@ -38,6 +38,7 @@ int proto_expected_len(uint8_t type) {
         case T_STATUS:        return 7;
         case T_PONG:          return 1;
         case T_RUMBLE:        return 2;
+        case T_PLAYER_INFO:   return 2;
         case T_CAPTURE_START: return 1;
         case T_BEACON_START:  return 0;
         case T_COLOR_SET:     return 12;
@@ -46,6 +47,10 @@ int proto_expected_len(uint8_t type) {
         case T_STATUS_REQ:    return 0;
         default:              return -1;
     }
+}
+
+bool proto_state_len_ok(uint8_t plen) {
+    return plen == 8u || plen == 12u;
 }
 
 void parser_init(parser_t *p, frame_cb_t cb, void *user, link_stats_t *stats) {
@@ -80,8 +85,13 @@ static void parser_run(parser_t *p) {
         uint8_t plen = p->acc[2];
 
         int exp = proto_expected_len(type);
-        bool len_bad = (exp >= 0) ? (plen != (uint8_t)exp)
-                                  : (plen > PROTO_MAX_PAYLOAD);
+        bool len_bad;
+        if (type == T_STATE) {
+            len_bad = !proto_state_len_ok(plen); /* LEN 8 legacy / LEN 12 u16 */
+        } else {
+            len_bad = (exp >= 0) ? (plen != (uint8_t)exp)
+                                 : (plen > PROTO_MAX_PAYLOAD);
+        }
         if (len_bad) {
             note_err(p, ERR_BAD_LEN);
             acc_drop(p, 1);

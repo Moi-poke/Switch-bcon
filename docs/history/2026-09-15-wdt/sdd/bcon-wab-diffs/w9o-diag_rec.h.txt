@@ -1,0 +1,147 @@
+/* W9DIAG: unified diagnostic flight recorder: W8 core + 9a S-stages + 9c bank CRC (W9). Entire file is W9-only. */
+/* W9DIAG: RAM ring in .uninitialized_data (NOLOAD: survives WDT reboot). */
+/* W9DIAG: Single-writer discipline: Core0 context only. No IRQ writes, */
+/* W9DIAG: no printf, no flash writes, no mutex. Deleted at W9 restore. */
+#pragma once /* W9DIAG */
+#include <stdint.h> /* W9DIAG */
+#include <stdbool.h> /* W9DIAG */
+#include <stddef.h> /* W9DIAG */
+#ifdef __cplusplus /* W9DIAG */
+extern "C" { /* W9DIAG */
+#endif /* W9DIAG */
+/* W9DIAG: recorder magic 0xD1A6nnnn (nnnn = format id 0009). */
+/* W9DIAG */ #define W9_MAGIC 0xD1A60009u
+/* W9DIAG */ #define W9_VER 9u
+/* W9DIAG */ #define W9_NRING 96u
+/* W9DIAG: watchdog scratch ownership: we use [0..3]; SDK owns [4..7]. */
+/* W9DIAG: [0]=magic/ver [1]=index+CRC [2]=stage mirror [3]=boot epoch. */
+/* W9DIAG: SDK [4..7] = watchdog_enable/reboot magic + pc/sp. Never touch. */
+/* W9DIAG */ #define W9_SCR_MAGIC 0
+/* W9DIAG */ #define W9_SCR_INDEX 1
+/* W9DIAG */ #define W9_SCR_STAGE 2
+/* W9DIAG */ #define W9_SCR_EPOCH 3
+/* W9DIAG: entry kinds. */
+/* W9DIAG */ #define W9K_FLASH 1u
+/* W9DIAG */ #define W9K_STAGE 2u
+/* W9DIAG */ #define W9K_TIMER 3u
+/* W9DIAG */ #define W9K_EV 4u
+/* W9DIAG: flash-op ids (FLASH entry a1 = (op<<1)|phase). */
+/* W9DIAG */ #define W9OP_STORE_SAFE 1u
+/* W9DIAG */ #define W9OP_STORE_TAG 2u
+/* W9DIAG */ #define W9OP_DELETE_TAG 3u
+/* W9DIAG */ #define W9OP_LK_PUT 4u
+/* W9DIAG */ #define W9OP_LK_DEL 5u
+/* W9DIAG */ #define W9PH_BEGIN 0u
+/* W9DIAG */ #define W9PH_END 1u
+/* W9DIAG: owned-timer ids (usb/empty/stats only; reconnect_timer untouched). */
+/* W9DIAG */ #define W9TMR_USB 1u
+/* W9DIAG */ #define W9TMR_EMPTY 2u
+/* W9DIAG */ #define W9TMR_STATS 3u
+/* W9DIAG */ #define W9TA_ADD 1u
+/* W9DIAG */ #define W9TA_REMOVE 2u
+/* W9DIAG */ #define W9TA_FIRE 3u
+/* W9DIAG: poll-vs-rearm stage chain (latest mirrored to scratch[2]). */
+/* W9DIAG */ #define W9ST_POLL_ENTER 1u
+/* W9DIAG */ #define W9ST_POLL_BODY_DONE 2u
+/* W9DIAG */ #define W9ST_WDT_UPDATE_DONE 3u
+/* W9DIAG */ #define W9ST_POLL_TAIL_DONE 4u
+/* W9DIAG */ #define W9ST_POLL_RETURN_IMMINENT 5u
+/* W9DIAG */ #define W9ST_USB_HANDLER_ENTER 6u
+/* W9DIAG */ #define W9ST_POLL_RETURNED 7u
+/* W9DIAG */ #define W9ST_SET_TIMER_DONE 8u
+/* W9DIAG */ #define W9ST_ADD_TIMER_DONE 9u
+/* W9DIAG */ #define W9ST_USB_HANDLER_RETURN_IMMINENT 10u
+/* W9DIAG: 9a our-layer safe-execute stages (raw S-numbers live in the S-only trail). */
+/* W9DIAG: S0 enter, S1 pre-outer, S2 callback entered, S3 pre-store_tag, */
+/* W9DIAG: S10 post-store_tag, S11 callback exit, S12 post-outer. S4-S9 excluded */
+/* W9DIAG: (TLV-internal/HAL live in SDK/BTstack sources; no-SDK rule). */
+/* W9DIAG */ #define W9S_S0 0u
+/* W9DIAG */ #define W9S_S1 1u
+/* W9DIAG */ #define W9S_S2 2u
+/* W9DIAG */ #define W9S_S3 3u
+/* W9DIAG */ #define W9S_S10 10u
+/* W9DIAG */ #define W9S_S11 11u
+/* W9DIAG */ #define W9S_S12 12u
+/* W9DIAG: ring a1 base for S-stages (poll stages occupy 1..10 there). */
+/* W9DIAG */ #define W9S_RING_BASE 100u
+/* W9DIAG: one ring entry: timestamp_us + kind + args (16 B, fixed). */
+/* W9DIAG */ typedef struct {
+/* W9DIAG */     uint32_t ts;
+/* W9DIAG */     uint16_t kind;
+/* W9DIAG */     uint16_t a1;
+/* W9DIAG */     uint32_t a2;
+/* W9DIAG */     uint32_t a3;
+/* W9DIAG */ } w9_entry_t;
+/* W9DIAG: persisted state (lives in .uninitialized_data; CRC-guarded). */
+/* W9DIAG: No secrets ever stored (no BD_ADDR, no keys, no tag payloads). */
+/* W9DIAG: boot_epoch = this boot (mirrored to scratch[3]); post_epoch = previous boot. */
+/* W9DIAG: last_epoch[op] = epoch of the last op of that kind (U3 disambiguation). */
+/* W9DIAG: base_* = snapshot at boot after epoch increment; boot delta = current - base. */
+/* W9DIAG: opstage_* = 9a S-only trail (poll traffic never buries it). */
+/* W9DIAG: bank_crc_snap = pre-TLV-init XIP CRC32 (check 1); bank_crc_prev = last boot. */
+/* W9DIAG: tlv_cur_bank/tlv_write_off = read-only copies of the PUBLIC */
+/* W9DIAG: btstack_tlv_flash_bank_t.current_bank/.write_offset (post-TLV-init). */
+/* W9DIAG */ typedef struct {
+/* W9DIAG */     uint32_t magic;
+/* W9DIAG */     uint32_t crc;
+/* W9DIAG */     uint32_t ver;
+/* W9DIAG */     uint32_t idx;
+/* W9DIAG */     uint32_t n;
+/* W9DIAG */     uint32_t boot_epoch;
+/* W9DIAG */     uint32_t post_epoch;
+/* W9DIAG */     uint32_t begins[6];
+/* W9DIAG */     uint32_t ends[6];
+/* W9DIAG */     uint32_t last_tag[6];
+/* W9DIAG */     int32_t last_rc[6];
+/* W9DIAG */     uint32_t last_dur[6];
+/* W9DIAG */     uint32_t last_epoch[6];
+/* W9DIAG */     uint32_t tmr_add[4];
+/* W9DIAG */     uint32_t tmr_rem[4];
+/* W9DIAG */     uint32_t tmr_fire[4];
+/* W9DIAG */     uint32_t tmr_to[4];
+/* W9DIAG */     uint32_t base_begins[6];
+/* W9DIAG */     uint32_t base_ends[6];
+/* W9DIAG */     uint32_t base_tmr_add[4];
+/* W9DIAG */     uint32_t base_tmr_fire[4];
+/* W9DIAG */     uint32_t base_epoch;
+/* W9DIAG */     uint32_t stage_last;
+/* W9DIAG */     uint32_t stage_n;
+/* W9DIAG */     uint8_t stage_trail[8];
+/* W9DIAG */     uint32_t opstage_last;
+/* W9DIAG */     uint32_t opstage_n;
+/* W9DIAG */     uint8_t opstage_trail[8];
+/* W9DIAG */     uint32_t bank_crc_snap[2];
+/* W9DIAG */     uint32_t bank_crc_prev[2];
+/* W9DIAG */     int32_t tlv_cur_bank;
+/* W9DIAG */     uint32_t tlv_write_off;
+/* W9DIAG */     uint32_t tlv_geo_valid;
+/* W9DIAG */     uint32_t ev_last;
+/* W9DIAG */     uint32_t ev_n;
+/* W9DIAG */     w9_entry_t ring[W9_NRING];
+/* W9DIAG */ } w9_state_t;
+/* W9DIAG: init (keeps a valid recorder across WDT reboot; resets if bad). */
+/* W9DIAG: strict order: keep post_epoch, bump epoch+scratch[3], snapshot baseline. */
+/* W9DIAG */ void diag_rec_init(void);
+/* W9DIAG: 9c snapshot BEFORE any TLV read/init (call right after diag_rec_init). */
+/* W9DIAG: XIP reads need no flash protection; shifts snap to prev first. */
+/* W9DIAG */ void diag_rec_crc_snapshot(void);
+/* W9DIAG: live re-read of both bank CRC32s (dump-time values; boot context only). */
+/* W9DIAG */ void diag_bank_live_crc(uint32_t *c0, uint32_t *c1);
+/* W9DIAG: stash TLV geometry (read-only copies; call once after TLV init). */
+/* W9DIAG */ void diag_rec_tlv_geo(int32_t cur_bank, uint32_t write_off);
+/* W9DIAG: record helpers (Core0 only; RAM-only; never print). */
+/* W9DIAG */ void diag_rec_stage(uint8_t st);
+/* W9DIAG: 9a S-stage record: S-only trail + scratch[2] mirror + ring entry. */
+/* W9DIAG */ void diag_rec_opstage(uint8_t s);
+/* W9DIAG: FLASH record: begin => a2 = tag (0 when n/a), a3 = len-or-0. */
+/* W9DIAG: FLASH record: end   => a2 = rc (as u32), a3 = duration_us. */
+/* W9DIAG: Both phases stamp last_epoch[op] = boot_epoch. */
+/* W9DIAG */ void diag_rec_flash(uint8_t op, uint8_t phase, uint32_t a2, uint32_t a3);
+/* W9DIAG */ void diag_rec_timer(uint8_t id, uint8_t act, uint32_t timeout_ms);
+/* W9DIAG */ void diag_rec_ev(uint8_t ev);
+/* W9DIAG: boot-dump support (boot context only; the recorder never prints). */
+/* W9DIAG */ bool diag_rec_valid(void);
+/* W9DIAG */ const w9_state_t *diag_rec_state(void);
+#ifdef __cplusplus /* W9DIAG */
+} /* W9DIAG */
+#endif /* W9DIAG */

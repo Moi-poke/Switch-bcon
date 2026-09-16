@@ -1,0 +1,39 @@
+/* W10DIAG: W10 breadcrumb recorder (TEMP DIAGNOSTIC — MUST BE REVERTED). */ /* W10DIAG */
+/* W10DIAG: Splits the op-in-death hang into (a) Core1 lockout no-ack vs (b) ROM stall. */ /* W10DIAG */
+/* W10DIAG: Four HAL points via --wrap: lockout-req / lockout-ack / ROM-before / ROM-after. */ /* W10DIAG */
+/* W10C: TEMP extension (W10c): Death-B 2s-window crumbs (last timer service, loop sample, */ /* W10C */
+/* W10C: poll-stage trail, HCI TX/RX liveness). REMOVE together with all W10DIAG/W10C hunks. */ /* W10C */
+#ifndef W10_DIAG_H /* W10DIAG */
+#define W10_DIAG_H /* W10DIAG */
+
+#include <stdbool.h> /* W10DIAG */
+#include <stdint.h> /* W10DIAG */
+
+void w10_init(void); /* W10DIAG: validate prev NOLOAD state, bump boot epoch. */ /* W10DIAG */
+void w10_dump(void); /* W10DIAG: print prev-boot counters + ring via probe_line. */ /* W10DIAG */
+void w10_ev(uint32_t kind, uint32_t a, uint32_t b); /* W10DIAG: record one crumb. */ /* W10DIAG */
+uint32_t w10_force_fire(void); /* W10DIAG: D-gate generation counter (forced BCHO write). */ /* W10DIAG */
+
+enum { /* W10C: poll stages (set at fixed points in poll_tick/usb_handler). */ /* W10C */
+    W10S_POLL_ENTER = 1u, /* W10C */
+    W10S_POLL_BODY_DONE, /* W10C */
+    W10S_POLL_WDT_DONE, /* W10C */
+    W10S_POLL_RETURN_IMMINENT, /* W10C */
+    W10S_POLL_RETURNED /* W10C */
+}; /* W10C */
+enum { /* W10C: owned BTstack timer ids (mirror W9's W9TMR_*). */ /* W10C */
+    W10T_USB = 0u, /* W10C */
+    W10T_EMPTY, /* W10C */
+    W10T_STATS, /* W10C */
+    W10T_N /* W10C */
+}; /* W10C */
+
+void w10_poll_stage(uint8_t st); /* W10C: push one poll stage (counter+trail, no ring). */ /* W10C */
+void w10_tmr_svc(uint8_t id); /* W10C: BTstack owned-timer FIRE stamp (per-timer last service). */ /* W10C */
+void w10_tmr_add(uint8_t id, uint32_t timeout_ms); /* W10C: owned-timer re-arm record. */ /* W10C */
+void w10_loop_sample(uint32_t now_ms); /* W10C: post-poll sample (timer list + IRQ state). */ /* W10C */
+void w10_hci_ev(uint8_t ev); /* W10C: HCI RX event byte (RX liveness). */ /* W10C */
+void w10_hci_tx_req(void); /* W10C: hid can-send-now requested (TX liveness). */ /* W10C */
+void w10_hci_tx_grant(void); /* W10C: hid can-send-now granted (TX liveness). */ /* W10C */
+
+#endif /* W10_DIAG_H */ /* W10DIAG */

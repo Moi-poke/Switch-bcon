@@ -1,0 +1,76 @@
+﻿diff --git "a/C:\\Users\\moilo\\AppData\\Local\\Temp\\opencode\\bcon-wab\\backups\\fix-nest\\store.c.bak" "b/C:\\pico-bcon\\src\\bt\\store.c"
+index 2ffb710..4a9ab7c 100644
+--- "a/C:\\Users\\moilo\\AppData\\Local\\Temp\\opencode\\bcon-wab\\backups\\fix-nest\\store.c.bak"
++++ "b/C:\\pico-bcon\\src\\bt\\store.c"
+@@ -55,6 +55,31 @@ static void tag_delete_fn(void *param)
+     op->tlv->delete_tag(op->ctx, op->tag);
+ }
+ 
++/* Death-B諱剃ｹ・ｯｾ遲悶・菫晞匱 (蜃ｺ闕ｷ逕ｨ繝ｻ險ｺ譁ｭ縺ｧ縺ｯ縺ｪ縺・縲・+ * 譛ｬFW縺ｧ縺ｯ蜈ｨstore蜻ｼ蜃ｺ蜈・′IRQ險ｱ蜿ｯ迥ｶ諷九〒蜍輔￥縺溘ａ縲∝ｾｩ蟶ｰ譎ゅ↓PRIMASK!=0縺ｪ繧・+ * 繝ｪ繝ｼ繧ｯ縺ｨ譁ｭ螳壹＠縺ｦ螟ｧ螢ｰ (log)・玖・蟾ｱ菫ｮ蠕ｩ (cpsie i) 縺吶ｋ縲ょ他縺ｳ蜃ｺ縺怜・縺檎ｦ∵ｭ｢
++ * 迥ｶ諷九□縺｣縺溷ｴ蜷・(pm_entry!=0) 縺ｯ隗ｦ繧峨↑縺・・*/
++static uint32_t s_irq_leak_healed;
++
++static uint32_t irq_pm_rd(void)
++{
++    uint32_t r;
++    __asm volatile ("mrs %0, primask" : "=r" (r) ::);
++    return r;
++}
++
++static void store_irq_guard(uint32_t pm_entry)
++{
++    if (pm_entry == 0u && irq_pm_rd() != 0u) {
++        char msg[40];
++        s_irq_leak_healed++;
++        snprintf(msg, sizeof(msg), "irq leak healed (n=%lu)",
++                 (unsigned long)s_irq_leak_healed);
++        probe_line(msg);
++        __asm volatile ("cpsie i" ::: "memory");
++    }
++}
++
+ static int tag_store_safe(const btstack_tlv_t *tlv, void *ctx, uint32_t tag,
+                           const uint8_t *data, uint32_t len)
+ {
+@@ -65,9 +90,18 @@ static int tag_store_safe(const btstack_tlv_t *tlv, void *ctx, uint32_t tag,
+     op.data = data;
+     op.len = len;
+     op.rc = -1;
+-    if (flash_safe_execute(tag_store_fn, &op, UINT32_MAX) != PICO_OK) {
+-        return -1;
+-    }
++    /* NOTE (Death-B諱剃ｹ・ｯｾ遲・2026-09-16): 螟門・flash_safe_execute縺ｧ縺ｯ蛹・∪縺ｪ縺・・+     * SDK pico_flash縺ｯ繧ｳ繧｢豈弱↓蜊倅ｸ繧ｹ繝ｭ繝・ヨirq_state[]縺ｧPRIMASK繧帝驕ｿ縺吶ｋ
++     * (sdk src/rp2_common/pico_flash/flash.c:106,203,210)縲ょ､門・縺ｮ荳ｭ縺九ｉHAL
++     * 蜀・・縺ｮflash_safe_execute繧貞他縺ｶ蜈･繧悟ｭ舌〒縺ｯ蜀・・enter縺悟・譛峨せ繝ｭ繝・ヨ繧剃ｸ頑嶌
++     * 縺阪☆繧九◆繧√∝､門・exit縺訓RIMASK=1繧貞ｾｩ蜈・＠縺ｦ蜈ｨstore縺栗RQ遖∵ｭ｢繧堤ｽｮ縺榊悉繧翫↓
++     * 縺吶ｋ (W10c縺ｧpm=1繧・/3螳滓ｸｬ縲Ｕhread-mode縺ｮ1ms loop縺ｯ蝗槭ｋ縺荊imer dispatch
++     * 縺梧ｭ｢縺ｾ繧顔ｴ・遘貞ｾ係DT=Death-B)縲・AL縺悟・mutation繧貞・蛛ｴ縺ｧ蛹・・ (erase :82縲・+     * page program :170縲‥elete-via-zero縲〉ead縺ｯXIP逶ｴ隱ｭ 窶・9b safety case) 縺ｮ
++     * 縺ｧ螟門・縺ｯ蜀鈴聞縺九▽譛牙ｮｳ縲ょ腰逋ｺ(single-level)繧剃ｸ榊､画擅莉ｶ縺ｨ縺吶ｋ縲・*/
++    uint32_t pm0 = irq_pm_rd();
++    tag_store_fn(&op); /* 逶ｴ謗･蜻ｼ蜃ｺ縺・(蜈･繧悟ｭ千ｦ∵ｭ｢) */
++    store_irq_guard(pm0);
+     return op.rc;
+ }
+ 
+@@ -108,7 +142,9 @@ void store_host_forget(void)
+     op.tlv = tlv;
+     op.ctx = ctx;
+     op.tag = TAG_HOST;
+-    (void)flash_safe_execute(tag_delete_fn, &op, UINT32_MAX);
++    uint32_t pm0 = irq_pm_rd();
++    tag_delete_fn(&op); /* 逶ｴ謗･蜻ｼ蜃ｺ縺・(tag_store_safe NOTE: 螟門・flash_safe_execute遖∵ｭ｢) */
++    store_irq_guard(pm0);
+     probe_host_known = false;
+ }
+ 
+@@ -201,7 +237,9 @@ void store_cap_forget(void)
+     op.tlv = tlv;
+     op.ctx = ctx;
+     op.tag = TAG_CAP;
+-    (void)flash_safe_execute(tag_delete_fn, &op, UINT32_MAX);
++    uint32_t pm0 = irq_pm_rd();
++    tag_delete_fn(&op); /* 逶ｴ謗･蜻ｼ蜃ｺ縺・(tag_store_safe NOTE: 螟門・flash_safe_execute遖∵ｭ｢) */
++    store_irq_guard(pm0);
+ }
+ 
+ /* 譛臥ｷ壹Δ繝ｼ繝我ｿ晄戟縲りｵｷ蜍墓凾縺ｫ蠕ｩ蜈・＠縲・崕豕｢繧剃ｸ翫￡繧句燕縺ｫ USB 蜈郁｡後〒蛻玲嫌縺輔○繧九・*/
