@@ -300,6 +300,10 @@ def main() -> int:
     ap.add_argument("--key-delete", action="store_true",
                     help="send KEY_DELETE x3 (SEQ 0,1,2) for tombstone-bank prelude;"
                     " expect 'keys deleted' on log UART, then power-cycle and check host=0")
+    ap.add_argument("--sweep12", action="store_true",
+                    help="left-stick circle at 12-bit resolution for --secs (smoothness check)")
+    ap.add_argument("--rev", type=float, default=4.0,
+                    help="seconds per revolution for --sweep12")
     ap.add_argument("--hello", action="store_true",
                     help="HELLO->HELLO_ACK + auto STATUS check")
     args = ap.parse_args()
@@ -369,6 +373,28 @@ def main() -> int:
                 ser.write(f)
                 print(f"key-delete sent seq={kseq} {f.hex(' ')}", flush=True)
                 time.sleep(0.1)
+        finally:
+            ser.close()
+        return 0
+    if args.sweep12:
+        import math as _m
+        try:
+            t_start12 = time.perf_counter()
+            while True:
+                now12 = time.perf_counter()
+                el = now12 - t_start12
+                if el >= args.secs:
+                    break
+                ph = 2 * _m.pi * el / args.rev
+                lx12 = int(0x800 + 0x7F0 * _m.cos(ph)) & 0xFFF
+                ly12 = int(0x800 + 0x7F0 * _m.sin(ph)) & 0xFFF
+                ser.write(build_state12(0, lx12, ly12, 0x800, 0x800, seq))
+                seq = (seq + 1) & 0xFF
+                n += 1
+                wait = now12 + period - time.perf_counter()
+                if wait > 0:
+                    time.sleep(wait)
+            print(f"sweep12 done sent={n}", flush=True)
         finally:
             ser.close()
         return 0
