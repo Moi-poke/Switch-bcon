@@ -35,6 +35,7 @@
 #include "baud.h"
 #include "dispatch.h"
 #include "pack.h"
+#include "pokecon.h"
 #include "spi.h"
 #include "usb_wired.h"
 #include "bt/hid.h"
@@ -333,7 +334,69 @@ static void bcon_frame_cb(uint8_t type, const uint8_t *p, uint8_t len,
     mutex_exit(&g_m);
 }
 
+#if POKECON_INPUT
+// PokeCon mode: line buffer -> pokecon_parse_line() -> g_s.state.
+// Applies under the same trust rules as the v3 fast path (STATE needs
+// state_accept, END/NEUTRAL always, malformed counted like err_crc).
+// Frames advance so the 200ms timeout-neutral path keeps working.
+static pokecon_linebuf_t s_pokelb;
+
+static void pokecon_drain_byte(uint8_t b) {
+    ctrl_state_t ns;
+    pokecon_rc_t rc;
+    bool done;
+    mutex_enter_blocking(&g_m);
+    ns = g_s.state;
+    mutex_exit(&g_m);
+    done = pokecon_linebuf_feed(&s_pokelb, (char)b, &ns, &rc);
+    if (!done) {
+        return;
+    }
+    mutex_enter_blocking(&g_m);
+    if (rc == POKE_OK) {
+        if (g_s.baud_locked && g_s.state_accept) {
+            g_s.state = ns;
+        }
+    } else if (rc == POKE_END) {
+        if (g_s.baud_locked) {
+            g_s.state = ns;
+        }
+    } else {
+        if (g_s.crc_err < 0xFFFFu) {
+            g_s.crc_err++;
+        }
+    }
+    if (rc != POKE_IGNORE) {
+        g_s.frames++;
+        g_s.last_type = (rc == POKE_END) ? T_NEUTRAL : T_STATE;
+    }
+    mutex_exit(&g_m);
+}
+#endif
+
 static uint32_t core1_selftest(void) {
+#if POKECON_INPUT
+    {
+        size_t k;
+        const char *a = "10 08\r\n"; // A press, sticks held
+        const char *e = "end\r\n";   // full neutral
+        pokecon_linebuf_init(&s_pokelb);
+        for (k = 0u; a[k] != '\0'; k++) {
+            pokecon_drain_byte((uint8_t)a[k]);
+        }
+        if (g_s.state.buttons != BTN_A) return 0x10;
+        if (g_s.state.lx != 0x800u) return 0x20;
+        if (g_s.frames != 1u) return 0x30;
+        for (k = 0u; e[k] != '\0'; k++) {
+            pokecon_drain_byte((uint8_t)e[k]);
+        }
+        if (g_s.state.buttons != 0u || g_s.state.lx != 0x800u) return 0x40;
+        if (g_s.frames != 2u) return 0x50;
+        if (g_s.last_type != T_NEUTRAL) return 0x60;
+        if (g_s.ib_w != 0u) return 0x70;
+        return 0;
+    }
+#else
     uint8_t f[64];
     uint8_t pl[8];
     pl[0] = (uint8_t)(BTN_A & 0xFFu);
@@ -354,6 +417,7 @@ static uint32_t core1_selftest(void) {
     // PINGはinboxに届いている事 (STATE/NEUTRALはlive適用のためinbox外)。
     if (g_s.ib_w != 1u) return 0x50;
     return 0;
+#endif
 }
 
 static int g_dma_ch = -1;
@@ -461,6 +525,9 @@ static void core1_entry(void) {
     g_s.state.lx = g_s.state.ly = 0x800u;
     g_s.state.rx = g_s.state.ry = 0x800u;
     g_s.state_accept = true;
+#if POKECON_INPUT
+    g_s.baud_locked = true; // 固定rateのため先頭byteからtrustする
+#endif
 
     uint32_t st = core1_selftest();
     mutex_enter_blocking(&g_m);
@@ -489,6 +556,14 @@ static void core1_entry(void) {
         s_baudx.cur = g_s.baud_idx;      // BAUD_SET正本の初期値
         s_baudx.phase = BAUDX_IDLE;
         s_baudx.adopt_n = 0u;
+#if POKECON_INPUT
+        // PokeCon modeは固定rate (derated 115200 buildと組。spec §2)。
+        // hunt sweepなし・即lockでTXを開ける (B-0 bypass。自動判別なし)。
+        s_hunt.nslots = 1u;
+        s_hunt.slots[0] = g_s.baud_idx;
+        s_hunt.locked = true;
+        g_s.baud_locked = true;
+#endif
         mutex_exit(&g_m);
         baud_lock_reset(&s_hunt.lock);
         s_hunt.err_base = s_pst.err_crc;
@@ -608,12 +683,22 @@ static void core1_entry(void) {
         uint32_t wa = dma_hw->ch[g_dma_ch].write_addr;
         uint32_t idx = (wa - (uint32_t)dma_ring) & (RING_SIZE - 1);
         if (idx != g_rd) {
+#if POKECON_INPUT
+            {
+                uint32_t p = g_rd;
+                while (p != idx) {
+                    pokecon_drain_byte(dma_ring[p]);
+                    p = (p + 1u) & (RING_SIZE - 1u);
+                }
+            }
+#else
             if (idx > g_rd) {
                 parser_feed_buf(&s_parser, &dma_ring[g_rd], idx - g_rd);
             } else {
                 parser_feed_buf(&s_parser, &dma_ring[g_rd], RING_SIZE - g_rd);
                 if (idx > 0) parser_feed_buf(&s_parser, &dma_ring[0], idx);
             }
+#endif
             g_rd = idx;
         }
         if (uart_get_hw(DATA_UART)->rsr & UART_UARTRSR_OE_BITS) {
@@ -1248,8 +1333,13 @@ static void packet_handler(uint8_t packet_type, uint16_t channel,
 // 無線一式を上げない。1ms tick＋1秒log。無線への切替は再起動適用。
 static void wired_loop(void) {
     uint32_t last_ms = 0u, last_log = 0u;
+#if POKECON_INPUT
+    printf("ready. feed UART1 GP4/5 %lu baud pokecon lines. log=UART0 115200\n",
+           (unsigned long)s_boot_baud);
+#else
     printf("ready. feed UART1 GP4/5 %lu baud v3 frames. log=UART0 115200\n",
            (unsigned long)s_boot_baud);
+#endif
     watchdog_enable(2000, 1);
     for (;;) {
         uint32_t now = to_ms_since_boot(get_absolute_time());
@@ -1459,8 +1549,13 @@ int main(void) {
     btstack_run_loop_set_timer_handler(&reconnect_timer,
                                        &link_reconnect_handler);
 
+#if POKECON_INPUT
+    printf("ready. feed UART1 GP4/5 %lu baud pokecon lines. log=UART0 115200\n",
+           (unsigned long)s_boot_baud);
+#else
     printf("ready. feed UART1 GP4/5 %lu baud v3 frames. log=UART0 115200\n",
            (unsigned long)s_boot_baud);
+#endif
 
     // 生存WDT 2s (spec §8)。usb tick (1ms) で更新。debug中は停止。
     watchdog_enable(2000, 1);

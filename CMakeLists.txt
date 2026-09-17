@@ -35,6 +35,9 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
   # WIRED_DEFAULT: TLV未保存時の起動モード (1=有線既定)。
   # 無線起動の試験時は -DWIRED_DEFAULT=0 で別構成する。
   set(WIRED_DEFAULT 1 CACHE STRING "Default boot mode when TLV unwritten (1=wired)")
+  # POKECON_INPUT: Core1の入力方言 (0=v3バイナリ既定・1=PokeCon Modified行)。
+  # 自動判別なし。PokeCon側は115200のため -DPOC_DATA_BAUD=115200 と組で使う。
+  set(POKECON_INPUT 0 CACHE STRING "Core1 input dialect (0=v3 binary, 1=pokecon lines)")
   add_executable(poc_dualcore
     src/poc_dualcore/main.c
     src/poc_dualcore/poc_usb.c
@@ -84,6 +87,7 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
   # Core1 = UART1 DMA＋v3 parser＋mutex push。
   add_executable(pico-bcon
     src/main.c
+    src/pokecon.c
     src/proto/protocol.c
     src/proto/baud.c
     src/proto/pack.c
@@ -137,6 +141,7 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
     CFG_TUSB_OS=OPT_OS_PICO
     POC_DATA_BAUD=${POC_DATA_BAUD}
     WIRED_DEFAULT=${WIRED_DEFAULT}
+    POKECON_INPUT=${POKECON_INPUT}
   )
 
   pico_add_extra_outputs(pico-bcon)

@@ -46,8 +46,18 @@ add_executable(test_baud
 )
 target_include_directories(test_baud PRIVATE ../../src/proto)
 
+add_executable(test_pokecon
+  test_pokecon.c
+  ../../src/pokecon.c
+)
+target_include_directories(test_pokecon PRIVATE
+  ../../src
+  ../../src/proto
+)
+
 enable_testing()
 add_test(NAME protocol COMMAND test_protocol)
 add_test(NAME usb COMMAND test_usb)
 add_test(NAME config COMMAND test_config)
 add_test(NAME baud COMMAND test_baud)
+add_test(NAME pokecon COMMAND test_pokecon)
