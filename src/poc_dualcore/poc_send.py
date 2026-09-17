@@ -74,6 +74,8 @@ T_HELLO_ACK = 0x11
 T_STATUS = 0x20
 T_STATUS_REQ = 0x35
 T_BAUD_SET = 0x36
+T_BOOTSEL = 0x37
+BOOTSEL_MAGIC = 0x5A
 
 # B §3 / B-0 共有レート表 (src/proto/baud.c と同一)。
 BAUD_TABLE = {0: 115200, 1: 460800, 2: 921600, 3: 1000000, 4: 2000000}
@@ -82,6 +84,12 @@ BAUD_TABLE = {0: 115200, 1: 460800, 2: 921600, 3: 1000000, 4: 2000000}
 def build_baudset(idx: int, seq: int) -> bytes:
     """BAUD_SET LEN=1 (B §3: rate index 0-4)。"""
     body = bytes((T_BAUD_SET, 1, idx & 0xFF, seq & 0xFF))
+    return bytes((SYNC,)) + body + bytes((crc8_smbus(body),))
+
+
+def build_bootsel(seq: int) -> bytes:
+    """BOOTSEL LEN=1 magic 0x5A (dev only: USB BOOTSEL reboot)."""
+    body = bytes((T_BOOTSEL, 1, BOOTSEL_MAGIC, seq & 0xFF))
     return bytes((SYNC,)) + body + bytes((crc8_smbus(body),))
 
 
@@ -423,6 +431,9 @@ def main() -> int:
     ap.add_argument("--probe-cands", type=str, default="3,2,1,0",
                     help="candidate indexes high->low (default 3,2,1,0;"
                     " add 4 for 2M opt-in)")
+    ap.add_argument("--bootsel", action="store_true",
+                    help="send BOOTSEL magic (TYPE 0x37 magic 0x5A) once,"
+                    " then exit (dev only: FW reboots to USB BOOTSEL in ~500ms)")
     args = ap.parse_args()
 
     try:
@@ -451,6 +462,14 @@ def main() -> int:
         try:
             ser.send_break(duration=args.break_)
             print(f"break sent {args.break_}s at {args.baud}", flush=True)
+            return 0
+        finally:
+            ser.close()
+    if args.bootsel:
+        try:
+            f = build_bootsel(seq)
+            ser.write(f)
+            print(f"bootsel sent seq={seq} {f.hex(' ')}", flush=True)
             return 0
         finally:
             ser.close()

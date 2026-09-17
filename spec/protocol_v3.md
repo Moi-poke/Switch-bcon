@@ -69,6 +69,10 @@ Offset  Field    Size  説明
 | 0x33 | KEY_DELETE | PC→Pico | 0 | Classicリンク鍵全削除 |
 | 0x34 | WIRED_MODE | PC→Pico | 1 | 0=無線・1=有線（Flash保存） |
 | 0x35 | STATUS_REQ | PC→Pico | 0 | STATUS即時返送要求 |
+| 0x36 | BAUD_SET | PC→Pico | 1 | rate index（B §3・合意切替） |
+| 0x37 | BOOTSEL | PC→Pico | 1 | 開発用：magic 0x5AでUSB BOOTSEL再起動 |
+| 0x36 | BAUD_SET | PC→Pico | 1 | rate index（B §3・合意切替） |
+| 0x37 | BOOTSEL | PC→Pico | 1 | 開発用：magic 0x5AでUSB BOOTSEL再起動 |
 
 ## 5. ペイロード定義
 
@@ -153,6 +157,11 @@ ERRCODE：`0x00 正常／0x01 LEN不正／0x02 CRC不一致／0x03 SEQ欠番／0
   取込・再生 (CAPTURE/BEACON) は無線起動でのみ有効。有線中の要求は
   ERRCODE `0x10`/`0x11` で拒否する (先にWIRED_MODE=0＋再起動が必要)。
 * STATUS_REQ：LEN0。即時STATUS返送（errcode=0x00）。
+* BAUD_SET：`[0]=rate index`。範囲外は拒否（0x16）。受理後は旧rateでSTATUS ACK→guard後に合意切替。
+* BOOTSEL：`[0]=0x5A`（magic）。開発用・単独UART運用のためのUSB BOOTSEL再起動。
+  不正値は拒否（0x17）。受理後は旧rateでSTATUS ACK→約500ms後に`reset_usb_boot`。
+  LOG_UART（UART0）側でも `bootsel` 行（大小不問・改行終端）で同一動作。
+  Flash書き込みなし。PROTO_VER据置（Task 9のv4改訂時に統合）。
 
 ### 5.7 RUMBLE (LEN=2、予約)
 

@@ -39,6 +39,7 @@ typedef enum {
     FX_KEY_DELETE,
     FX_WIRED_MODE,    // arg = 0/1
     FX_BAUD_SET,      // arg = rate index (B §3)
+    FX_BOOTSEL,       // arg = magic (dev only: USB BOOTSEL reboot)
 } v3_fx_t;
 
 // parser通過フレームに対する live-state (STATE/NEUTRAL) の扱い。

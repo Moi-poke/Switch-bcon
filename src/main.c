@@ -17,6 +17,7 @@
 #include "pico/multicore.h"
 #include "pico/mutex.h"
 #include "pico/flash.h"
+#include "pico/bootrom.h"
 #include "pico/unique_id.h"
 #include "pico/cyw43_arch.h"
 #include "hardware/uart.h"
@@ -129,6 +130,7 @@ static uint32_t s_rumble_reported; // 前回STATUS時のrumble合計
 static bool s_wdt_recovered;
 static bool s_bt_init; // BTstack初期化済み (無線起動時のみtrue)
 static uint32_t s_reboot_at; // 0以外は指定msでwatchdog reboot (WIRED切替適用)
+static uint32_t s_bootsel_at; // 0以外は指定msでreset_usb_boot (開発用BOOTSEL)
 
 // bt_compat.h (probe_line) の実体。UART0 printf。
 void probe_line(const char *s) {
@@ -739,6 +741,11 @@ static void exec_fx(uint32_t now_ms) {
             }
             break;
         }
+        case FX_BOOTSEL: {
+            s_bootsel_at = now_ms + 500u;
+            probe_line("BOOTSEL req -> usb_boot in 500ms");
+            break;
+        }
     }
     g_vs.fx = FX_NONE;
 }
@@ -766,6 +773,46 @@ static void flush_outbox(void) {
         }
     }
     g_vs.ob_n = 0u;
+}
+
+// ---------------- Core0: LOG_UART BOOTSEL行 (開発用・単独UART運用) ----------------
+// UART0だけ繋いだ状態でもBOOTSELに入れるよう、LOG_RXを行単位でpollする。
+// 改行終端で行内に "bootsel" (大小不問) があればDATA側T_BOOTSELと同一の
+// s_bootsel_atをarmする。TXログとは独立 (RXのみ消費)。
+static char s_logline[32];
+static uint8_t s_logline_n;
+static void poll_log_bootsel(uint32_t now) {
+    bool matched;
+    uint8_t k;
+    while (uart_is_readable(LOG_UART)) {
+        int c = uart_getc(LOG_UART);
+        if (c == '\r' || c == '\n') {
+            matched = false;
+            if (s_logline_n >= 7u) {
+                for (k = 0u; k + 7u <= s_logline_n; k++) {
+                    if ((s_logline[k] | 0x20) == 'b' &&
+                        (s_logline[k + 1u] | 0x20) == 'o' &&
+                        (s_logline[k + 2u] | 0x20) == 'o' &&
+                        (s_logline[k + 3u] | 0x20) == 't' &&
+                        (s_logline[k + 4u] | 0x20) == 's' &&
+                        (s_logline[k + 5u] | 0x20) == 'e' &&
+                        (s_logline[k + 6u] | 0x20) == 'l') {
+                        matched = true;
+                        break;
+                    }
+                }
+            }
+            s_logline_n = 0u;
+            if (matched && s_bootsel_at == 0u) {
+                s_bootsel_at = now + 500u;
+                probe_line("BOOTSEL req (log) -> usb_boot in 500ms");
+            }
+        } else if (s_logline_n < sizeof(s_logline)) {
+            s_logline[s_logline_n++] = (char)c;
+        } else {
+            s_logline_n = 0u;
+        }
+    }
 }
 
 // ---------------- Core0: 1ms tick (pull/pack/drain/FX/flush/usb/neutral) ----------------
@@ -903,6 +950,13 @@ static void poll_tick(uint32_t now) {
     usb_wired_task(now);
     link_poll(now);
     watchdog_update();
+    poll_log_bootsel(now);
+    if (s_bootsel_at != 0u && (int32_t)(now - s_bootsel_at) >= 0) {
+        probe_line("rebooting to BOOTSEL...");
+        sleep_ms(50);
+        reset_usb_boot(0, 0);
+        while (1) tight_loop_contents();
+    }
     if (s_reboot_at != 0u && (int32_t)(now - s_reboot_at) >= 0) {
         probe_line("rebooting to apply WIRED_MODE...");
         sleep_ms(50);

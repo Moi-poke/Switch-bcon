@@ -225,6 +225,22 @@ int main(void) {
               s.errcode == ERR_BAD_LEN, "LEN=0 rejected (BAD_LEN)");
     }
 
+    printf("[18] BOOTSEL magic 0x5A -> FX + STATUS ACK, else 0x17\n");
+    v3_session_init(&s);
+    {
+        const uint8_t ok[] = { 0x5A };
+        const uint8_t bad[] = { 0x00 };
+        CHECK(proto_expected_len(T_BOOTSEL) == 1, "BOOTSEL LEN=1");
+        CHECK(v3_on_frame(&s, T_BOOTSEL, ok, 1, 1) == V3_IGNORE &&
+              s.fx == FX_BOOTSEL && s.fx_arg == 0x5A, "magic accepted");
+        CHECK(s.ob_n == 1 && s.ob[0].act == ACT_SEND_STATUS,
+              "accept queues STATUS ACK (old rate)");
+        CHECK(v3_on_frame(&s, T_BOOTSEL, bad, 1, 2) == V3_IGNORE &&
+              s.errcode == 0x17 && s.fx == FX_NONE, "wrong magic rejected (0x17)");
+        CHECK(v3_on_frame(&s, T_BOOTSEL, ok, 0, 3) == V3_IGNORE &&
+              s.errcode == ERR_BAD_LEN, "LEN=0 rejected (BAD_LEN)");
+    }
+
     printf("\nRESULT: %s (%d failures)\n", fails == 0 ? "ALL PASS" : "HAS FAILURES", fails);
     return fails;
 }
