@@ -73,6 +73,16 @@ T_HELLO = 0x10
 T_HELLO_ACK = 0x11
 T_STATUS = 0x20
 T_STATUS_REQ = 0x35
+T_BAUD_SET = 0x36
+
+# B §3 / B-0 共有レート表 (src/proto/baud.c と同一)。
+BAUD_TABLE = {0: 115200, 1: 460800, 2: 921600, 3: 1000000, 4: 2000000}
+
+
+def build_baudset(idx: int, seq: int) -> bytes:
+    """BAUD_SET LEN=1 (B §3: rate index 0-4)。"""
+    body = bytes((T_BAUD_SET, 1, idx & 0xFF, seq & 0xFF))
+    return bytes((SYNC,)) + body + bytes((crc8_smbus(body),))
 
 
 def build_ping(seq: int) -> bytes:
@@ -197,6 +207,102 @@ def ping_test(ser, count: int, timeout: float = 0.5) -> int:
     return 0 if ok == count else 1
 
 
+def wait_status(ser, secs: float) -> bool:
+    """STATUS frame arrival (BAUD_SET ACK待ち用)。"""
+    for typ, _seq, pay in scan_frames(ser, secs):
+        if typ == T_STATUS and len(pay) == 7:
+            print(f"ACK STATUS flags=0x{pay[0]:02X} seq=0x{_seq:02X}", flush=True)
+            return True
+    return False
+
+
+def ping_consecutive(ser, need: int, seq_start: int,
+                     per_ping: float = 1.2) -> bool:
+    """PONG echo連続need回でTrue (ladder採用判定用)。"""
+    import time as _t
+    seq = seq_start & 0xFF
+    run = 0
+    t_end = _t.perf_counter() + per_ping * (need + 2)
+    ser.reset_input_buffer()
+    while _t.perf_counter() < t_end and run < need:
+        ser.write(build_ping(seq))
+        t0 = _t.perf_counter()
+        buf = bytearray()
+        hit = False
+        while _t.perf_counter() - t0 < per_ping:
+            chunk = ser.read(64)
+            if chunk:
+                buf += chunk
+            while len(buf) >= 5:
+                try:
+                    i = buf.index(SYNC)
+                except ValueError:
+                    buf.clear()
+                    break
+                if i > 0:
+                    del buf[:i]
+                if len(buf) < 3:
+                    break
+                ln = buf[2]
+                if ln > 32:
+                    del buf[0]
+                    continue
+                if len(buf) < 3 + ln + 2:
+                    break
+                body = bytes(buf[1:3 + ln + 1])
+                if crc8_smbus(body) != buf[3 + ln + 1]:
+                    del buf[0]
+                    continue
+                typ, rxseq = buf[1], buf[3 + ln]
+                pay = bytes(buf[3:3 + ln])
+                del buf[:3 + ln + 2]
+                if typ == T_PONG and ln == 1 and pay[0] == seq:
+                    hit = True
+                    break
+        if hit:
+            run += 1
+            print(f"ladder pong {run}/{need} seq=0x{seq:02X}", flush=True)
+        else:
+            run = 0
+        seq = (seq + 1) & 0xFF
+    return run >= need
+
+
+def probe_ladder(ser, base_baud: int, candidates, need: int = 3) -> int:
+    """B用ladder (HW未検証): 高→低にBAUD_SET→PONG need連続で採用。
+    前提はrendezvous済み (hunt確定/BREAK直後)。全滅時はbase_baudに復帰。
+    """
+    import time as _t
+    cur = base_baud
+    seq = 0x40
+    for idx in candidates:
+        if idx not in BAUD_TABLE:
+            print(f"ladder idx{idx}: unknown, skip", flush=True)
+            continue
+        want = BAUD_TABLE[idx]
+        if want != cur:
+            ser.write(build_baudset(idx, seq))
+            seq = (seq + 1) & 0xFF
+            print(f"ladder BAUD_SET idx{idx}={want} sent at {cur}", flush=True)
+            if not wait_status(ser, 2.0):
+                print(f"ladder idx{idx}={want}: no ACK, skip", flush=True)
+                continue
+            _t.sleep(0.25)  # Pico guard 100ms + margin
+            ser.baudrate = want
+            _t.sleep(0.05)
+        else:
+            print(f"ladder idx{idx}={want}: already here, verify only", flush=True)
+        if ping_consecutive(ser, need, seq):
+            print(f"ladder ADOPTED idx{idx}={want}", flush=True)
+            return 0
+        print(f"ladder idx{idx}={want}: failed, revert to {cur}", flush=True)
+        ser.baudrate = cur
+        _t.sleep(2.6)  # Pico 2s revert + margin
+        seq = (seq + need + 2) & 0xFF
+    print(f"ladder FAILED, staying at {cur}", flush=True)
+    return 1
+
+
 # (bit, name) の順。GR/GL/C/HeadsetはSwitch1輸送で落とされる。
 # 注意: Homeは確認画面から抜けるため sweep では最後尾に回す (SWEEP_TAIL)。
 SWEEP_BUTTONS = [
@@ -306,6 +412,17 @@ def main() -> int:
                     help="seconds per revolution for --sweep12")
     ap.add_argument("--hello", action="store_true",
                     help="HELLO->HELLO_ACK + auto STATUS check")
+    ap.add_argument("--break_", type=float, default=0.0, metavar="SECS",
+                    help="send serial BREAK (re-hunt request) for SECS seconds"
+                    " at --baud, then exit (e.g. --break_ 0.1)")
+    ap.add_argument("--probe-ladder", action="store_true",
+                    help="B ladder (HW unverified): BAUD_SET high->low from"
+                    " --baud (rendezvous), adopt on N consecutive PONGs")
+    ap.add_argument("--probe-need", type=int, default=3, metavar="N",
+                    help="consecutive PONGs to adopt a candidate (default 3)")
+    ap.add_argument("--probe-cands", type=str, default="3,2,1,0",
+                    help="candidate indexes high->low (default 3,2,1,0;"
+                    " add 4 for 2M opt-in)")
     args = ap.parse_args()
 
     try:
@@ -330,6 +447,20 @@ def main() -> int:
     n = 0
     seq = 0
     t0 = time.perf_counter()
+    if args.break_ > 0:
+        try:
+            ser.send_break(duration=args.break_)
+            print(f"break sent {args.break_}s at {args.baud}", flush=True)
+            return 0
+        finally:
+            ser.close()
+    if args.probe_ladder:
+        try:
+            cands = [int(v.strip()) for v in args.probe_cands.split(",")
+                     if v.strip() != ""]
+            return probe_ladder(ser, args.baud, cands, args.probe_need)
+        finally:
+            ser.close()
     if args.hello:
         try:
             return hello_check(ser)

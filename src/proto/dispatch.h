@@ -30,6 +30,7 @@ typedef struct {
 #define V3_OB_N 8
 
 // CONFIG受理時の効果 (main.cが実行する)。
+// 末尾追加のみ (挿入はACT/FX値のrenumbering hazardのため禁止)。
 typedef enum {
     FX_NONE = 0,
     FX_CAPTURE_START, // arg = 秒数1-60
@@ -37,6 +38,7 @@ typedef enum {
     FX_COLOR_SET,     // session.color[12] を使用
     FX_KEY_DELETE,
     FX_WIRED_MODE,    // arg = 0/1
+    FX_BAUD_SET,      // arg = rate index (B §3)
 } v3_fx_t;
 
 // parser通過フレームに対する live-state (STATE/NEUTRAL) の扱い。

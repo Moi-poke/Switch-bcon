@@ -32,6 +32,7 @@ enum {
     T_KEY_DELETE    = 0x33, // PC->Pico LEN=0
     T_WIRED_MODE    = 0x34, // PC->Pico LEN=1 0/1
     T_STATUS_REQ    = 0x35, // PC->Pico LEN=0
+    T_BAUD_SET      = 0x36, // PC->Pico LEN=1 rate index (B §3)
 };
 
 enum {

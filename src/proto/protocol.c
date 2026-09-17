@@ -45,6 +45,7 @@ int proto_expected_len(uint8_t type) {
         case T_KEY_DELETE:    return 0;
         case T_WIRED_MODE:    return 1;
         case T_STATUS_REQ:    return 0;
+        case T_BAUD_SET:      return 1;
         default:              return -1;
     }
 }

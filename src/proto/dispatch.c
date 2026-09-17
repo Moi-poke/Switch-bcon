@@ -2,6 +2,7 @@
 #include <string.h>
 
 #include "dispatch.h"
+#include "baud.h"
 
 void v3_session_init(v3_session_t *s) {
     memset(s, 0, sizeof(*s));
@@ -95,6 +96,17 @@ v3_live_t v3_on_frame(v3_session_t *s, uint8_t type,
             ob_push(s, ACT_SEND_STATUS, 0);
             ob_push(s, ACT_SEND_PLAYER_INFO, 0);
             return V3_IGNORE;
+        case T_BAUD_SET: {
+            uint8_t v;
+            if (len != 1 || payload == NULL) { s->errcode = ERR_BAD_LEN; return V3_IGNORE; }
+            v = payload[0];
+            if (!baud_idx_valid(v)) { s->errcode = cfg_err(type); return V3_IGNORE; }
+            s->fx = FX_BAUD_SET;
+            s->fx_arg = v;
+            // B §3: 旧rateのままACK相当 (STATUS即時)。切替はguard後に双方。
+            ob_push(s, ACT_SEND_STATUS, 0);
+            return V3_IGNORE;
+        }
         default:
             return V3_IGNORE; // 未知型は可変スキップ (parserが長さ処理済み)
     }

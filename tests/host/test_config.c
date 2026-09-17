@@ -206,6 +206,25 @@ int main(void) {
         CHECK(proto_expected_len(T_STATE) == 8, "T_STATE canonical LEN stays 8");
     }
 
+    printf("[17] BAUD_SET (B §3) range 0-4 -> FX + STATUS ACK, else 0x16\n");
+    v3_session_init(&s);
+    {
+        const uint8_t ok0[] = { 0x00 };
+        const uint8_t ok4[] = { 0x04 };
+        const uint8_t bad5[] = { 0x05 };
+        CHECK(proto_expected_len(T_BAUD_SET) == 1, "BAUD_SET LEN=1");
+        CHECK(v3_on_frame(&s, T_BAUD_SET, ok0, 1, 1) == V3_IGNORE &&
+              s.fx == FX_BAUD_SET && s.fx_arg == 0, "idx0 accepted");
+        CHECK(s.ob_n == 1 && s.ob[0].act == ACT_SEND_STATUS,
+              "accept queues STATUS ACK (old rate)");
+        CHECK(v3_on_frame(&s, T_BAUD_SET, ok4, 1, 2) == V3_IGNORE &&
+              s.fx == FX_BAUD_SET && s.fx_arg == 4, "idx4 accepted");
+        CHECK(v3_on_frame(&s, T_BAUD_SET, bad5, 1, 3) == V3_IGNORE &&
+              s.errcode == 0x16 && s.fx == FX_NONE, "idx5 rejected (0x16)");
+        CHECK(v3_on_frame(&s, T_BAUD_SET, ok0, 0, 4) == V3_IGNORE &&
+              s.errcode == ERR_BAD_LEN, "LEN=0 rejected (BAD_LEN)");
+    }
+
     printf("\nRESULT: %s (%d failures)\n", fails == 0 ? "ALL PASS" : "HAS FAILURES", fails);
     return fails;
 }
