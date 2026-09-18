@@ -137,6 +137,22 @@ void v3_player_tick(v3_session_t *s) {
     s->player_ever_sent = true;
 }
 
+void v3_rumble_tick(v3_session_t *s) {
+    uint8_t n0;
+    if (!s->rumble_valid) return;
+    if (s->rumble_ever_sent &&
+        s->rumble_sent_l == s->rumble_l &&
+        s->rumble_sent_r == s->rumble_r) {
+        return; // 変化なし: 送出しない
+    }
+    n0 = s->ob_n;
+    ob_push(s, ACT_SEND_RUMBLE, 0);
+    if (s->ob_n == n0) return; // 満杯drop: sent_*凍結・次tick再試行
+    s->rumble_sent_l = s->rumble_l;
+    s->rumble_sent_r = s->rumble_r;
+    s->rumble_ever_sent = true;
+}
+
 void v3_pack_status(uint8_t flags, uint8_t last_seq, uint16_t err_crc,
                     uint16_t err_drop, uint8_t errcode, uint8_t out[7]) {
     out[0] = flags;

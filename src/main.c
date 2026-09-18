@@ -113,7 +113,7 @@ uint8_t bcon_btn[3];
 uint16_t bcon_lx = 0x800u, bcon_ly = 0x800u, bcon_rx = 0x800u, bcon_ry = 0x800u;
 uint8_t bcon_mac[6]; // 応答順 (初期化で反転済み。BT addrと同一機器)
 
-// ---- RUMBLE受信計数 (Step 2: ACK＋破棄し計数のみ。v1はPCへ転送しない) ----
+// ---- RUMBLE受信 (BT 0x10復号amp保持。変化時のみRUMBLE frameでPCへ転送) ----
 uint32_t bcon_usb_rumble_n;
 uint32_t bcon_bt_rumble_n;
 
@@ -843,6 +843,11 @@ static void flush_outbox(void) {
             send_status();
         } else if (o->act == ACT_SEND_PONG) {
             uart_tx_frame(T_PONG, &o->arg, 1);
+        } else if (o->act == ACT_SEND_RUMBLE) {
+            uint8_t ra[2];
+            ra[0] = g_vs.rumble_sent_l;
+            ra[1] = g_vs.rumble_sent_r;
+            uart_tx_frame(T_RUMBLE, ra, 2);
         } else if (o->act == ACT_SEND_HELLO_ACK) {
             uint8_t ack[4];
             ack[0] = PROTO_VER;
@@ -917,6 +922,10 @@ static void poll_tick(uint32_t now) {
                                   (probe_vibration_enabled ? 0x02u : 0u));
     g_vs.player_valid = probe_player_seen;
     v3_player_tick(&g_vs);
+    g_vs.rumble_l = probe_rumble_l;
+    g_vs.rumble_r = probe_rumble_r;
+    g_vs.rumble_valid = probe_rumble_seen;
+    v3_rumble_tick(&g_vs);
     // baud hunt (B-0)＋BAUD_SET (B §3): session発行＋保存drain＋復帰報告。
     // inbox/FXは確定まで閉じる (確定前バイトはuntrusted)。
     bool baud_locked;

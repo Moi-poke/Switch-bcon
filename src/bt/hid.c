@@ -12,6 +12,7 @@
 #include "store.h"
 #include "bt_compat.h"
 #include "pack.h"
+#include "rumble.h"
 
 #define HID_REPLY_WANT (2u + 48u)
 
@@ -48,6 +49,8 @@ uint16_t probe_out_len_min = 0xFFFFu;
 uint16_t probe_out_len_max;
 uint8_t probe_player_id;
 bool probe_player_seen = false;
+uint8_t probe_rumble_l, probe_rumble_r;
+bool probe_rumble_seen = false;
 bool probe_imu_enabled;
 bool probe_vibration_enabled;
 uint8_t probe_input_mode = 0x3Fu;
@@ -104,6 +107,9 @@ void probe_hid_reset(void)
     probe_state_sent = 0u;
     probe_player_id = 0u;
     probe_player_seen = false;
+    probe_rumble_l = 0u;
+    probe_rumble_r = 0u;
+    probe_rumble_seen = false;
     probe_imu_enabled = false;
     probe_vibration_enabled = false;
     probe_input_mode = 0x3Fu;
@@ -422,11 +428,17 @@ void probe_report_handler(uint16_t cid, hid_report_type_t report_type,
             hid_device_request_can_send_now_event(probe_hid_cid);
         }
     } else if (report_id == 0x10u) {
-        /* 振動出力 (Step 2: ACK＋破棄し計数のみ。v1はPCへ転送しない)。
-         * BTstackがL2CAP層でACKするためここでは何も返さない。
+        /* 振動出力: L2CAP層がACKするためここでは返さない。最新ampを復号し
+         * 保持する (report[0]=counterのため &report[1] + size>=9)。
          * 毎回logすると60Hz spamになるため初回のみ出す。 */
+        uint8_t rl = 0u, rr = 0u;
+        if (rumble_decode_010(report, report_size, &rl, &rr)) {
+            probe_rumble_l = rl;
+            probe_rumble_r = rr;
+            probe_rumble_seen = true;
+        }
         if (bcon_bt_rumble_n == 0u) {
-            probe_line("  RUMBLE 0x10 intake (ack+drop, counted)");
+            probe_line("  RUMBLE 0x10 intake (ack+decode, counted)");
         }
         bcon_bt_rumble_n++;
     } else {

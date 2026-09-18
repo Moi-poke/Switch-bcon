@@ -1,4 +1,4 @@
-# PC ⇄ Pico バイナリプロトコル仕様書 (v3 / PROTO_VER=3)
+# PC ⇄ Pico バイナリプロトコル仕様書 (v4 / PROTO_VER=4)
 
 **プロジェクト:** pico-bcon（新規作成。旧 pokecon v2・wakecon ASCII と非互換）
 **対象経路:** PC →(UART)→ Pico 2 W →(USB-HID / Classic BT)→ Switch 1
@@ -10,6 +10,7 @@
 | Ver | 日付 | 変更内容 |
 |-----|------|---------|
 | 3.0 | 2026-09-13 | 初版（本リポジトリ）。STATE=ボタンu32-LE（VIIPER順）LEN8・HAT廃止／CONFIG面 0x30-0x35 新設／RUMBLE 0x22 予約／STATUS 7B・HELLO_ACK 4B維持／USBは任天堂写し・bInterval 8 |
+| 4.0 | 2026-09-18 | RUMBLE送出開始（0x22 sending）・PLAYER_INFO新設（0x23）・PROTO_VER=4・RESULT DOWNGRADED廃止 |
 
 > フィールド追加・意味変更時は必ず本表と `PROTO_VER` を更新する。
 
@@ -62,15 +63,14 @@ Offset  Field    Size  説明
 | 0x11 | HELLO_ACK | Pico→PC | 4 | 版応答・RESULT |
 | 0x20 | STATUS | Pico→PC | 7 | 状態・統計・errcode |
 | 0x21 | PONG | Pico→PC | 1 | PING自身seqをエコー |
-| 0x22 | RUMBLE | Pico→PC | 2 | 振動振幅（予約・v1未送出） |
+| 0x22 | RUMBLE | Pico→PC | 2 | 振動振幅（変化時のみ送出） |
+| 0x23 | PLAYER_INFO | Pico→PC | 2 | プレイヤーランプ＋IMU/振動フラグ（変化時・STATUS_REQ付随） |
 | 0x30 | CAPTURE_START | PC→Pico | 1 | wake取込開始・秒数1-60 |
 | 0x31 | BEACON_START | PC→Pico | 0 | wake再生（約1.5s） |
 | 0x32 | COLOR_SET | PC→Pico | 12 | 本体色RGB×4 |
 | 0x33 | KEY_DELETE | PC→Pico | 0 | Classicリンク鍵全削除 |
 | 0x34 | WIRED_MODE | PC→Pico | 1 | 0=無線・1=有線（Flash保存） |
 | 0x35 | STATUS_REQ | PC→Pico | 0 | STATUS即時返送要求 |
-| 0x36 | BAUD_SET | PC→Pico | 1 | rate index（B §3・合意切替） |
-| 0x37 | BOOTSEL | PC→Pico | 1 | 開発用：magic 0x5AでUSB BOOTSEL再起動 |
 | 0x36 | BAUD_SET | PC→Pico | 1 | rate index（B §3・合意切替） |
 | 0x37 | BOOTSEL | PC→Pico | 1 | 開発用：magic 0x5AでUSB BOOTSEL再起動 |
 
@@ -123,10 +123,10 @@ PONG payload = 受信PINGのヘッダSEQをエコー（RTT対応を一意に）�
 
 ### 5.4 HELLO (LEN=2) / HELLO_ACK (LEN=4)
 
-HELLO：`[0]=PROTO_VER（要求版=3)、[1]=FLAGS（bit0=STATUS自動送信要求、他予約0）`。
+HELLO：`[0]=PROTO_VER（要求版=4)、[1]=FLAGS（bit0=STATUS自動送信要求、他予約0）`。
 HELLO_ACK：`[0]=採用版、[1]=FW_MAJOR、[2]=FW_MINOR、[3]=RESULT`。
-RESULT：`0x00 OK／0x01 DOWNGRADED（要求が新しく自版で継続）／0x02 UNSUPPORTED（互換なし・中立維持・STATE拒否）`。
-Picoはv3のみ話す。HELLO前のSTATUS自動送信はしない。FLAGS bit0指定時のみ1Hz周期送信。
+RESULT：`0x00 OK／0x02 UNSUPPORTED（互換なし・中立維持・STATE拒否）`。
+Picoはv4のみ話す。HELLO前のSTATUS自動送信はしない。FLAGS bit0指定時のみ1Hz周期送信。
 
 ### 5.5 STATUS (LEN=7)
 
@@ -163,9 +163,35 @@ ERRCODE：`0x00 正常／0x01 LEN不正／0x02 CRC不一致／0x03 SEQ欠番／0
   LOG_UART（UART0）側でも `bootsel` 行（大小不問・改行終端）で同一動作。
   Flash書き込みなし。PROTO_VER据置（Task 9のv4改訂時に統合）。
 
-### 5.7 RUMBLE (LEN=2、予約)
+### 5.7 RUMBLE (LEN=2、送出)
 
-`[0]=左振幅0-255、[1]=右振幅0-255`。v1は送出しない。Switch出力受信パーサの受け口のみ確保し、ACK返送＋破棄する。将来PC転送を有効化する。
+`[0]=左振幅0-255、[1]=右振幅0-255`。Switch HID-output 0x10
+（packet counter 1B＋振動8B。BTstackはreport IDを外して渡すため
+`report[0]`=counter、`report[1..8]`が振動本体）を復号した最新ampを
+変化時のみ送出する。中立は (0,0)。outbox満杯で送出できなかった場合は
+送出値を更新せず次tickに再試行する。
+
+モータ毎ampはHF振幅とLF振幅の大きい方（`max`）：
+HFは `(M[1] & 0xFE) >> 1` のindex線形 `(idx*255+50)/100`（中立`0x01`→0）、
+LFは中立相対 `M[3]<=0x40→0`・それ以外 `((M[3]-0x40)*255+41)/82`
+（`0x92`は実測最大LFバイトのためspan=82で正規化し255に届く）。
+実測ベクタ（`log/COM3_2026_09_18.rumble_vib.txt` 全長一致集合）：
+
+| raw8 | L | R | 出現数 |
+|------|---|---|--------|
+| `00 01 40 40 00 01 40 40`（対称中立） | 0 | 0 | 2077 |
+| `00 01 40 40 00 00 00 00`（L中立） | 0 | 0 | 2411 |
+| `00 00 00 00 00 01 40 40`（R中立） | 0 | 0 | 2412 |
+| `00 45 40 52 00 00 00 00`（L-mid） | 87 | 0 | 2 |
+| `00 00 00 00 00 45 40 52`（R-mid） | 0 | 87 | 2 |
+| `00 45 40 52 00 45 40 52`（both-mid） | 87 | 87 | 7 |
+| `80 00 60 92 80 00 60 92`（both-strong、LF駆動peak） | 255 | 255 | 3 |
+
+### 5.8 PLAYER_INFO (LEN=2)
+
+`[0]=lamp（SUB 0x30応答のplayer ID写し）、[1]=flags（bit0=IMU有効、bit1=振動有効）`。
+初回SUB 0x30受信後に有効化し、変化時のみ送出する。STATUS_REQ受信時は
+STATUSに付随して送出する。
 
 ## 6. CRC8
 

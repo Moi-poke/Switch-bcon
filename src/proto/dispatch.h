@@ -20,6 +20,7 @@ typedef enum {
     ACT_SEND_PONG,      // arg = PINGのSEQをエコー
     ACT_SEND_HELLO_ACK, // sessionの採用版・RESULTで作る
     ACT_SEND_PLAYER_INFO, // lamp+flags (変化時・STATUS_REQ付随)
+    ACT_SEND_RUMBLE, // L/R amp (変化時のみ。末尾追加・挿入禁止)
 } v3_act_t;
 
 typedef struct {
@@ -62,6 +63,10 @@ typedef struct {
     bool player_valid;                   // 初回SUB 0x30受信までfalse
     uint8_t player_sent_lamp, player_sent_flags; // 最終送出値
     bool player_ever_sent;               // 初回は変化なしでも送出する
+    uint8_t rumble_l, rumble_r;          // mainが毎tick設定する (hid復号amp)
+    bool rumble_valid;                   // 初回0x10復号までfalse
+    uint8_t rumble_sent_l, rumble_sent_r; // 最終送出値
+    bool rumble_ever_sent;               // 初回は変化なしでも送出する
     // CONFIG受理値
     uint8_t cap_seconds;
     uint8_t wired_val;
@@ -88,3 +93,8 @@ void v3_pack_status(uint8_t flags, uint8_t last_seq, uint16_t err_crc,
 // PLAYER_INFO変化検出: validかつ(未送出|前回送出値と相違)なら
 // ACT_SEND_PLAYER_INFOをqueueし送出値を更新する。純粋 (HW副作用なし)。
 void v3_player_tick(v3_session_t *s);
+
+// RUMBLE変化検出: validかつ(未送出|前回送出値と相違)なら
+// ACT_SEND_RUMBLEをqueueする。outbox満杯でqueueできなかった場合は
+// sent_*を更新せず次tickに再試行する (Task-7裁定と同形)。純粋。
+void v3_rumble_tick(v3_session_t *s);

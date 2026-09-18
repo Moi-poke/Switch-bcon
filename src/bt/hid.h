@@ -35,6 +35,8 @@ extern uint16_t probe_out_len_min;
 extern uint16_t probe_out_len_max;
 extern uint8_t probe_player_id;
 extern bool probe_player_seen;
+extern uint8_t probe_rumble_l, probe_rumble_r; // decoded L/R amps 0-255
+extern bool probe_rumble_seen; // first valid 0x10 decode received
 extern bool probe_imu_enabled;
 extern bool probe_vibration_enabled;
 extern uint8_t probe_input_mode;
@@ -57,7 +59,7 @@ uint32_t probe_send_interval_ms(void);
 void probe_watchdog_feed(uint32_t now_ms);
 void probe_watchdog_poll(uint32_t now_ms);
 
-/* Switch振動出力 (BT 0x10) の受信累計。ACK＋破棄し計数のみ残す (Step 2)。
+/* Switch振動出力 (BT 0x10) の受信累計。ACK＋復号し最新ampを保持する。
  * 所有元は main.c。STATUS bit7 の源。 */
 extern uint32_t bcon_bt_rumble_n;
 

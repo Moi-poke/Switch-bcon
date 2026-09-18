@@ -241,6 +241,58 @@ int main(void) {
               s.errcode == ERR_BAD_LEN, "LEN=0 rejected (BAD_LEN)");
     }
 
+    printf("[19] ACT_SEND_RUMBLE appended at enum end (never inserted)\n");
+    {
+        CHECK(ACT_SEND_PLAYER_INFO == 4 && ACT_SEND_RUMBLE == 5,
+              "RUMBLE==5 after PLAYER_INFO==4 (append-only)");
+    }
+
+    printf("[20] v3_rumble_tick change-only + full-outbox retry\n");
+    v3_session_init(&s);
+    {
+        s.rumble_valid = false;
+        v3_rumble_tick(&s);
+        CHECK(s.ob_n == 0, "invalid -> quiet");
+        s.rumble_valid = true;
+        s.rumble_l = 87;
+        s.rumble_r = 87;
+        v3_rumble_tick(&s);
+        CHECK(s.ob_n == 1 && s.ob[0].act == ACT_SEND_RUMBLE &&
+              s.rumble_sent_l == 87 && s.rumble_sent_r == 87 &&
+              s.rumble_ever_sent, "first valid -> queued once + sent updated");
+        {
+            uint8_t n = s.ob_n;
+            v3_rumble_tick(&s);
+            CHECK(s.ob_n == n, "unchanged -> quiet");
+        }
+        s.rumble_l = 255;
+        v3_rumble_tick(&s);
+        CHECK(s.ob_n == 2 && s.ob[1].act == ACT_SEND_RUMBLE &&
+              s.rumble_sent_l == 255, "L change -> queued");
+        s.rumble_r = 0;
+        v3_rumble_tick(&s);
+        CHECK(s.ob_n == 3 && s.rumble_sent_r == 0, "R change -> queued");
+    }
+
+    printf("[21] v3_rumble_tick full outbox: sent_* frozen, retry-next-tick\n");
+    v3_session_init(&s);
+    {
+        s.rumble_valid = true;
+        s.rumble_l = 10;
+        s.rumble_r = 20;
+        for (int k = 0; k < V3_OB_N; k++) v3_on_frame(&s, T_PING, NULL, 0, (uint8_t)k);
+        CHECK(s.ob_n == V3_OB_N, "outbox full");
+        v3_rumble_tick(&s);
+        CHECK(s.ob_n == V3_OB_N && !s.rumble_ever_sent &&
+              s.rumble_sent_l == 0 && s.rumble_sent_r == 0,
+              "full -> dropped, sent_* frozen (retry-next-tick)");
+        s.ob_n = 0; // simulate flush_outbox drain
+        v3_rumble_tick(&s);
+        CHECK(s.ob_n == 1 && s.ob[0].act == ACT_SEND_RUMBLE &&
+              s.rumble_ever_sent && s.rumble_sent_l == 10 &&
+              s.rumble_sent_r == 20, "after drain -> queued + sent updated");
+    }
+
     printf("\nRESULT: %s (%d failures)\n", fails == 0 ? "ALL PASS" : "HAS FAILURES", fails);
     return fails;
 }
