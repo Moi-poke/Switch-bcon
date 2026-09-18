@@ -68,6 +68,7 @@ def build_key_delete(seq: int) -> bytes:
 
 T_PING = 0x03
 T_PONG = 0x21
+T_PLAYER_INFO = 0x23
 T_KEY_DELETE = 0x33
 T_HELLO = 0x10
 T_HELLO_ACK = 0x11
@@ -134,6 +135,30 @@ def scan_frames(ser, secs: float):
                 continue
             yield (buf[1], buf[3 + ln], bytes(buf[3:3 + ln]))
             del buf[:3 + ln + 2]
+
+
+def decode_player_info(frame: bytes) -> tuple:
+    """T_PLAYER_INFO (0x23, LEN=2) frame -> (lamp, flags).
+
+    payload[0]=lamp, payload[1]=flags (bit0 IMU / bit1 vibration)。
+    不正frame (短い/SYNC不一致/LEN不一致/CRC不一致/TYPE不一致) はValueError。
+    """
+    if len(frame) < 5:
+        raise ValueError("frame too short")
+    if frame[0] != SYNC:
+        raise ValueError(f"bad sync 0x{frame[0]:02X}")
+    typ, ln = frame[1], frame[2]
+    total = 3 + ln + 2
+    if len(frame) != total:
+        raise ValueError(f"length mismatch: got {len(frame)} want {total}")
+    body = frame[1:3 + ln + 1]
+    if crc8_smbus(body) != frame[3 + ln + 1]:
+        raise ValueError("bad crc8")
+    if typ != T_PLAYER_INFO:
+        raise ValueError(f"unexpected type 0x{typ:02X}")
+    if ln != 2:
+        raise ValueError(f"unexpected len {ln}")
+    return frame[3], frame[4]
 
 
 def hello_check(ser, secs: float = 6.0) -> int:
