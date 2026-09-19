@@ -1,8 +1,6 @@
 # Protocol — PC⇔Pico バイナリプロトコル
 
-SSOT は `spec/protocol_v3.md` である。ただし現ツリーは v4 移行中のため、本ページは「仕様書 v3 の記述＋コード上の v4 差分」を分けて記録する。仕様とコードが衝突した場合は仕様 + `src/proto/*` を正とする (`AGENTS.md:3`)。
-
-> ✅ Done (2026-09-18, Commit C `2a3057c`): 仕様書は v4 文面である。Task 9 閉鎖。
+SSOT は `spec/protocol_v3.md`（v4 正準、`PROTO_VER=4`）である。本ページは仕様書 §4・§5 の要点を写すものである。仕様とコードが衝突した場合は仕様 + `src/proto/*` を正とする (`AGENTS.md:3`)。
 
 ## フレーム構成
 
@@ -19,7 +17,14 @@ SSOT は `spec/protocol_v3.md` である。ただし現ツリーは v4 移行中
 
 正準生成器は `frame_build` である。`out` に全フレームを書き、合計長を返す。`len > 32` は 0 を返す (`src/proto/protocol.c:145-156`)。Pico→PC 方向 SEQ は `g_tx_seq` で方向独立に数える (`src/main.c:122,730-731`)。PC 送信側も方向別 SEQ を守り、1 フレーム 1 `write()` で送る（`src/poc_dualcore/poc_send.py:18-19,597`）。
 
-原則は固定長バイナリ、SYNC+CRC+スライディング再同期、全状態送信、輸送非依存の論理 u32、双方向・方向独立 SEQ、UART バイナリ専用（ASCII なし）である (`spec/protocol_v3.md:22-24`)。
+原則は次の6つである (`spec/protocol_v3.md:22-24`)。
+
+- 固定長バイナリ
+- SYNC+CRC+スライディング再同期
+- 全状態送信
+- 輸送非依存の論理 u32
+- 双方向・方向独立 SEQ
+- UART バイナリ専用（ASCII なし）
 
 ## CRC8 と受信ステートマシン
 
@@ -30,9 +35,9 @@ SSOT は `spec/protocol_v3.md` である。ただし現ツリーは v4 移行中
 - SEQ 欠番は mod256 で検出する。`expect=(last+1)&0xFF` で、不一致は欠落イベントとして 1 加算する（欠落数ではない）。初回フレームは計数しない (`spec/protocol_v3.md:53`, `src/proto/protocol.c:114-125`)
 - バッファ満杯時は最古 1B 破棄＋ERR 加算する (`spec/protocol_v3.md:203`, `src/proto/protocol.c:108-112`)
 
-## フレーム種別表（v3 仕様 + v4 差分）
+## フレーム種別表（v4 正準）
 
-仕様書の v3 表 (`spec/protocol_v3.md:57-75`) に v4 差分を注記したものである：
+仕様書 §4 (`spec/protocol_v3.md:57-75`) の正写である：
 
 | TYPE | 名称 | 方向 | LEN | 用途 |
 |---|---|---|---|---|
@@ -51,16 +56,25 @@ SSOT は `spec/protocol_v3.md` である。ただし現ツリーは v4 移行中
 | `0x33` | KEY_DELETE | PC→Pico | 0 | Classic リンク鍵全削除 |
 | `0x34` | WIRED_MODE | PC→Pico | 1 | 0=無線・1=有線（Flash 保存） |
 | `0x35` | STATUS_REQ | PC→Pico | 0 | STATUS 即時返送要求（+ PLAYER_INFO 付随） |
+| `0x36` | BAUD_SET | PC→Pico | 1 | rate index（§5.6 合意切替） |
+| `0x37` | BOOTSEL | PC→Pico | 1 | 開発用。magic `0x5A` で USB BOOTSEL 再起動 |
 
 `proto_expected_len` が既知型の正確長を一元管理する。`T_PLAYER_INFO` は `return 2` が追加済みであり、未知 `0x24` は `-1` のままである (`src/proto/protocol.c:31-52`, `tests/host/test_config.c:160-164`)。
 
-> ✅ Done: `T_RUMBLE` 送出・`T_PLAYER_INFO` 仕様追記・`0x36 BAUD_SET` は実装＋HW実証済み（Commit B `7cc4cc9`）。`0x37` は `T_BOOTSEL`（開発用）に割当て済みのため、`PERSONALITY_SET` には別番号が必要（要所有者判断）。CONFIG 拒否 ERRCODE 延長規則（`0x16`・`0x17`）も実装済みである。
+> ✅ Done: `T_RUMBLE` 送出・`T_PLAYER_INFO`・`0x36 BAUD_SET`・`0x37 BOOTSEL` は仕様・実装＋HW 実証済みである。CONFIG 拒否 ERRCODE 延長規則（`0x16`・`0x17`）も実装済みである。
 
 ## STATE（`0x01`、LEN8）
 
-`BTN` u32-LE（VIIPER 互換ビット順、22bit 使用・残り予約 0）+ スティック 4B（LX LY RX RY、0-255、`0x80` 中央）である (`spec/protocol_v3.md:79-88`)。BTN ビット割当は B/A/Y/X/R/ZR/Plus/R 押込/十字/L/ZL/Minus/L 押込/Home/Capture/GR/GL/C/Headset の順で bit0-21 を使い、bit22-31 は予約である (`src/proto/protocol.h:55-79`, `spec/protocol_v3.md:92-105`)。
+- `BTN` u32-LE（VIIPER 互換ビット順、22bit 使用・残り予約 0）+ スティック 4B（LX LY RX RY、0-255、`0x80` 中央）である (`spec/protocol_v3.md:79-88`)。
+- BTN ビット割当は B/A/Y/X/R/ZR/Plus/R 押込/十字/L/ZL/Minus/L 押込/Home/Capture/GR/GL/C/Headset の順で bit0-21 を使う。
+- bit22-31 は予約である (`src/proto/protocol.h:55-79`, `spec/protocol_v3.md:92-105`)。
 
-約束事は次の通り。十字キーはボタン扱い（斜めは 2bit 同時）で HAT フィールドなし。予約 bit は 0 固定で送信し、受信側は無視する（拒否しない）。スティック Y 反転・12bit 化等の座標変換は PC 送信ラッパ 1 箇所に集約し、Pico は 8bit 値をそのまま保持して輸送 pack 時に 12bit 化する (`spec/protocol_v3.md:109`, `spec/protocol_v3.md:266-269`)。
+約束事は次の通り。
+
+- 十字キーはボタン扱い（斜めは 2bit 同時）で HAT フィールドなし。
+- 予約 bit は 0 固定で送信し、受信側は無視する（拒否しない）。
+- スティック Y 反転・12bit 化等の座標変換は PC 送信ラッパ 1 箇所に集約する。
+- Pico は 8bit 値をそのまま保持し、輸送 pack 時に 12bit 化する (`spec/protocol_v3.md:109`, `spec/protocol_v3.md:266-269`)。
 
 線路 u32 は輸送非依存の論理値であり、USB/BT への写像差は Pico 側 pack 関数（`ctrl_pack_btn3`、`pack_stick_12bit`）で吸収する (`spec/protocol_v3.md:226-229`)。pack 関数の実体は `src/proto/pack.c:4` にある。BT 3B と USB `0x30` ボタン 3B は任天堂が同一順序のため両表は同値であり、実装は単一 pack 関数を共有する (`spec/protocol_v3.md:228-229`)。
 
@@ -75,7 +89,9 @@ SSOT は `spec/protocol_v3.md` である。ただし現ツリーは v4 移行中
 
 ## STATUS（`0x20`、LEN7）/ ERRCODE
 
-組立は純粋関数 `v3_pack_status` が担う。`flags/last_seq/err_crc(LE16)/err_drop(LE16)/errcode` の順である (`src/proto/dispatch.c:156-165`, `spec/protocol_v3.md:131-142`)。送信側 `send_status` は新鮮な HW 状態で flags を作る。USB mounted、Switch ready、timeout-neutral、WDT recovered、UART overrun、wired mode、BT connected、RUMBLE 受信ありの各 bit である (`src/main.c:738-763`)。
+- 組立は純粋関数 `v3_pack_status` が担う。`flags/last_seq/err_crc(LE16)/err_drop(LE16)/errcode` の順である (`src/proto/dispatch.c:156-165`, `spec/protocol_v3.md:131-142`)。
+- 送信側 `send_status` は新鮮な HW 状態で flags を作る。
+- USB mounted、Switch ready、timeout-neutral、WDT recovered、UART overrun、wired mode、BT connected、RUMBLE 受信ありの各 bit である (`src/main.c:738-763`)。
 
 各 bit の対応は `ST_USB_MOUNTED`、`ST_SWITCH_READY`、`ST_TIMEOUT_NEUTRAL`、`ST_WDT_RECOVERED`、`ST_UART_OVERRUN`、`ST_WIRED_MODE`、`ST_BT_CONNECTED`、`ST_RUMBLE_SEEN` である (`src/proto/protocol.h:83-93`)。bit7（前回 STATUS 以降の振動受信あり）は受信有無のみを示し、振幅値は含まない。
 
@@ -83,28 +99,39 @@ ERRCODE は `0x00` 正常／`0x01` LEN 不正／`0x02` CRC 不一致／`0x03` SE
 
 `STATUS_REQ` は STATUS 即時返送に加え、PLAYER_INFO を付随送出する（outbox に両方積む）(`src/proto/dispatch.c:95-98`, `tests/host/test_config.c:120-132`)。即時 STATUS の errcode は `0x00` 扱いである (`spec/protocol_v3.md:159`)。
 
-## PLAYER_INFO（`0x23`、LEN2）— dispatch+配線＋HW裏取り済み
-
-ペイロードは `[0]=player lamp byte（SUB `0x30` report[10] の写し）、[1]=flags（bit0=IMU on、bit1=vibration on）` である (`docs/superpowers/specs/2026-09-15-uart-features-design.md:19`)。
-
-実装の到達点は次の通り。`T_PLAYER_INFO=0x23` 列挙と LEN2 (`src/proto/protocol.h:28`, `src/proto/protocol.c:41`)、送信箱 `ACT_SEND_PLAYER_INFO` (`src/proto/dispatch.h:22`)、セッション欄（`player_lamp/player_flags/player_valid/player_sent_*/player_ever_sent`）(`src/proto/dispatch.h:58-61`)、変化検出 `v3_player_tick`（初回は無条件送出、以後は変化時のみ）(`src/proto/dispatch.c:127-138`)、`STATUS_REQ` 付随 (`src/proto/dispatch.c:95-98`)、hid 側の `probe_player_id`/`probe_player_seen`/`probe_imu_enabled`/`probe_vibration_enabled` 取得 (`src/bt/hid.c:351-372`, `src/bt/hid.h:40-41`)、tick 供給＋flush 送信 (`src/main.c:919-924,858-862`)、ホスト試験 (`tests/host/test_config.c:160-191`)。
-
-> ✅ Done (2026-09-18, Commit D `9915acf`): lamp=0x01/flags=0x03 を HW 確認（P-1/P-2/P-5）。P-3/P-4/P-6 は未検証残。
-
-## RUMBLE（`0x22`、LEN2）— 振幅転送中（実測接地）
+## RUMBLE (0x22・LEN2)
 
 v4 で送出する。復号は `src/proto/rumble.h`（HF 式＋LF 中立相対・per-motor max、実測ベクタ接地）、intake 蓄積（`src/bt/hid.c`）、`ACT_SEND_RUMBLE`＋変化時のみ送出、flush arm（`src/main.c`）で行う。
 
 > ✅ Done (2026-09-18, Commit C `2a3057c`): 非ゼロ 4 種・3 強度段階の実測で接地。
 
-## CONFIG（`0x30-0x35`）
+## PLAYER_INFO (0x23・LEN2)
+
+ペイロードは `[0]=player lamp byte（SUB `0x30` report[10] の写し）、[1]=flags（bit0=IMU on、bit1=vibration on）` である (`docs/superpowers/specs/2026-09-15-uart-features-design.md:19`)。
+
+実装の到達点は次の通り。
+
+- `T_PLAYER_INFO=0x23` 列挙と LEN2 (`src/proto/protocol.h:28`, `src/proto/protocol.c:41`)
+- 送信箱 `ACT_SEND_PLAYER_INFO` (`src/proto/dispatch.h:22`)
+- セッション欄（`player_lamp/player_flags/player_valid/player_sent_*/player_ever_sent`）(`src/proto/dispatch.h:58-61`)
+- 変化検出 `v3_player_tick`（初回は無条件送出、以後は変化時のみ）(`src/proto/dispatch.c:127-138`)
+- `STATUS_REQ` 付随 (`src/proto/dispatch.c:95-98`)
+- hid 側の `probe_player_id`/`probe_player_seen`/`probe_imu_enabled`/`probe_vibration_enabled` 取得 (`src/bt/hid.c:351-372`, `src/bt/hid.h:40-41`)
+- tick 供給＋flush 送信 (`src/main.c:919-924,858-862`)
+- ホスト試験 (`tests/host/test_config.c:160-191`)
+
+> ✅ Done (2026-09-18, Commit D `9915acf`): lamp=0x01/flags=0x03 を HW 確認（P-1/P-2/P-5）。P-3/P-4/P-6 は未検証残。
+
+## CONFIG（`0x30-0x37`）
 
 - `CAPTURE_START`：`[0]=` 秒数 1-60。範囲外は拒否（ERRCODE `0x10`）(`spec/protocol_v3.md:149`, `src/proto/dispatch.c:63-72`, `tests/host/test_config.c:66-79`)
 - `BEACON_START`：LEN0。未保存時は拒否（`0x11`）。保存有無は `cap_valid` で判定する (`spec/protocol_v3.md:150`, `src/proto/dispatch.c:73-76`, `tests/host/test_config.c:81-89`)
 - `COLOR_SET`：`[0..11]=RGB×4`（本体・ボタン・左・右）。有線中は再列挙して読み直させる (`spec/protocol_v3.md:151`, `src/proto/dispatch.c:77-81`, `tests/host/test_config.c:91-99`)。実装済み判定であり、残件は HW 確認のみである (`docs/superpowers/specs/2026-09-15-uart-features-design.md:12,38-39`)
 - `KEY_DELETE`：LEN0。Classic 鍵全削除（Switch 側登録解除も要案内）(`spec/protocol_v3.md:152`, `src/proto/dispatch.c:82-84`, `tests/host/test_config.c:101-106`)
 - `WIRED_MODE`：`[0]=0/1`。範囲外拒否（`0x14`）。Flash 保存・起動時復元。切替は再起動適用（受理後約 500ms で自発再起動）。有線起動では無線一式を上げない。取込・再生は無線起動でのみ有効であり、有線中の要求は `0x10`/`0x11` で拒否する（先に `WIRED_MODE=0`＋再起動が必要）(`spec/protocol_v3.md:157-158`, `src/proto/dispatch.c:85-94`, `src/main.c:793-808`, `tests/host/test_config.c:108-118`)
-- `STATUS_REQ`：LEN0。即時 STATUS 返送＋PLAYER_INFO 付随（上記）(`src/proto/dispatch.c:95-98`)
+- `STATUS_REQ`：LEN0。即時 STATUS 返送＋PLAYER_INFO 付随（上記）(`src/proto/dispatch.c:95-98`)。即時 STATUS の errcode は `0x00` 扱いである (`spec/protocol_v3.md:159`)
+- `BAUD_SET`：`[0]=` rate index。範囲外は拒否（ERRCODE `0x16`）(`spec/protocol_v3.md:160`)。受理後は旧 rate で STATUS ACK を返し、guard 後に合意切替する
+- `BOOTSEL`：`[0]=0x5A`（magic）。開発用・単独 UART 運用のための USB BOOTSEL 再起動である。不正値は拒否（`0x17`）(`spec/protocol_v3.md:161-164`)。受理後は旧 rate で STATUS ACK を返し、約 500ms 後に `reset_usb_boot` する。Flash 書込みなし
 
 ## PING/PONG と NEUTRAL
 
@@ -117,13 +144,20 @@ STATE 送信は変化時即送＋定期リフレッシュ（既定 60Hz、上限
 
 ## PC 送信ガイド（`poc_send.py` は PoC 専用）
 
-PC 送信ラッパ 1 箇所に集約すべき項目は HAT 相当・Y 反転・12bit pack・差分＋リフレッシュ・単一 `write()`・方向別 SEQ・HELLO・CONFIG 送信・FTDI latency 1ms である (`spec/protocol_v3.md:222`)。現行の PoC 送信器 `src/poc_dualcore/poc_send.py` は負荷試験専用であり、本番送信ラッパとは別物である (`src/poc_dualcore/poc_send.py:2-5`)。
+PC 送信ラッパ 1 箇所に集約すべき項目は次の通り (`spec/protocol_v3.md:222`)。
+
+- HAT 相当・Y 反転・12bit pack・差分＋リフレッシュ・単一 `write()`・方向別 SEQ・HELLO・CONFIG 送信・FTDI latency 1ms
+
+現行の PoC 送信器 `src/poc_dualcore/poc_send.py` は負荷試験専用であり、本番送信ラッパとは別物である (`src/poc_dualcore/poc_send.py:2-5`)。
 
 使い方の要点は次の通り。既定 `--baud 1000000 --hz 1000` で STATE を送り続ける。115200bps 上限アダプタでは `--baud 115200 --hz 500` に落とす（derated 試験）(`src/poc_dualcore/poc_send.py:7-11`)。`--hello` は HELLO→HELLO_ACK＋自動 STATUS 確認用 (`src/poc_dualcore/poc_send.py:460-461,164-182,522-526`)。`--ping N` は PING→PONG の RTT 計測用 (`src/poc_dualcore/poc_send.py:448-449,185-254`)。`--sweep` は全ボタンの系統的確認用であり、Home は確認画面から抜けるため最後尾に回す (`src/poc_dualcore/poc_send.py:353-370,390-433,532-540`)。sweep 既定は目視用に 60Hz に落とす (`src/poc_dualcore/poc_send.py:533-535`)。FTDI 系は latency timer 1ms 推奨であり、設定できなければ警告のみ出す (`src/poc_dualcore/poc_send.py:491-495`)。帯域目安として STATE=13B を 1kHz で送ると約 13KB/s（リンク使用率約 13%）である (`spec/protocol_v3.md:35`)。
 
 ## 輸送写像と USB 写し固定値
 
-u32→Switch 1 輸送 3B の写像表、輸送 report 層の固定加工（USB `0x30`/`0x21` の `btn[1] |= 0x80` 等、電池・振動バイト）、スティック 12bit 化（`x12 = x8 << 4`、`y12 = 4096 − (y8 << 4)`、4095 clamp）は仕様書の写像表に従う (`spec/protocol_v3.md:224-269`)。USB の VID/PID・ディスクリプタ・文字列・SPI 応答・ハンドシェイク等の写し固定値は仕様書 §12 に集約されている (`spec/protocol_v3.md:271-292`)。有線 FW は無線を上げず、無線停波は `WIRED_MODE` で管理する (`spec/protocol_v3.md:290-292`)。公開資料の由来は [References](References.md) R1–R8 を見ること。
+- u32→Switch 1 輸送 3B の写像表、輸送 report 層の固定加工（USB `0x30`/`0x21` の `btn[1] |= 0x80` 等、電池・振動バイト）、スティック 12bit 化（`x12 = x8 << 4`、`y12 = 4096 − (y8 << 4)`、4095 clamp）は仕様書の写像表に従う (`spec/protocol_v3.md:224-269`)。
+- USB の VID/PID・ディスクリプタ・文字列・SPI 応答・ハンドシェイク等の写し固定値は仕様書 §12 に集約されている (`spec/protocol_v3.md:271-292`)。
+- 有線 FW は無線を上げず、無線停波は `WIRED_MODE` で管理する (`spec/protocol_v3.md:290-292`)。
+- 公開資料の由来は [References](References.md) R1–R8 である。
 
 ## レポート配置（in-repoピン、再構築用）
 
@@ -135,14 +169,14 @@ u32→Switch 1 輸送 3B の写像表、輸送 report 層の固定加工（USB `
 ## ハンドシェイク SUB 順（コード受付順、Switch発行順はHW観測）
 
 - BT は `0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x10,0x21,0x30,0x31,0x33,0x40,0x43,0x48,0x50` を受け、既定は `80 sub` ack である (`src/bt/hid.c:283-384`)。`0x03` で full-mode 開始＋入力モード保持し (`src/bt/hid.c:301-310`)、`0x30` で player lamp を latch し (`src/bt/hid.c:334-340`)、`0x31` 応答にそれを載せる (`src/bt/hid.c:341-345`)。`0x10` SPI は番地・長さで表引きし、未知・不足は答えない (`src/bt/hid.c:249-281`)
-- USB は `80 04` で入力開始、`80 05`・unmount で中立＋再待機である (`src/usb/usb_wired.c:217-221,315-322`)。`0x01` SUB は `01/02/03/10/30/40/48` と既定 ack を返し (`src/usb/usb_hid.c:143-228`)、`0x03 mode 0x30` も full 開始合図にする (`src/usb/usb_wired.c:270-275`)。`0x10` 振動のみと sub `0x10` SPI 読出は別物であり混同しない (`src/usb/usb_wired.c:231-234,259-269`)
+- USB は `80 04` で入力開始、`80 05`・unmount で中立＋再待機である (`src/usb/usb_wired.c:217-221,315-322`)。`0x01` SUB は `01/02/03/10/30/40/48` と既定 ack を返し (`src/usb/usb_hid.c:143-228`)、`0x03 mode 0x30` も full 開始合図にする (`src/usb/usb_wired.c:270-275`)。`0x10` 振動のみと sub `0x10` SPI 読出は別物である (`src/usb/usb_wired.c:231-234,259-269`)
 - Switch の発行順そのものは AB1 勝利ログの SUB 完走で確認する (`log/COM3_2026_09_14.22.32.18.050_ab1.txt`)。コードは順序非依存に受ける
 
 ## SPI 番地動作（再構築用）
 
 - 表は `0x6010`/16・`0x601B`/1・`0x6000`/16・`0x6050`/13可変・`0x6080`/`0x6098`/`0x603D`/`0x6020`・`0x8010`/`0x8028`→`0xFF` である (`src/proto/spi.c:62-73`)。`spi_find` は完全一致検索である (`src/proto/spi.c:78-86`)
 - `0x601B=0x01` が無いと Switch は `0x6050` を無視する (`src/proto/spi.c:15-19`)。USB の `0x6000` 域は `0xFF` で答え (`src/usb/usb_hid.c:200-205`)、表にない `0x60xx` は `0xFF` 埋め、範囲外は無応答である (`src/usb/usb_hid.c:206-215`)。`0x6050` 13B 目は仕様値のため保存復元しない (`src/bt/store.c:177-189`)
-- 色 13B の由来と HW 裏取りは [References](References.md) R3・R6 を見ること
+- 色 13B の由来と HW 裏取りは [References](References.md) R3・R6 である
 
 ## ERRCODE 完全表（再構築用）
 
