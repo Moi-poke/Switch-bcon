@@ -1,13 +1,16 @@
 # NOTICE — License scope and third-party references (switch-bcon)
 
 This file explains, in human terms, which licence applies to which part.
-It is not legal advice. The binding texts are `LICENSE` (MIT, this repo's
-own files) and the verbatim copies under `LICENSES/`.
+It is not legal advice. The binding texts are `LICENSE` (PolyForm
+Noncommercial 1.0.0, this repo's own files) and the verbatim copies
+under `LICENSES/`.
 
-## 1. Scope: what the MIT License covers
+## 1. Scope: what the PolyForm Noncommercial License covers
 
 Source code authored specifically for this repository is licensed under
-the MIT License (`LICENSE`) unless otherwise noted. This includes
+the PolyForm Noncommercial License 1.0.0 (`LICENSE`) unless otherwise
+noted: noncommercial use, modification and distribution are permitted;
+commercial use requires a separate licence from the author. This includes
 `src/`, `tests/host/` (self-authored, BTstack-independent pure C),
 `spec/`, build files, and docs.
 
@@ -32,18 +35,20 @@ depends on Raspberry Pi Pico SDK 2.3.0, which supplies:
   (2.3.0), not from SDK master.
 
 Consequence for binaries: a linked UF2 contains third-party components,
-so "this firmware is MIT licensed" would be wrong. The correct statement
-is: *the original source of this project is MIT licensed; the firmware
-binary includes third-party components under their own terms* (see the
-release notice in §5).
+so "this firmware is PolyForm licensed" would be wrong. The correct
+statement is: *the original source of this project is licensed for
+noncommercial use; the firmware binary includes third-party components
+under their own terms* (see the release notice in §5).
 
 ## 3. Project policy (current, not a perpetual pledge)
 
-This is a personal, non-commercial, open-source project. No commercial
-use or distribution is currently planned: no sales, no paid support, no
-pre-flashed hardware sales, no commissioned development. If that policy
-ever changes, the BTstack supplemental terms, sales form, Nintendo
-identifiers and hardware regulations will be re-evaluated first.
+This is a personal, non-commercial, open-source project. Commercial use
+of this repository's own files is not permitted, and no separate
+commercial licence is offered: no sales, no paid support, no
+pre-flashed hardware sales, no commissioned development.
+If that policy ever changes, the BTstack supplemental terms, sales form,
+Nintendo identifiers and hardware regulations will be re-evaluated
+first.
 
 ## 4. Disclaimer (unofficial project)
 
@@ -69,9 +74,9 @@ This UF2 binary includes BTstack supplied through the Raspberry Pi Pico SDK.
 The binary is intended only for Raspberry Pi Pico 2 W and is provided as
 part of a personal, non-commercial open-source project.
 
-The MIT License applies only to the original portions of this project.
-Third-party components remain subject to their respective licence terms.
-See `LICENSES/` and `NOTICE.md`.
+The PolyForm Noncommercial License applies only to the original portions
+of this project. Third-party components remain subject to their
+respective licence terms. See `LICENSES/` and `NOTICE.md`.
 ```
 
 ## 6. Code provenance in this tree (reference vs copy)
@@ -88,7 +93,7 @@ See `LICENSES/` and `NOTICE.md`.
   comments (the author's own separate reference tree:
   `src/bt/hid.*`, `src/bt/store.*`, `src/bt/switch_hid.h`, `src/bt/cap.c`,
   `src/bt/bt_compat.h`, parts of `src/main.c`). They are distributed under
-  this repository's MIT Licence by owner intent. The public analysis repos
+     this repository's PolyForm Noncommercial Licence by owner intent. The public analysis repos
   above remain sufficient to verify every value independently
   (`docs/wiki/References.md` states this explicitly).
 - **Upstream-licensed excerpts believed present:** `src/bt/switch_hid.h`
