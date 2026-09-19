@@ -9,8 +9,12 @@ LEN=2, payload = [lamp][flags]; flags bit0 = IMU, bit1 = vibration.
 Frame shape: [SYNC=0xAB][TYPE][LEN][PAYLOAD][SEQ][CRC8/SMBUS over TYPE..SEQ].
 """
 
+import contextlib
+import io
 import os
+import re
 import sys
+import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -78,6 +82,91 @@ class TestPlayerInfo(unittest.TestCase):
         got = list(m.scan_frames(FakeSer(frames), 0.05))
         self.assertEqual(got, [(m.T_PLAYER_INFO, 1, bytes((1, 2))),
                                (0x99, 2, bytes((9,)))])
+
+
+class FakePongSer:
+    """Fake serial emulating the pyserial blocking-read floor (no HW/COM3).
+
+    PONG bytes (6B: SYNC+TYPE+LEN+PAY+SEQ+CRC) are scripted and instantly
+    available in the buffer on write(), but read(n) emulates
+    ``serial.Serial(port, baud, timeout=1)`` (poc_send.py open ~l.476):
+    a short frame never fills the requested 64 B (ping_test ~l.197-198),
+    so the real driver blocks the full ~1.0 s window before returning.
+    This reproduces the ~1000 ms RTT floor via the REAL ping_test path.
+    """
+
+    READ_TIMEOUT = 1.0  # mirrors serial.Serial(..., timeout=1)
+
+    def __init__(self) -> None:
+        self._buf = bytearray()
+        self.writes = 0
+        self.timeout = 1.0  # mirrors serial.Serial(..., timeout=1) default
+
+    @property
+    def in_waiting(self) -> int:
+        return len(self._buf)
+
+    def reset_input_buffer(self) -> None:
+        self._buf.clear()
+
+    def write(self, data: bytes) -> int:
+        self.writes += 1
+        seq = data[3] if len(data) >= 4 else 0
+        body = bytes((m.T_PONG, 1, seq & 0xFF, seq & 0xFF))
+        self._buf += bytes((m.SYNC,)) + body + bytes((m.crc8_smbus(body),))
+        return len(data)
+
+    def read(self, n: int) -> bytes:
+        if not self._buf:
+            time.sleep(self.timeout)
+            return b""
+        # blocking-read floor: short 6B frame, full timeout window first
+        time.sleep(self.timeout)
+        out, self._buf = bytes(self._buf[:n]), self._buf[n:]
+        return out
+
+    def readline(self) -> bytes:
+        return self.read(len(self._buf) or 1)
+
+
+def _run_ping(count: int, per_ping: float = 2.0) -> tuple:
+    """Run REAL m.ping_test against FakePongSer; return (rc, rtts, avg)."""
+    ser = FakePongSer()
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        rc = m.ping_test(ser, count, timeout=per_ping)
+    text = out.getvalue()
+    rtts = [float(v) for v in re.findall(r"rtt=([\d.]+)ms", text)]
+    mavg = re.search(r"avg=([\d.]+)", text)
+    return rc, rtts, (float(mavg.group(1)) if mavg else None)
+
+
+class TestPingRtt(unittest.TestCase):
+    # ---- RED: fake-serial instant-PONG must arrive in <100ms ----
+
+    def test_single_pong_rtt_under_100ms(self):
+        rc, rtts, _ = _run_ping(1)
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(rtts), 1)
+        for r in rtts:
+            self.assertLess(r, 100.0,
+                            f"RTT floor {r:.2f}ms >= 100ms (read(64)/timeout=1)")
+
+    def test_three_pongs_all_rtt_under_100ms(self):
+        rc, rtts, _ = _run_ping(3)
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(rtts), 3)
+        for r in rtts:
+            self.assertLess(r, 100.0,
+                            f"RTT floor {r:.2f}ms >= 100ms (read(64)/timeout=1)")
+
+    def test_ping_summary_avg_under_100ms(self):
+        rc, rtts, avg = _run_ping(2)
+        self.assertEqual(rc, 0)
+        self.assertIsNotNone(avg)
+        assert avg is not None
+        self.assertLess(avg, 100.0,
+                        f"avg RTT floor {avg:.2f}ms >= 100ms (read(64)/timeout=1)")
 
 
 if __name__ == "__main__":
