@@ -189,49 +189,63 @@ def ping_test(ser, count: int, timeout: float = 0.5) -> int:
     ok = 0
     rtts = []
     seq = 0
-    for _ in range(count):
-        ser.write(build_ping(seq))
-        t0 = _t.perf_counter()
-        buf = bytearray()
-        got = None
-        while _t.perf_counter() - t0 < timeout:
-            chunk = ser.read(64)
-            if chunk:
-                buf += chunk
-            # frame走査: SYNC..TYPE..LEN..PAYLOAD..SEQ..CRC
-            while len(buf) >= 5:
-                try:
-                    i = buf.index(SYNC)
-                except ValueError:
-                    buf.clear()
-                    break
-                if i > 0:
-                    del buf[:i]
-                if len(buf) < 3:
-                    break
-                ln = buf[2]
-                if ln > 32:
-                    del buf[0]
-                    continue
-                if len(buf) < 3 + ln + 2:
-                    break
-                body = bytes(buf[1:3 + ln + 1])
-                if crc8_smbus(body) != buf[3 + ln + 1]:
-                    del buf[0]
-                    continue
-                typ, rxseq = buf[1], buf[3 + ln]
-                pay = bytes(buf[3:3 + ln])
-                del buf[:3 + ln + 2]
-                if typ == T_PONG and ln == 1 and pay[0] == seq:
-                    got = (_t.perf_counter() - t0) * 1000.0
-                    break
-        if got is None:
-            print(f"ping seq=0x{seq:02X} TIMEOUT", flush=True)
-        else:
-            print(f"ping seq=0x{seq:02X} rtt={got:.2f}ms", flush=True)
-            ok += 1
-            rtts.append(got)
-        seq = (seq + 1) & 0xFF
+    # 短い6B PONGが64B要求で1s窓に量子化されるのを避ける: 受信済み
+    # バイト数だけ読み、待機は0.05sに絞る。終了後は元のtimeoutに戻す。
+    prev_timeout = getattr(ser, "timeout", None)
+    try:
+        try:
+            ser.timeout = 0.05
+        except Exception:
+            pass
+        for _ in range(count):
+            ser.write(build_ping(seq))
+            t0 = _t.perf_counter()
+            buf = bytearray()
+            got = None
+            while _t.perf_counter() - t0 < timeout:
+                chunk = ser.read(min(getattr(ser, "in_waiting", 0) or 1, 64))
+                if chunk:
+                    buf += chunk
+                # frame走査: SYNC..TYPE..LEN..PAYLOAD..SEQ..CRC
+                while len(buf) >= 5:
+                    try:
+                        i = buf.index(SYNC)
+                    except ValueError:
+                        buf.clear()
+                        break
+                    if i > 0:
+                        del buf[:i]
+                    if len(buf) < 3:
+                        break
+                    ln = buf[2]
+                    if ln > 32:
+                        del buf[0]
+                        continue
+                    if len(buf) < 3 + ln + 2:
+                        break
+                    body = bytes(buf[1:3 + ln + 1])
+                    if crc8_smbus(body) != buf[3 + ln + 1]:
+                        del buf[0]
+                        continue
+                    typ, rxseq = buf[1], buf[3 + ln]
+                    pay = bytes(buf[3:3 + ln])
+                    del buf[:3 + ln + 2]
+                    if typ == T_PONG and ln == 1 and pay[0] == seq:
+                        got = (_t.perf_counter() - t0) * 1000.0
+                        break
+            if got is None:
+                print(f"ping seq=0x{seq:02X} TIMEOUT", flush=True)
+            else:
+                print(f"ping seq=0x{seq:02X} rtt={got:.2f}ms", flush=True)
+                ok += 1
+                rtts.append(got)
+            seq = (seq + 1) & 0xFF
+    finally:
+        if prev_timeout is not None:
+            try:
+                ser.timeout = prev_timeout
+            except Exception:
+                pass
     if rtts:
         print(f"ping done ok={ok}/{count} min={min(rtts):.2f} "
               f"avg={sum(rtts)/len(rtts):.2f} max={max(rtts):.2f}ms", flush=True)
