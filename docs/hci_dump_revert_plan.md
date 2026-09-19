@@ -55,8 +55,8 @@ $bd    = Join-Path $env:TEMP 'bcon-hcidump'
 & $cmake -S . -B $bd -G Ninja -DCMAKE_MAKE_PROGRAM:FILEPATH=$ninja `
     -DPICO_SDK_PATH=C:/Users/moilo/.pico-sdk/sdk/2.3.0 `
     -DWIRED_DEFAULT=0 -DPOC_DATA_BAUD=115200
-& $cmake --build $bd --target pico-bcon
-# UF2: "$bd\pico-bcon.uf2"
+& $cmake --build $bd --target switch-bcon
+# UF2: "$bd\switch-bcon.uf2"
 # (for the isolated build above, -S was $env:TEMP\bcon-hci-src instead of .)
 ```
 
