@@ -4,7 +4,7 @@ SSOT is `spec/protocol_v3.md` (`PROTO_VER=4`). If spec conflicts with docs/histo
 
 ## Build
 
-Board is `pico2_w` fixed (Pico SDK 2.3.0). `build/`, `build-host/`, `log/`, `*.uf2` are git-ignored — never commit them.
+Board is `pico2_w` fixed (Pico SDK 2.3.0). `build/`, `build-host/`, `log/` (serial transcripts), `firmware/` (UF2 binaries), `*.uf2` are git-ignored — never commit them.
 
 Firmware (PowerShell; `cmake` is NOT on PATH, use full path):
 ```powershell

@@ -35,7 +35,7 @@ ctest --test-dir build-host -V
 
 ## UF2 / log の運用規約
 
-- UF2（`switch-bcon-wireless-test.uf2`、`switch-bcon-ab{1..5}-*.uf2`、`switch-bcon-w{0,1,3,4,5,6,7}-*.uf2`、`switch-bcon-w8-epoch.uf2`、`switch-bcon-phase3-test.uf2` 等）と生ログ（`COM3_2026_09_*.txt`）は `log/` に置く。git 管理外である (`docs/history/2026-09-15-wdt/README.md:16-20`)
+- UF2（`firmware/switch-bcon-wireless-test.uf2`、`firmware/switch-bcon-ab{1..5}-*.uf2`、`firmware/switch-bcon-w{0,1,3,4,5,6,7}-*.uf2`、`firmware/switch-bcon-w8-epoch.uf2`、`firmware/switch-bcon-phase3-test.uf2` 等）と生ログ（`log/COM3_2026_09_*.txt`）を使い分ける。UF2は `firmware/`、生ログは `log/` に置く。いずれもgit管理外である (`docs/history/2026-09-15-wdt/README.md:16-20`)（注：過去の記録文書では `log/*.uf2` 表記のまま残るものがある。実ファイルは `firmware/` にある）
 - UF2 とログの対応表は `docs/history/2026-09-15-wdt/trial-history.md` が正である。本文書の日付別表と対応付けて読む (`docs/history/2026-09-15-wdt/README.md:18-20`)
 - ログ取得時は起動 banner（`=== switch-bcon ===`）から取り逃がさないこと。W7 で先頭 banner 欠落の前例がある (`docs/history/2026-09-15-wdt/hw-batch-2026-09-15.md:7`)
 - 無線版 UF2 の具体例として、4:24 版は送信復帰＋TLV 停止＋起動時ワイプ＋hci_dump＋reporter＋MSPLIM＋SCR＋heartbeat 入りで SNIFF 無効継続の診断用一時措置であった (`docs/handoff_bt_20260914.md:22`)

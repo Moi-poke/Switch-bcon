@@ -11,7 +11,7 @@ BCON = Bridge Controller。Raspberry Pi Pico 2 W 用・バイナリ専用・最�
 * USB：任天堂 `057E:2009`＋純正写し記述子（`bInterval 8`実機写し）。HORIPAD名乗りはしない。
 * Joy-Con：L/Rパーソナリティ対応を予定（設計書 `docs/superpowers/specs/2026-09-16-joycon-personality-design.md` あり・実機値待ち）。
 * 秘密（LTK/IRK/AES鍵）をログに出さない。
-* ビルド成果物は `build/`（増分）・`build-host/`（hostテスト）・派生構成のtemp dir。いずれもgit管理外（`log/`・`*.uf2`含む）。
+* ビルド成果物は `build/`（増分）・`build-host/`（hostテスト）・派生構成のtemp dir。焼き用UF2は `firmware/` に保管。いずれもgit管理外（`log/`はシリアル採取文のみ）。
 
 ## 配置
 

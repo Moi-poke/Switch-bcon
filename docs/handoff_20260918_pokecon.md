@@ -23,7 +23,7 @@ PokeController Modified 側の作業を別セッションで続けるための�
 
 ## 2. デバイス現在状態（2026-09-18最終時点）
 
-- 焼き済みFW：baudhunt無線版（`log/switch-bcon-baudhunt-wireless-1M-2a3057c.uf2`、SHA `58a1efa3…`）。`baud=0L`（115200 lock）、セッション生存を確認済み。
+- 焼き済みFW：baudhunt無線版（`firmware/pico-bcon-baudhunt-wireless-1M-2a3057c.uf2`、SHA `58a1efa3…`）。`baud=0L`（115200 lock）、セッション生存を確認済み。
 - Flash永続の注意：**本体色がミク・ターコイズ（`#39C5CF`）に書換え済み**（ユーザー要求。既定グレー系ではない）。色ベースライン確認時はCOLOR_SETで書き戻すこと。
 - TLV（鍵・host・baud・色）は電源断・UF2焼替えを跨いで保持される。現セッションでSwitch自動再接続を反復確認済み。
 - 配線：単一FTDIアダプタ（COM3）。最終形態は**UART1フル**（GP4/GP5両方）。分割形（RX←GP0＋TX→GP5）も検証済みで有効：両115200時のみ成立、DATA応答（STATUS/PONG/PLAYER_INFO）は見えなくなる。

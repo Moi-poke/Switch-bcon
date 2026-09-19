@@ -22,9 +22,9 @@
 
 ## 未確定・係争点（U1-U6、意見募集中）
 
-書込と SNIFF 突入の交互作用は未分離（U1）、Session-1 型の位置づけ（U2）、`del=1/1` の正体（U3。現ツリーの静的呼出グラフでは説明できない）、BTstack 由来鍵保存セッションが生存した非対称（U4）、alarm 再予約喪失は未証明（U5）、WDT 給餌の 1ms 周期依存（U6）である。全文は検証状態書を見ること (`docs/history/2026-09-15-wdt/verification-status.md:78-102`)。
+書込と SNIFF 突入の交互作用は未分離（U1）、Session-1 型の位置づけ（U2）、WDT 給餌の 1ms 周期依存（U6）である。`del=1/1` の正体（U3）は別電源混入で CLOSED、BTstack 由来鍵保存セッションの非対称（U4）は単発/入れ子差で解決済み、alarm 再予約疑義は Death-B 確定機序（PRIMASK リーク）への置換で moot である。全文は検証状態書を見ること (`docs/history/2026-09-15-wdt/verification-status.md:78-102`)。
 
-> 🚧 In-progress: W8（epoch/baseline/delta 拡張の最小差分・単一変数）は計装完成・HW 待ちである。`log/switch-bcon-w8-epoch.uf2` で死亡再現→次 boot ダンプ取得により U3・U5 を単発判定する計画である (`docs/history/2026-09-15-wdt/trial-history.md:36`, `docs/history/2026-09-15-wdt/hw-batch-2026-09-15.md:11-17`, `docs/wdt_w7_postmortem_brief_20260915.md:76-82`)。
+> ✅ Done: W8でU3・U5を単発判定しCLOSED（`firmware/pico-bcon-w8-epoch.uf2`、証拠は台帳）。
 
 ## ログ読解ガイド（出す順・見る所）
 

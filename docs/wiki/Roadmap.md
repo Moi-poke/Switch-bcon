@@ -46,7 +46,7 @@
 
 ## 6. その他の申送り（HW バッチ・集計・commit）
 
-- W8 判定ダンプ（U3・U5 確定用、最優先）：`log/pico-bcon-w8-epoch.uf2` を flash し、通常ペア→open（host 保存）→約 2 秒後 WDT 死を 1 回再現し、次 boot の `w8epoch`〜`w8ev` 行一式を回収する (`docs/history/2026-09-15-wdt/hw-batch-2026-09-15.md:11-17`)（→完了：U3/U5 とも CLOSED）
+- W8 判定ダンプ（U3・U5 確定用、最優先）：`firmware/pico-bcon-w8-epoch.uf2` を flash し、通常ペア→open（host 保存）→約 2 秒後 WDT 死を 1 回再現し、次 boot の `w8epoch`〜`w8ev` 行一式を回収する (`docs/history/2026-09-15-wdt/hw-batch-2026-09-15.md:11-17`)（→完了：U3/U5 とも CLOSED）
 - 色確認（#2 実装済み判定の裏取り）：現 tree ビルドを flash し、`COLOR_SET`→登録解除→再接続で Switch UI 表示＋`0x6050` 応答バイトが新色であることを確認する。読戻し `COLOR_GET` は要望が出てから追加する（YAGNI）(`docs/history/2026-09-15-wdt/hw-batch-2026-09-15.md:27-31`, `docs/superpowers/specs/2026-09-15-uart-features-design.md:38-39,70-72`)（→完了 Commit D `9915acf`：C-1/C-3/C-4/C-6 PASS）
 - PLAYER_INFO 確認：SUB `0x30` 到達後のセッションで `STATUS_REQ` を送り、応答の `PLAYER_INFO (0x23, LEN2)` と Switch 表示の一致を確認する (`docs/history/2026-09-15-wdt/hw-batch-2026-09-15.md:33-35`)（→完了 Commit D：P-1/P-2/P-5 PASS、P-3/P-4/P-6 は未検証残）
 - P3-T8 集計・Step 4 commit 承認要求：HW バッチ完了後に回す (`docs/history/2026-09-15-wdt/README.md:29-33`)。Step 3 フェーズ別 A/B（A〜F 窓）＋timer 周期 A/B も W7 結果次第である

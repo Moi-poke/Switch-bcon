@@ -1,5 +1,6 @@
 build/
 build-host/
+firmware/
 *.elf
 *.uf2
 *.hex
