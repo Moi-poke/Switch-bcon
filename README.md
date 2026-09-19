@@ -1,6 +1,7 @@
 # pico-bcon
 
-Raspberry Pi Pico 2 W 用・バイナリ専用・最速志向の Switch 1 Pro Controller エミュレータ
+BCON = Bridge Controller。Raspberry Pi Pico 2 W 用・バイナリ専用・最速志向の Switch 1 Pro Controller エミュレータ
+（PC-UART→Switchブリッジ）。
 （有線USB公式プロコン＋Classic BT＋BLE wakeビーコン取込再生）。新規作成リポジトリ。
 
 * 線路：PC →(UART)→ Pico →(USB-HID / Classic BT)→ Switch 1。Switch 2 BLE入力は対象外。
