@@ -1,46 +1,25 @@
-# References — Provenance of every build-critical value
+# References: ビルドに効く値の出どころは全部ここにある
 
-Private reference trees are **not required** to reproduce this work.
-Every build-critical value below is traceable to a **public analysis repository or
-public reverse-engineering document** named in this repo's own records, pinned by an
-in-repo spec/code location, and (where stated) cross-checked on hardware.
-Where the repo record names **no** public source for a value, it is listed
-explicitly in the gap list instead of guessed.
+非公開のリファレンスツリーがなくても、この作業は再現可能である。
+ビルドに直結する値はすべて、リポジトリ内の記録に名前が出てくる**公開の解析リポジトリか、公開のリバースエンジニアリング文書**にたどり着く。
+リポジトリ内の仕様とコード位置で固定し、明記した分は実機でも照合した。
+記録に公開の出どころがない値は、推測で埋めず不足リストにはっきり記載した。
 
-Rule followed while writing this page: values were taken only from
-`spec/protocol_v3.md`, `src/*/…` comments, `docs/history/2026-09-15-wdt/trial-history.md`,
-`docs/wdt_phenomena_brief_20260915.md`, `docs/handoff_bt_20260914.md`, and the
-plans/briefs they point to. No secret key bytes are recorded anywhere
-(link keys / LTK never appear; peer BD_ADDR is OK).
+このページを書くときに守った決めごとは一つである。値は `spec/protocol_v3.md`、`src/*/…` のコメント、`docs/history/2026-09-15-wdt/trial-history.md`、`docs/wdt_phenomena_brief_20260915.md`、`docs/handoff_bt_20260914.md`、そしてそれらが指す計画書や要点メモからだけ取得した。秘密の鍵バイトはどこにも残さない（リンクキーと LTK は出さない。相手の BD_ADDR は記載してよい）。
 
-## Note on ported code (honest history)
+値はここが出どころであり、実装位置はProtocol章を見る。
 
-Several files carry `移植元: pico-wakecon` comments (`src/bt/hid.h:4`,
-`src/bt/store.h:4`, `src/bt/switch_hid.h:4`, `src/bt/cap.c:2`,
-`src/bt/bt_compat.h:1-2`, `src/main.c:3`): structure and scaffolding were
-historically ported from that tree. This page's claim is narrower and still
-holds: **no private-tree knowledge is required to verify any build-critical
-value** — every value group in the table below has an independent public
-analysis-repo source plus an in-repo pin and (where stated) a hardware
-cross-check. An AI rebuilding equivalent firmware from this wiki + the cited
-public repos + its own hardware verification does not need the private tree.
+## 移植コードはあるが検証に非公開ツリーは不要である
 
-## Excluded candidates (ruled out in-repo, not used)
+いくつかのファイルには `移植元: pico-wakecon` というコメントが残っている（`src/bt/hid.h:4`、`src/bt/store.h:4`、`src/bt/switch_hid.h:4`、`src/bt/cap.c:2`、`src/bt/bt_compat.h:1-2`、`src/main.c:3`）。骨組みは昔そのツリーから持ってきたものである。このページの言い分はもっと狭く、それでも成立するものである。**ビルドに直結する値を確かめるのに、非公開ツリーの知識は不要である**。下のテーブルの値グループはどれも、独立した公開解析リポジトリの出どころに、リポジトリ内の固定位置と（明記した分は）実機照合が付随するものである。この wiki と挙げた公開リポジトリと自分の実機検証から同等のファームウェアを組み直すのに、非公開ツリーは不要である。
 
-- Pokémon Automation Pico firmware (closed binary), HOJA library BT (stub),
-  debugprobe (debug-probe fork): comparison target rejected
-  (`docs/history/2026-09-15-wdt/trial-history.md:12`,
-  `docs/history/2026-09-15-wdt/plans/2026-09-14-phase3-permanent.md:413`).
-- Origin / cross-check stack kept: BTstack source + DavidPagels/retro-pico-switch
-  origin + Wilstride + NXBT (`trial-history.md:13-14`,
-  `phase3-permanent.md:413`); handshake cross-checked against
-  dekuNukem / NXBT / SDL / Chromium documents (`docs/handoff_bt_20260914.md:33`).
-- Black-box A/B witness role only: same Switch 2 used for bcon-vs-witness
-  comparison logs (empty-report equivalence, SDP/descriptor/CoD/name/OUI/MTU/CID
-  sameness) — comparison logs only, never code reuse
-  (`docs/handoff_bt_20260914.md:11,31`, `docs/wdt_phenomena_brief_20260915.md:14,65-66`).
+## 使わなかった候補は記録に残して捨てた
 
-## Provenance table (8 rows)
+- Pokémon Automation Pico ファームウェア（閉じたバイナリ）、HOJA ライブラリの BT（スタブ）、debugprobe（debug-probe フォーク）は比較対象として落としたものである（`docs/history/2026-09-15-wdt/trial-history.md:12`、`docs/history/2026-09-15-wdt/plans/2026-09-14-phase3-permanent.md:413`）。
+- 採用した出どころと照合の積み上げはこうである。BTstack のソース、DavidPagels/retro-pico-switch の出どころ、Wilstride、NXBT（`trial-history.md:13-14`、`phase3-permanent.md:413`）。ハンドシェイクは dekuNukem と NXBT と SDL と Chromium の文書に当てて確かめたものである（`docs/handoff_bt_20260914.md:33`）。
+- ブラックボックスの A/B は証人役だけに使ったものである。同じ Switch 2 で bcon と証人を比べたログ（空レポートの等価、SDP とディスクリプタと CoD と名前と OUI と MTU と CID の一致）は比較ログどまりであり、コードの流用はない（`docs/handoff_bt_20260914.md:11,31`、`docs/wdt_phenomena_brief_20260915.md:14,65-66`）。
+
+## 来歴テーブル8行で値は全部たどれる
 
 | # | Value group | Public source (as named in-repo) | In-repo pin (spec / code) | HW cross-check (log / behavior) |
 |---|---|---|---|---|
@@ -53,11 +32,11 @@ public repos + its own hardware verification does not need the private tree.
 | R7 | BT GAP / SDP / PnP params | DavidPagels/retro-pico-switch `SwitchConsts.h` descriptor bytes (MIT) (`src/bt/switch_hid.h:10-14`); VID/PID/CoD/OUI/name values per that origin + BTstack SDP/HID setup (`src/main.c:1370-1376,1498-1527`); NXBT v12 MAC-mask/SDP-cleanup diff noted (`trial-history.md:14`) | `SWITCH_VENDOR_ID 0x057E`, `SWITCH_PRODUCT_ID 0x2009`, version `0x0001`, CoD `0x2508`, OUI `7c:bb:8a`, GAP `Pro Controller`, HID `Wireless Gamepad` (`src/bt/switch_hid.h:59-76`); stable MAC = OUI + board unique low 3B, never bumped (`src/bt/link_conn.c:13-24`); GAP class/name, SNIFF+role-switch policy, SSP no-IO auto-accept (`src/main.c:1504-1508`); HID + PnP (USB-source) SDP records (`src/main.c:971-984`); truncated-report accept + report callback (`src/main.c:986-989`) | SDP/descriptor/CoD/name/OUI/MTU/CID differences vs witness rejected with evidence (`docs/wdt_phenomena_brief_20260915.md:65-66`); stable-MAC-only (BUMP without SNIFF) proven powerless AB5 0/4 (`trial-history.md:17`); SNIFF-on + stable MAC is the proven combination (`src/bt/link_conn.c:13`) |
 | R8 | bInterval / polling / tick rates | ToadKing copy for `bInterval 8`, no shortening for latency (`spec/protocol_v3.md:210,275-276`, `src/usb/usb_descriptors.c:140-154`); BT empty/full pacing per materials (`src/bt/hid.c:177` "materials procedure", `src/bt/hid.c:129-132`); NXBT-style slow-start tried then explicitly dropped as unnecessary (`plans/2026-09-14-phase3-permanent.md:411`) | USB IN/OUT 64B interval 8 (`src/usb/usb_descriptors.c:149-154`); wired input send every 8 ms, arrival-immediate update on Core0 pull side (`src/usb/usb_wired.c:26-27,150-164`); BT `probe_send_interval_ms` full 7 ms / pre-full 100 ms empty `A1 00` (`src/bt/hid.c:129-132,154-185`); Core0 `usb_handler` 1 ms `poll_tick` + stats 1 s + empty handler (`src/main.c:1121-1125`, `src/main.c:1115-1119`, `src/main.c:1127-1134`); UART 1 Mbps default, derated 115200 build flag (`spec/protocol_v3.md:30`, `src/main.c:54-57`) | AB1 victory used 100 ms empties — slow-start unnecessary (`phase3-permanent.md:411`); low latency via arrival-immediate report update, not shorter `bInterval` (`spec/protocol_v3.md:210`) |
 
-## Gap list (repo names no source — do not guess)
+## 不足リスト: 出どころ不明は推測で埋めない
 
-- G1 — `bcdDevice 0x0200` vs `0x0210` theory: repo records the conflict and defers to dock verification (`src/usb/usb_descriptors.c:4,10-12,23`, `spec/protocol_v3.md:273-274`). Left open by design.
-- G2 — HoriCon / Joy-Con real IDs and personality rows: out of scope; "measure then add one table row" repeats, no values in-repo (`Roadmap.md` §4). Not written here.
-- G3 — Rumble amplitude map `ampL/R = f(raw8)`: resolved, no longer a gap. Live formula `src/proto/rumble.h:8-15,22-73` with real vectors `log/COM3_2026_09_18.rumble_vib.txt` (`Roadmap.md` §1, Commit C `2a3057c`).
-- G4 — `0x6020` IMU calibration exact bytes: per-unit values differ; current table borrows 2wiCC working values as placeholder, `0xFF` fill is second candidate (`src/proto/spi.c:53-60`). Not a proven genuine dump.
-- G5 — OUI `7c:bb:8a` origin document: repo records only the empirical note (own Pico address `88:A2:9E:…` was not picked up) plus stable-MAC proof (`src/bt/switch_hid.h:66-72`, `src/bt/link_conn.c:13-24`, AB5 result). No upstream doc named — listed as HW-derived.
-- G6 — BT `0x02` device-info `fw 03 8B` (BT, `src/bt/hid.c:208-221`) vs USB `0x02` `fw 03 48` (USB, `src/usb/usb_hid.c:162-175`): both marked as working values in code; repo does not name a single upstream doc reconciling the difference. Listed as HW-accepted, not doc-derived.
+- G1: `bcdDevice 0x0200` と `0x0210` 説の対立。記録は対立を残したまま、ドック実証に持ち越した（`src/usb/usb_descriptors.c:4,10-12,23`、`spec/protocol_v3.md:273-274`）。わざと開けてある。
+- G2: HoriCon と Joy-Con 実機の ID と個性行は対象外。「測ってから1行足す」の繰り返しで、リポジトリ内に値はない（`Roadmap.md` §4）。ここには書かない。
+- G3: 振動振幅マップ `ampL/R = f(raw8)` は解決済みでもう不足ではない。実測式は `src/proto/rumble.h:8-15,22-73`、実ベクトルは `log/COM3_2026_09_18.rumble_vib.txt`（`Roadmap.md` §1、Commit C `2a3057c`）。
+- G4: `0x6020` IMU 校正の正確なバイト。個体で値が違う。今のテーブルは動く 2wiCC 値を仮置きし、次点候補は `0xFF` 埋め（`src/proto/spi.c:53-60`）。純正ダンプの証明はない。
+- G5: OUI `7c:bb:8a` の出どころ文書。記録にあるのは実測メモ（自機 Pico のアドレス `88:A2:9E:…` は拾われなかった）と安定 MAC の証明だけ（`src/bt/switch_hid.h:66-72`、`src/bt/link_conn.c:13-24`、AB5 結果）。上流文書の指名はなし。実機由来として載せる。
+- G6: BT の `0x02` 機器情報 `fw 03 8B`（BT、`src/bt/hid.c:208-221`）と USB の `0x02` `fw 03 48`（USB、`src/usb/usb_hid.c:162-175`）の食い違い。どちらもコード内では動く値として印がつく。違いを一本の上流文書でほぐした記録はリポジトリにない。実機で通った値として載せる。
