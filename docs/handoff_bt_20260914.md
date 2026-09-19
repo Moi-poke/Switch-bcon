@@ -1,4 +1,4 @@
-# pico-bcon 引継ぎ（2026-09-14 04:30 JST・BT接続安定化）
+# switch-bcon 引継ぎ（2026-09-14 04:30 JST・BT接続安定化）
 
 前回引継ぎ（2026-09-13夜・Task 4 BT検証中）の続き。旧 `C:\Users\moilo\pico-wakecon` は参照専用・改変禁止。
 
@@ -11,16 +11,16 @@
 
 ## 1. リポジトリ状態（未commit・commit禁止指示なし）
 
-- `C:\pico-bcon`、main。`build/`・`log/*.uf2` はgit管理外
+- `C:\switch-bcon`、main。`build/`・`log/*.uf2` はgit管理外
 - 完了commit: `7bdd7d3` → `a6c0660` → `c366bf4`（以降未commit）
 - 未commit： M `CMakeLists.txt`、`spec/protocol_v3.md`、`src/main.c`、`src/poc_dualcore/poc_send.py`、`src/proto/protocol.h`、`src/usb/usb_wired.c`、`tests/host/CMakeLists.txt` ／ 新規 `src/bt/*`（14件）、`src/proto/dispatch.c/.h`、`tests/host/test_config.c`
 - hostテスト3/3 ALL PASS（fresh確認済み）
 
 ## 2. 出荷バイナリ（どちらもgit管理外）
 
-- `build/pico-bcon.uf2`：有線既定（WIRED_DEFAULT=1、BUMP=0）
-- `log/pico-bcon-wireless-test.uf2`：無線既定＋診断全部入り。**現行は4:24版**（送信復帰＋TLV停止＋起動時ワイプ＋hci_dump＋reporter＋MSPLIM＋SCR＋heartbeat。SNIFF無効継続、BD_ADDR_BUMP=1で自MAC末尾 `...:cb`）
-- 無線版の建て方（`build/`を汚さない）：`cmake -S . -B <temp>/bcon-wireless -G Ninja -DCMAKE_MAKE_PROGRAM=...ninja.exe -DPOC_DATA_BAUD=115200 -DWIRED_DEFAULT=0 [-DBD_ADDR_BUMP=1]` → `--target pico-bcon` → UF2を`log/`へコピー。`POC_DATA_BAUD=115200`は変換器上限のderated（既定1Mbpsは不変）
+- `build/switch-bcon.uf2`：有線既定（WIRED_DEFAULT=1、BUMP=0）
+- `log/switch-bcon-wireless-test.uf2`：無線既定＋診断全部入り。**現行は4:24版**（送信復帰＋TLV停止＋起動時ワイプ＋hci_dump＋reporter＋MSPLIM＋SCR＋heartbeat。SNIFF無効継続、BD_ADDR_BUMP=1で自MAC末尾 `...:cb`）
+- 無線版の建て方（`build/`を汚さない）：`cmake -S . -B <temp>/bcon-wireless -G Ninja -DCMAKE_MAKE_PROGRAM=...ninja.exe -DPOC_DATA_BAUD=115200 -DWIRED_DEFAULT=0 [-DBD_ADDR_BUMP=1]` → `--target switch-bcon` → UF2を`log/`へコピー。`POC_DATA_BAUD=115200`は変換器上限のderated（既定1Mbpsは不変）
 - hostテスト：`vcvars64`済みcmdで `cmake -S tests/host -B build-host` → `--build --config Debug` → `ctest -C Debug -V`
 
 ## 3. 確定事項（証拠付き）

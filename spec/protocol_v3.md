@@ -1,6 +1,6 @@
 # PC ⇄ Pico バイナリプロトコル仕様書 (v4 / PROTO_VER=4)
 
-**プロジェクト:** pico-bcon（新規作成。旧 pokecon v2・wakecon ASCII と非互換）
+**プロジェクト:** switch-bcon（新規作成。旧 pokecon v2・wakecon ASCII と非互換）
 **対象経路:** PC →(UART)→ Pico 2 W →(USB-HID / Classic BT)→ Switch 1
 **対象外:** Switch 2 BLE入力エミュレーション（将来課題）
 **設計目標:** 最速（変換＋UART＋ファーム ≈ 2ms級）／高信頼（SYNC＋CRC8＋スライディング再同期）／公式プロコン認識

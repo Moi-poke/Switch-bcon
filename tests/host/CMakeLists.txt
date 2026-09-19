@@ -4,7 +4,7 @@
 #   cmake --build build-host --config Debug
 #   ctest --test-dir build-host -V
 cmake_minimum_required(VERSION 3.16)
-project(pico_bcon_host_tests C)
+project(switch_bcon_host_tests C)
 
 set(CMAKE_C_STANDARD 11)
 

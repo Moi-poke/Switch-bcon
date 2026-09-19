@@ -1,6 +1,6 @@
-# pico-bcon 開発者Wiki — Home
+# switch-bcon 開発者Wiki — Home
 
-pico-bcon は Raspberry Pi Pico 2 W 上で動くファームウェアである。PC からの UART 入力を Nintendo Switch 1 向け Pro Controller 入力に変換し、有線 USB-HID または Classic Bluetooth で Switch に届ける。BLE は wake 取込・再生専用であり、Switch 2 の BLE 入力エミュレーションは対象外である (`spec/protocol_v3.md:5,11`)。
+switch-bcon は Raspberry Pi Pico 2 W 上で動くファームウェアである。PC からの UART 入力を Nintendo Switch 1 向け Pro Controller 入力に変換し、有線 USB-HID または Classic Bluetooth で Switch に届ける。BLE は wake 取込・再生専用であり、Switch 2 の BLE 入力エミュレーションは対象外である (`spec/protocol_v3.md:5,11`)。
 
 この Wiki の初版は HEAD `c366bf4` + 未コミット作業時点のツリーを記録する。プロトコル仕様書の SSOT は `spec/protocol_v3.md` であり、仕様と他文書が衝突した場合は仕様 + `src/proto/*` を正とする (`AGENTS.md:3`)。
 

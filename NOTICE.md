@@ -1,4 +1,4 @@
-# NOTICE — License scope and third-party references (pico-bcon)
+# NOTICE — License scope and third-party references (switch-bcon)
 
 This file explains, in human terms, which licence applies to which part.
 It is not legal advice. The binding texts are `LICENSE` (MIT, this repo's

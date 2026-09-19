@@ -28,8 +28,8 @@ Raspberry Pi Pico 2 Wファーム（BTstack Classic + Switch Pro Controllerエ�
 - 教訓1：書込なし死が存在する（＝書込単独犯説は不十分）。教訓2：初回書込→死は再現する
 
 ### 2.3 定量A/B（各UF2は単一変数、ビルド＋復元証明済み）
-- W0（統制・現行treeそのまま）`log/pico-bcon-w0-control.uf2`：安定、WDTなし
-- W1（host書込をopen→3秒後タイマへ遅延）`log/pico-bcon-w1-defer.uf2` → 実機ログ `log/COM3_2026_09_15.00.45.36.087.txt`：
+- W0（統制・現行treeそのまま）`log/switch-bcon-w0-control.uf2`：安定、WDTなし
+- W1（host書込をopen→3秒後タイマへ遅延）`log/switch-bcon-w1-defer.uf2` → 実機ログ `log/COM3_2026_09_15.00.45.36.087.txt`：
   保存→約2.0秒後WDT死を **3/3再現**（51.2→53.2、58.5→60.5、12.2→14.2）。
   結論：BTstackイベントコールバック内かタイマ内かは無関係。BT動作中のFlash書込自体が殺す
 - W3（IRQ駆動breadcrumb計装のみ）→ 実機で安定動作（WDTなし、正常切断のみ）
@@ -41,7 +41,7 @@ Raspberry Pi Pico 2 Wファーム（BTstack Classic + Switch Pro Controllerエ�
 - 通算：**書込→死 9/9**（Phase-3 S2＋W1×3＋W5×5）、**無書込→生存 約12セッション**
 
 ### 2.4 W6（取得予定・本書作成時点で未採取）
-- `log/pico-bcon-w6-hcidump.uf2`：現行tree＋hci_dumpのみ復活（4:24時代に60秒超生存で無害性実証済み）
+- `log/switch-bcon-w6-hcidump.uf2`：現行tree＋hci_dumpのみ復活（4:24時代に60秒超生存で無害性実証済み）
 - 目的：死亡セッションの暗号化→open区間のL2CAPバイト列を、勝利ログ
   `log/COM3_2026_09_14.22.32.18.050_ab1.txt`（SUB完走・全HCIあり）とバイト比較し、
   最終パケットを特定する

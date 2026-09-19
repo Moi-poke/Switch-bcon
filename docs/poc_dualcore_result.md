@@ -24,8 +24,8 @@
 
 - 送信側: 600秒完走 `done sent=300000 secs=600.0 eff_hz=500.0`
   (別途60秒予行 約30,000。前回64秒分31,998は配線不良でFW未達)
-- FW側: `c:\pico-bcon\log\COM3_2026_09_13.18.05.39.816.txt` (t=2689–2785s抜粋)
-  および起動側 `c:\pico-bcon\log\COM3_2026_09_13.17.01.11.954.txt` (t=1–323s)
+- FW側: `c:\switch-bcon\log\COM3_2026_09_13.18.05.39.816.txt` (t=2689–2785s抜粋)
+  および起動側 `c:\switch-bcon\log\COM3_2026_09_13.17.01.11.954.txt` (t=1–323s)
 - 代表行 (負荷後):
   `POC t=2785s bt=1 usb=1 boot=3 frames=330003 crc=0 drop=2 ovr=0
   iters=421539840 fok=552 ffail=0 fmax_us=38589 keys=2748`

@@ -1,6 +1,6 @@
 # op内死（Flash書込op開始後に戻らない死亡）：第三者レビュー用・事象整理書（2026-09-15）
 
-対象ログ：`log/COM3_2026_09_15.21.09.02.303.txt`（W8計装UF2 `log/pico-bcon-w8-epoch.uf2`、12MB）。
+対象ログ：`log/COM3_2026_09_15.21.09.02.303.txt`（W8計装UF2 `log/switch-bcon-w8-epoch.uf2`、12MB）。
 前書 `docs/wdt_phenomena_brief_20260915.md`（書込→約2秒後死）および
 `docs/wdt_w7_postmortem_brief_20260915.md`（U3・U5）の続編。
 本書の主題は**新署名「op内死」**であり、従来の「完走後死」との対比が要点である。

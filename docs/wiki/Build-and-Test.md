@@ -13,7 +13,7 @@ $ninja = Join-Path $env:USERPROFILE '.pico-sdk/ninja/v1.13.2/ninja.exe'
 & $cmake --build build
 ```
 
-上記は `AGENTS.md:9-15` の正準手順である。統合 FW のターゲット `pico-bcon` は `src/main.c`、`src/proto/`（`protocol.c`、`pack.c`、`spi.c`、`dispatch.c`）、`src/usb/` 3 件、`src/bt/` 7 件（`hid.c`、`link.c`、`link_conn.c`、`link_cap.c`、`link_beacon.c`、`cap.c`、`store.c`）から構成される。BTstack Classic/BLE/CYW43 と TinyUSB をリンクし、`POC_DATA_BAUD` と `WIRED_DEFAULT` を定義で渡す。
+上記は `AGENTS.md:9-15` の正準手順である。統合 FW のターゲット `switch-bcon` は `src/main.c`、`src/proto/`（`protocol.c`、`pack.c`、`spi.c`、`dispatch.c`）、`src/usb/` 3 件、`src/bt/` 7 件（`hid.c`、`link.c`、`link_conn.c`、`link_cap.c`、`link_beacon.c`、`cap.c`、`store.c`）から構成される。BTstack Classic/BLE/CYW43 と TinyUSB をリンクし、`POC_DATA_BAUD` と `WIRED_DEFAULT` を定義で渡す。
 
 ## 派生構成（`-DPOC_DATA_BAUD` / `-DWIRED_DEFAULT`）
 
@@ -35,9 +35,9 @@ ctest --test-dir build-host -V
 
 ## UF2 / log の運用規約
 
-- UF2（`pico-bcon-wireless-test.uf2`、`pico-bcon-ab{1..5}-*.uf2`、`pico-bcon-w{0,1,3,4,5,6,7}-*.uf2`、`pico-bcon-w8-epoch.uf2`、`pico-bcon-phase3-test.uf2` 等）と生ログ（`COM3_2026_09_*.txt`）は `log/` に置く。git 管理外である (`docs/history/2026-09-15-wdt/README.md:16-20`)
+- UF2（`switch-bcon-wireless-test.uf2`、`switch-bcon-ab{1..5}-*.uf2`、`switch-bcon-w{0,1,3,4,5,6,7}-*.uf2`、`switch-bcon-w8-epoch.uf2`、`switch-bcon-phase3-test.uf2` 等）と生ログ（`COM3_2026_09_*.txt`）は `log/` に置く。git 管理外である (`docs/history/2026-09-15-wdt/README.md:16-20`)
 - UF2 とログの対応表は `docs/history/2026-09-15-wdt/trial-history.md` が正である。本文書の日付別表と対応付けて読む (`docs/history/2026-09-15-wdt/README.md:18-20`)
-- ログ取得時は起動 banner（`=== pico-bcon ===`）から取り逃がさないこと。W7 で先頭 banner 欠落の前例がある (`docs/history/2026-09-15-wdt/hw-batch-2026-09-15.md:7`)
+- ログ取得時は起動 banner（`=== switch-bcon ===`）から取り逃がさないこと。W7 で先頭 banner 欠落の前例がある (`docs/history/2026-09-15-wdt/hw-batch-2026-09-15.md:7`)
 - 無線版 UF2 の具体例として、4:24 版は送信復帰＋TLV 停止＋起動時ワイプ＋hci_dump＋reporter＋MSPLIM＋SCR＋heartbeat 入りで SNIFF 無効継続の診断用一時措置であった (`docs/handoff_bt_20260914.md:22`)
 
 ## HW 通信の道具

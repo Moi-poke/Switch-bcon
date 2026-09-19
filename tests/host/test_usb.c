@@ -1,4 +1,4 @@
-// test_usb.c -- pico-bcon v3 USB/pack host tests (no Pico SDK needed).
+// test_usb.c -- switch-bcon v3 USB/pack host tests (no Pico SDK needed).
 // Covers: u32->3B pack (spec section 11), stick 12bit pack,
 // 81/21/30 builders (ported from wakecon, response bytes identical).
 // Build: via tests/host/CMakeLists.txt (ctest name: usb).

@@ -38,7 +38,7 @@ static uint8_t const poc_desc_config[] = {
 };
 
 static const char *poc_strings[] = {
-    "pico-bcon", "PoC stub (not a gamepad)", "0001",
+    "switch-bcon", "PoC stub (not a gamepad)", "0001",
 };
 
 uint8_t const *tud_descriptor_device_cb(void) { return poc_desc_device; }

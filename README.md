@@ -1,4 +1,4 @@
-# pico-bcon
+# switch-bcon
 
 BCON = Bridge Controller。Raspberry Pi Pico 2 W 用・バイナリ専用・最速志向の Switch 1 Pro Controller エミュレータ
 （PC-UART→Switchブリッジ）。

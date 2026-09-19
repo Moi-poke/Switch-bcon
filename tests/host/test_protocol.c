@@ -1,4 +1,4 @@
-// test_protocol.c -- pico-bcon v3 host tests (no Pico SDK needed).
+// test_protocol.c -- switch-bcon v3 host tests (no Pico SDK needed).
 // Build: gcc -Wall -Wextra -O2 -o test_protocol test_protocol.c ../../src/proto/protocol.c
 #include <stdio.h>
 #include <string.h>

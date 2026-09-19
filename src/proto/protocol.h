@@ -1,8 +1,8 @@
-// protocol.h -- pico-bcon v3 binary serial protocol (PROTO_VER=3).
+// protocol.h -- switch-bcon v3 binary serial protocol (PROTO_VER=3).
 // SSOT: spec/protocol_v3.md. Frame: [SYNC=0xAB][TYPE][LEN][PAYLOAD][SEQ][CRC8].
 // CRC-8/SMBUS over TYPE..SEQ. Buttons: u32-LE VIIPER order (22 bits used).
-#ifndef PICO_BCON_PROTOCOL_H
-#define PICO_BCON_PROTOCOL_H
+#ifndef SWITCH_BCON_PROTOCOL_H
+#define SWITCH_BCON_PROTOCOL_H
 
 #include <stddef.h>
 #include <stdint.h>

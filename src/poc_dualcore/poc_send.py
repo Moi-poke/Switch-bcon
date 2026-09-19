@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""pico-bcon dual-core PoC load generator (Task 2 only).
+"""switch-bcon dual-core PoC load generator (Task 2 only).
 
 PoC FW (src/poc_dualcore) の UART1 (GP4/5・1Mbps) へ v3 STATE を送り続ける。
 Task 5 の pc/bcon_send.py (本番送信ラッパ) とは別物。負荷試験専用。

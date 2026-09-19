@@ -14,7 +14,7 @@
 
 ## 2. W7ダンプ原文（死亡直後bootの印字）
 
-取得元：`log/COM3_2026_09_15.02.43.25.327.txt:138-143`（UF2 `log/pico-bcon-w7-diag.uf2`）。
+取得元：`log/COM3_2026_09_15.02.43.25.327.txt:138-143`（UF2 `log/switch-bcon-w7-diag.uf2`）。
 
 ```
 w7rec n=119178 slot=42

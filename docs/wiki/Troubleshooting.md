@@ -24,11 +24,11 @@
 
 書込と SNIFF 突入の交互作用は未分離（U1）、Session-1 型の位置づけ（U2）、`del=1/1` の正体（U3。現ツリーの静的呼出グラフでは説明できない）、BTstack 由来鍵保存セッションが生存した非対称（U4）、alarm 再予約喪失は未証明（U5）、WDT 給餌の 1ms 周期依存（U6）である。全文は検証状態書を見ること (`docs/history/2026-09-15-wdt/verification-status.md:78-102`)。
 
-> 🚧 In-progress: W8（epoch/baseline/delta 拡張の最小差分・単一変数）は計装完成・HW 待ちである。`log/pico-bcon-w8-epoch.uf2` で死亡再現→次 boot ダンプ取得により U3・U5 を単発判定する計画である (`docs/history/2026-09-15-wdt/trial-history.md:36`, `docs/history/2026-09-15-wdt/hw-batch-2026-09-15.md:11-17`, `docs/wdt_w7_postmortem_brief_20260915.md:76-82`)。
+> 🚧 In-progress: W8（epoch/baseline/delta 拡張の最小差分・単一変数）は計装完成・HW 待ちである。`log/switch-bcon-w8-epoch.uf2` で死亡再現→次 boot ダンプ取得により U3・U5 を単発判定する計画である (`docs/history/2026-09-15-wdt/trial-history.md:36`, `docs/history/2026-09-15-wdt/hw-batch-2026-09-15.md:11-17`, `docs/wdt_w7_postmortem_brief_20260915.md:76-82`)。
 
 ## ログ読解ガイド（出す順・見る所）
 
-起動 banner から取り逃がさないこと (`docs/history/2026-09-15-wdt/hw-batch-2026-09-15.md:7`)。起動直後の順序は banner（`=== pico-bcon ===`）(`src/main.c:868`)→MAC (`src/main.c:883-885`)→TLV 有無（`tlv=1`）(`src/main.c:900`)→`wired/host/cap/wdt` 行 (`src/main.c:908-910`)→Core1 boot（`victim=1` 確認）(`src/main.c:929-931`)→`ready.` 行 (`src/main.c:1018-1019`) である。
+起動 banner から取り逃がさないこと (`docs/history/2026-09-15-wdt/hw-batch-2026-09-15.md:7`)。起動直後の順序は banner（`=== switch-bcon ===`）(`src/main.c:868`)→MAC (`src/main.c:883-885`)→TLV 有無（`tlv=1`）(`src/main.c:900`)→`wired/host/cap/wdt` 行 (`src/main.c:908-910`)→Core1 boot（`victim=1` 確認）(`src/main.c:929-931`)→`ready.` 行 (`src/main.c:1018-1019`) である。
 
 - 生存表示 BCON：1 秒周期の `BCON t=... hs=... cid=...` 行が stats timer の出力である (`src/main.c:580-604,606-610`)。停止＝タイマ系停止の証拠 (`docs/history/2026-09-15-wdt/trial-history.md:40-44`)
 - HID open/close：`hid open. host ... saved` は open 毎に出る表示であり、実書込の証拠は BTstack の `write '4243484F'` 行＋`host saved (n=..)` である (`src/main.c:709-716`)。dedupe skip時は `write` 行なしで SUB 完走・生存の対照になる。`hid closed` は切断の始末である (`src/main.c:720-724`)

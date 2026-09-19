@@ -1,4 +1,4 @@
-// main.c -- pico-bcon dual-core feasibility PoC (Task 2 Step 1).
+// main.c -- switch-bcon dual-core feasibility PoC (Task 2 Step 1).
 //
 // 目的: Core0 (BTstack Classic+BLE + TinyUSB + CYW43。wakecon と同一ライブラリ・
 // 同一初期化順) が、Core1 (UART1 1Mbps DMA排出 + v3 parser + mutex push) と
@@ -324,7 +324,7 @@ int main(void) {
     gpio_set_function(LOG_TX_PIN, GPIO_FUNC_UART);
     gpio_set_function(LOG_RX_PIN, GPIO_FUNC_UART);
 
-    printf("\n=== pico-bcon dual-core PoC ===\n");
+    printf("\n=== switch-bcon dual-core PoC ===\n");
 
     // Flash試験域がFW本体と重ならない事を確認 (重なれば試験skip)。
     uintptr_t bend = (uintptr_t)&__flash_binary_end;
@@ -363,7 +363,7 @@ int main(void) {
     sdp_init();
     gap_discoverable_control(1);
     gap_connectable_control(1);
-    gap_set_local_name("pico-bcon PoC");
+    gap_set_local_name("switch-bcon PoC");
     s_hci_cb.callback = &poc_packet_handler;
     hci_add_event_handler(&s_hci_cb);
 

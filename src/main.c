@@ -1,4 +1,4 @@
-// main.c -- pico-bcon 統合FW (USB + Classic BT + BLE wake)。
+// main.c -- switch-bcon 統合FW (USB + Classic BT + BLE wake)。
 // PC →(UART1)→ Pico →(USB-HID / Classic BT)→ Switch 1。BLEはwake取込再生のみ。
 //
 // 構成:
@@ -1379,7 +1379,7 @@ int main(void) {
     gpio_set_function(LOG_TX_PIN, GPIO_FUNC_UART);
     gpio_set_function(LOG_RX_PIN, GPIO_FUNC_UART);
 
-    printf("\n=== pico-bcon ===\n");
+    printf("\n=== switch-bcon ===\n");
     // 正規手段でHardFault報告を掛ける。
     exception_set_exclusive_handler(HARDFAULT_EXCEPTION, hardfault_reporter);
     // 自コアのMSPLIM (Core1側はcore1_entryで)。

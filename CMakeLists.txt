@@ -1,4 +1,4 @@
-# pico-bcon firmware (RP2350 / pico2_w).
+# switch-bcon firmware (RP2350 / pico2_w).
 # With Pico SDK: firmware targets (poc_dualcore, ...). Without: host-only.
 cmake_minimum_required(VERSION 3.16)
 
@@ -23,7 +23,7 @@ endif()
 
 if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
   include(pico_sdk_import.cmake)
-  project(pico-bcon C CXX ASM)
+  project(switch-bcon C CXX ASM)
   pico_sdk_init()
 
   # Task 2: dual-core feasibility PoC.
@@ -85,7 +85,7 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
   # Task 4: 統合FW (USB + Classic BT + BLE wake。無線はWIRED_MODE管理)。
   # Core0 = BTstack run loop＋TinyUSB＋CYW43 (wakecon同lib・同初期化順)。
   # Core1 = UART1 DMA＋v3 parser＋mutex push。
-  add_executable(pico-bcon
+  add_executable(switch-bcon
     src/main.c
     src/pokecon.c
     src/proto/protocol.c
@@ -105,21 +105,21 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
     src/bt/store.c
   )
 
-  pico_set_program_name(pico-bcon "pico-bcon")
-  pico_set_program_version(pico-bcon "0.1")
+  pico_set_program_name(switch-bcon "switch-bcon")
+  pico_set_program_version(switch-bcon "0.1")
 
   # ログは UART0 (GP0/1)。USB は有線ProConが専有、UART1 は data path。
-  pico_enable_stdio_uart(pico-bcon 1)
-  pico_enable_stdio_usb(pico-bcon 0)
+  pico_enable_stdio_uart(switch-bcon 1)
+  pico_enable_stdio_usb(switch-bcon 0)
 
-  target_include_directories(pico-bcon PRIVATE
+  target_include_directories(switch-bcon PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/src
     ${CMAKE_CURRENT_LIST_DIR}/src/usb
     ${CMAKE_CURRENT_LIST_DIR}/src/proto
     ${CMAKE_CURRENT_LIST_DIR}/src/bt
   )
 
-  target_link_libraries(pico-bcon
+  target_link_libraries(switch-bcon
     pico_stdlib
     hardware_uart
     hardware_dma
@@ -137,15 +137,15 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
     tinyusb_board
   )
 
-  target_compile_definitions(pico-bcon PRIVATE
+  target_compile_definitions(switch-bcon PRIVATE
     CFG_TUSB_OS=OPT_OS_PICO
     POC_DATA_BAUD=${POC_DATA_BAUD}
     WIRED_DEFAULT=${WIRED_DEFAULT}
     POKECON_INPUT=${POKECON_INPUT}
   )
 
-  pico_add_extra_outputs(pico-bcon)
+  pico_add_extra_outputs(switch-bcon)
 else()
-  project(pico-bcon-hostonly C)
+  project(switch-bcon-hostonly C)
   message(STATUS "pico_sdk_import.cmake not found: firmware target skipped (host tests only).")
 endif()

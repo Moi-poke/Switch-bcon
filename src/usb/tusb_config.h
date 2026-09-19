@@ -1,4 +1,4 @@
-// TinyUSB設定 (pico-bcon src/usb の正式版。PoCの暫定コピーから昇格)。
+// TinyUSB設定 (switch-bcon src/usb の正式版。PoCの暫定コピーから昇格)。
 /* 参考: pico-examples usb/device/dev_hid_composite 相当を最小化したもの。
  * 有線 Pro Controller は HID インタフェース1つのみ出す (CDC/MSC/MIDI/VENDOR なし)。
  * ビルド側で CFG_TUSB_OS=OPT_OS_PICO を定義すること (CMakeLists 参照)。 */
