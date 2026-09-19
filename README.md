@@ -4,21 +4,22 @@ Raspberry Pi Pico 2 W 用・バイナリ専用・最速志向の Switch 1 Pro Co
 （有線USB公式プロコン＋Classic BT＋BLE wakeビーコン取込再生）。新規作成リポジトリ。
 
 * 線路：PC →(UART)→ Pico →(USB-HID / Classic BT)→ Switch 1。Switch 2 BLE入力は対象外。
-* プロトコル：`spec/protocol_v3.md` が単一の真実源（SSOT）。`PROTO_VER=3`。
-* 状態送信：ボタンu32-LE（VIIPER順・22bit使用）＋スティック4B＝LEN8。HATフィールドなし（十字キーはボタン）。
-* UART：バイナリ専用、既定 1Mbps 8N1、既定ピン GP4/5（UART1、ビルド時GP0/1選択可）。フロー制御なし既定。
+* プロトコル：`spec/protocol_v3.md` が単一の真実源（SSOT）。`PROTO_VER=4`。
+* 状態送信：ボタンu32-LE（VIIPER順・22bit使用）＋スティック（LEN8=u8x4／LEN12=u16LEx4の12bit拡張）。HATフィールドなし（十字キーはボタン）。
+* UART：log=UART0 GP0/1 @115200・data=UART1 GP4/5（既定1Mbps 8N1、フロー制御なし）。data側はbaud hunt自動追従（`BAUD_SET`合意切替・BREAK再探索）＋PokeCon Modified互換のASCII行モード（ビルド時選択）に対応。開発用にシリアルBOOTSEL突入あり。
 * USB：任天堂 `057E:2009`＋純正写し記述子（`bInterval 8`実機写し）。HORIPAD名乗りはしない。
 * 秘密（LTK/IRK/AES鍵）をログに出さない。
-* ビルド成果物は `build/`（増分）と `build-verify/`（クリーン確認）。どちらもgit管理外。
+* ビルド成果物は `build/`（増分）・`build-host/`（hostテスト）・派生構成のtemp dir。いずれもgit管理外（`log/`・`*.uf2`含む）。
 
 ## 配置
 
 ```
 spec/                 プロトコル仕様（SSOT）
-src/proto/            CRC8・パーサ・フレーム生成（Pico/BTstack非依存・host test可）
-src/usb/              公式ProCon USB（移植予定：wakecon usb_hid/usb_descriptors相当）
-src/bt/               Classic BT＋BLE wake（移植予定：wakecon link/hid/cap/spi/store相当）
-src/main.c            統合ファーム（移植予定）
+src/proto/            CRC8・パーサ・フレーム生成＋dispatch（Pico/BTstack非依存・host test可）
+src/proto/pokecon.*   PokeCon Modified互換のASCII行入力（同上・ビルド時選択）
+src/usb/              公式ProCon USB（有線HID＋記述子）
+src/bt/               Classic BT＋BLE wake（link/hid/cap/spi/store）＋振動出力の振幅転送
+src/main.c            統合ファーム（dual-core：Core1=UART取込／Core0=BT・USB・1ms poll）
 tests/host/           host単体テスト（CTest）
 docs/superpowers/plans/ 実装計画
 ```
