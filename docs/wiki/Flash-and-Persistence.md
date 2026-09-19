@@ -51,7 +51,7 @@ bcon 独自の名前空間 `BCxx` を使う。wakecon（`NXxx`）とは別名前
 
 機序の旧本命（Flash 書込時の割込みブラックアウト＋CYW43 連携の状態機械破損、at-time alarm 再予約経路・低優先度 IRQ 処理の疑域）は上記により置換された。op-in 死（若い bank での S3-lockout 不応答）は task-15 の2回陰性試験＋外側除去による機序消去で CLOSED となった（台帳 Task-15 VERDICT。間欠レースの注記付き）。
 
-> 🚧 In-progress: 恒久修正（quiesced flash worker）は設計のみであり未実装・未承認である。方針は「BT 動作中の Flash 変更を全面禁止し、dirty-flag＋安全条件付き単一 worker へ集約」である。ゲート条件（ACL=0・HID 切断・outgoing なし・pairing なし・L2CAP なし・TX 待ちなし）、固定排出順（鍵→host 削除→cap 削除→host→cap→色→有線）、`WIRED_MODE` 期限規則、失敗時意味論の全文は設計書を見ること (`docs/history/2026-09-15-wdt/plans/quiesced-worker-design.md:45-67,228-353`)。Stage 2（BT 停止→保存→再開）は将来課題であり、本設計は hook を残すのみである。
+> ❌ Rejected / not adopted: quiesced flash worker は不採用確定（Death-B は外側除去＋guard＋BCON `pm` で修正・HW 検証 PASS 済み）。設計書は記録として保持する。方針「BT 動作中の Flash 変更を全面禁止し、dirty-flag＋安全条件付き単一 worker へ集約」の詳細、ゲート条件（ACL=0・HID 切断・outgoing なし・pairing なし・L2CAP なし・TX待ちなし）、固定排出順（鍵→host 削除→cap 削除→host→cap→色→有線）、`WIRED_MODE` 期限規則、失敗時意味論の全文は設計書を見ること (`docs/history/2026-09-15-wdt/plans/quiesced-worker-design.md:45-67,228-353`)。Stage 2（BT 停止→保存→再開）は将来課題であり、本設計は hook を残すのみである。
 
 ## Flash に関する禁止事項
 

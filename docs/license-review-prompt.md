@@ -12,11 +12,11 @@ Raspberry Pi Pico 2 W用ファームウェアのリポジトリ（自作コー�
 ## 確定している事実
 
 1. ファームウェアは Raspberry Pi Pico SDK 2.3.0 に同梱の BTstack（BlueKitchen GmbH）をリンクする。
-   同梱ライセンス文（SDK内 `lib/btstack/LICENSE` 全文をリポジトリの `LICENSE` に転載済み）は
+   同梱ライセンス文（SDK内 `lib/btstack/LICENSE` の写しをリポジトリの `LICENSES/BTstack.txt` に保管）は
    BSD系3条項＋第4条「Any redistribution, use, or modification is done solely for
    personal benefit and not for any commercial purpose or for monetary gain.」を含む。
    商用は `contact@bluekitchen-gmbh.com` への問合せと明記されている。
-2. リポジトリ自作コードは MIT（`LICENSE` 第1部）とした。SDK自体は同梱・再頒布していない
+2. リポジトリ自作コードは MIT（`LICENSE`）とした。SDK自体は同梱・再頒布していない
    （ビルド依存のみ）。リポジトリ直下に `LICENSE` 以外のライセンスファイルは存在しない。
 3. 成果物は UF2バイナリ（BTstackリンク済み）と、BTstackを含まないホスト単体試験コード
    （`tests/host/`、純粋C、BTstack非依存）である。

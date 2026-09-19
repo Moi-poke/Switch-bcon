@@ -4,7 +4,7 @@
 
 ## identity 接触点（将来の personality 作業用）
 
-> 🚧 In-progress: 機種偽装基盤（personality テーブル、`PERSONALITY_SET 0x37`、再起動適用）は設計のみであり未実装である。Phase C-0（spike、接触点の列挙）が設計入力として指定されている (`docs/superpowers/specs/2026-09-15-uart-features-design.md:52-54`)。下表は現行 ProCon 値の所在を示すものであり、変更手順ではない。
+> 🚧 In-progress: 機種偽装基盤（personality テーブル、`PERSONALITY_SET 0x37`、再起動適用）は設計のみであり未実装である。Phase C-0（spike、接触点の列挙）が設計入力として指定されている (`docs/superpowers/specs/2026-09-15-uart-features-design.md:52-54`)。下表は現行 ProCon 値の所在を示すものであり、変更手順ではない。なお `0x37` は `T_BOOTSEL`（開発用）に割当て済みのため、`PERSONALITY_SET` には別番号が必要（要所有者判断）。
 
 | 接触点 | 所在 | 値・内容 |
 |---|---|---|

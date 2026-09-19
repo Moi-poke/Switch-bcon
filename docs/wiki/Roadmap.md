@@ -32,7 +32,7 @@
 > 🚧 In-progress: Phase C-0（spike、設計入力）から着手する。出力は接触点リスト（file:line 付き）のみであり、コード変更なしである (`docs/superpowers/specs/2026-09-15-uart-features-design.md:51`)。
 
 - C-0 既知候補：`switch_hid.h:59-76`（VID/PID/GAP 名）、`usb_descriptors.c:21-22,175-176`（VID/PID/文字列）、`main.c:1370-1376,1504-1505,1514-1527`（SDP・GAP 名・SDP 初期化）、`hid.c` report builder 群、`spi.c` 色・シリアル応答。本 Wiki の [Bluetooth](Bluetooth.md) 接触点表は現行値の所在確認に使うこと
-- C-1（基盤）：personality テーブル（id→USB VID/PID/文字列・GAP 名・SDP・builder 選択・SPI 応答選択）＋`PERSONALITY_SET (0x37)`＋再起動適用（無線構成と同じ制約クラス）。`0=ProCon` は現行値の verbatim 移管であり、挙動不変が gate である
+- C-1（基盤）：personality テーブル（id→USB VID/PID/文字列・GAP 名・SDP・builder 選択・SPI 応答選択）＋`PERSONALITY_SET`（番号未定：`0x37` は `T_BOOTSEL` 割当て済み）＋再起動適用（無線構成と同じ制約クラス）。`0=ProCon` は現行値の verbatim 移管であり、挙動不変が gate である
 - HoriCon／Joy-Con の実値は C-1 の範囲外であり、「実測値の採取→テーブル 1 行追加」の繰返しとする。同時多機種・実行時無再起動切替は非目標である
 
 ## 5. ボーレート Plan B（動的切替）
