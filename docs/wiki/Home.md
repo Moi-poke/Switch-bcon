@@ -31,7 +31,7 @@ switch-bcon は Raspberry Pi Pico 2 W 上で動くファームウェアである
 
 - 秘密鍵バイト（リンク鍵・LTK）はログ・文書に一切出さない。peer BD_ADDR 程度は可 (`AGENTS.md:38`, `src/main.c:1258-1272,1303-1334`)
 - `C:\Users\moilo\pico-wakecon` は参照専用。改変禁止 (`AGENTS.md:39`)
-- `build/`、`build-host/`、`log/`、`*.uf2` は git 管理外。コミットしない (`AGENTS.md:7`)
+- `build/`、`build-host/`、`firmware/`、`log/`、`*.uf2` は git 管理外。コミットしない (`AGENTS.md:7`)
 - WDT 関連の生の試行錯誤は本 Wiki に複写しない。`docs/history/2026-09-15-wdt/README.md` が索引であり、UF2 と `log/COM3_*.txt` の対応表が正である (`AGENTS.md:40`)
 - 未着手・検証待ちの項目は `> 🚧 In-progress:` コールアウト付きでのみ記載し、未実装の動作を事実として書かない
 

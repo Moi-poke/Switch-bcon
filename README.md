@@ -24,6 +24,7 @@ src/usb/              公式ProCon USB（有線HID＋記述子）
 src/bt/               Classic BT＋BLE wake（link/hid/cap/spi/store）＋振動出力の振幅転送
 src/main.c            統合ファーム（dual-core：Core1=UART取込／Core0=BT・USB・1ms poll）
 tests/host/           host単体テスト（CTest）
+docs/wiki/            開発者Wiki（Home.md が索引）
 docs/superpowers/plans/ 実装計画
 ```
 

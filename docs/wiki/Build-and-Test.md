@@ -2,7 +2,7 @@
 
 ## 前提
 
-ボードは `pico2_w` 固定、Pico SDK 2.3.0 である (`AGENTS.md:7`)。`build/`、`build-host/`、`log/`、`*.uf2` は git 管理外であり、コミットしない (`AGENTS.md:7`)。`cmake` は PATH にないためフルパスで呼ぶ。MSVC が要るホスト試験は `vcvars64.bat` 初期化済み cmd から行う（素の PowerShell にはコンパイラがない）(`AGENTS.md:9,18`)。
+ボードは `pico2_w` 固定、Pico SDK 2.3.0 である (`AGENTS.md:7`)。`build/`、`build-host/`、`firmware/`、`log/`、`*.uf2` は git 管理外であり、コミットしない (`AGENTS.md:7`)。`cmake` は PATH にないためフルパスで呼ぶ。MSVC が要るホスト試験は `vcvars64.bat` 初期化済み cmd から行う（素の PowerShell にはコンパイラがない）(`AGENTS.md:9,18`)。
 
 ## ファームウェアのビルド（PowerShell）
 
