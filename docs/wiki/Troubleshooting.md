@@ -2,7 +2,7 @@
 
 ## 二大問題の見分け方（SUB 問題と WDT 問題は別件）
 
-- 問題 S（解決済み）：HID open 後に Switch が SUB を送らず約 1 秒で `0x13` 切断する。SNIFF 受容が必須条件であり、現ツリーは既定で有効化している (`src/main.c:959-963`)。SUB が線路上に存在しなかったことは hci_dump 有効時代に Switch→Pico 方向 ACL データゼロ件で直接確認済みであり、「送ったが落とした」ではなく「送っていない」が確定である (`docs/history/2026-09-15-wdt/verification-status.md:30-33`)
+- 問題 S（解決済み）：HID open 後に Switch が SUB を送らず約 1 秒で `0x13` 切断する。SNIFF 受容が必須条件であり、現ツリーは既定で有効化している (`src/main.c:1504-1505`)。SUB が線路上に存在しなかったことは hci_dump 有効時代に Switch→Pico 方向 ACL データゼロ件で直接確認済みであり、「送ったが落とした」ではなく「送っていない」が確定である (`docs/history/2026-09-15-wdt/verification-status.md:30-33`)
 - 問題 W（継続中）：BT 動作中の Flash 書込→約 2.0 秒後に WDT 再起動する。最終マイルストーン（暗号化完了 or Flash 保存完了）から約 2.0 秒後に再起動し、BCON 含むタイマ系がマイルストーン時点で止まり、以後アプリログが出ない。Fault reporter は沈黙し（非 Fault 停止として確定）、書込自体は約 2ms で `rc=0` 正常完了する (`docs/wdt_phenomena_brief_20260915.md:49-55`)
 - 死亡 A（Session-1 型、単発）：書込ゼロ死。暗号化→約 2 秒沈黙→WDT であり、HID open なし・Flash 書込ゼロの例がある。T4 で BTstack 内部ログを消した区間のため L2CAP 進行が不可視であり、W7 計装での再捕獲待ちとして同一機序に統一しない (`docs/wdt_phenomena_brief_20260915.md:23-28`, `docs/history/2026-09-15-wdt/verification-status.md:84-86`)
 - 死亡 B（書込→約 2 秒後死）：9 回以上再現している本命パターンである (`docs/history/2026-09-15-wdt/trial-history.md:40-44`)
@@ -28,25 +28,25 @@
 
 ## ログ読解ガイド（出す順・見る所）
 
-起動 banner から取り逃がさないこと (`docs/history/2026-09-15-wdt/hw-batch-2026-09-15.md:7`)。起動直後の順序は banner（`=== switch-bcon ===`）(`src/main.c:868`)→MAC (`src/main.c:883-885`)→TLV 有無（`tlv=1`）(`src/main.c:900`)→`wired/host/cap/wdt` 行 (`src/main.c:908-910`)→Core1 boot（`victim=1` 確認）(`src/main.c:929-931`)→`ready.` 行 (`src/main.c:1018-1019`) である。
+起動 banner から取り逃がさないこと (`docs/history/2026-09-15-wdt/hw-batch-2026-09-15.md:7`)。起動直後の順序は banner（`=== switch-bcon ===`）(`src/main.c:1382`)→MAC (`src/main.c:1397-1399`)→TLV 有無（`tlv=1`）(`src/main.c:1414`)→`wired/host/cap/wdt` 行 (`src/main.c:1422-1424`)→Core1 boot（`victim=1` 確認）(`src/main.c:1472-1474`)→`ready.` 行 (`src/main.c:1562-1566`) である。
 
-- 生存表示 BCON：1 秒周期の `BCON t=... hs=... cid=...` 行が stats timer の出力である (`src/main.c:580-604,606-610`)。停止＝タイマ系停止の証拠 (`docs/history/2026-09-15-wdt/trial-history.md:40-44`)
-- HID open/close：`hid open. host ... saved` は open 毎に出る表示であり、実書込の証拠は BTstack の `write '4243484F'` 行＋`host saved (n=..)` である (`src/main.c:709-716`)。dedupe skip時は `write` 行なしで SUB 完走・生存の対照になる。`hid closed` は切断の始末である (`src/main.c:720-724`)
-- SUB 群：`SUB=0x..` 行が Switch→Pico 方向サブコマンドの到達証拠である (`src/bt/hid.c:397-410`)。AB1 勝利ログ（`log/COM3_2026_09_14.22.32.18.050_ab1.txt`、680KB）は SUB フル完走×2 セッションの証拠である
+- 生存表示 BCON：1 秒周期の `BCON t=... hs=... cid=...` 行が stats timer の出力である (`src/main.c:1087-1108,1115-1119`)。停止＝タイマ系停止の証拠 (`docs/history/2026-09-15-wdt/trial-history.md:40-44`)
+- HID open/close：`hid open. host ... saved` は open 毎に出る表示であり、実書込の証拠は BTstack の `write '4243484F'` 行＋`host saved (n=..)` である (`src/main.c:1221-1224`)。dedupe skip時は `write` 行なしで SUB 完走・生存の対照になる。`hid closed` は切断の始末である (`src/main.c:1229-1233`)
+- SUB 群：`SUB=0x..` 行が Switch→Pico 方向サブコマンドの到達証拠である (`src/bt/hid.c:407-415`)。AB1 勝利ログ（`log/COM3_2026_09_14.22.32.18.050_ab1.txt`、680KB）は SUB フル完走×2 セッションの証拠である
 - 旧死亡パターン：`hid open done`→（tick/cansend/TX）→沈黙→バナー `wdt=1`。`0x66` は `linkkey req`→`hid open FAIL 0x66`→`auth complete 0x05`（基本 outgoing 発）。stall は `conn ok`→`disc 0x05` 約 80ms・SSP なし。現行（4:04 以降）は open→約 1 秒無言→Switch が切断（`0x13`）→BCON 継続（死亡なし）である (`docs/handoff_bt_20260914.md:46-52`)
-- 認証：`auth complete status=0x..` が成功/失敗を示す。失敗時は鍵を捨てて再ペアに回す (`src/main.c:804-817`)
-- RUMBLE：`0x10` 受信は復号・蓄積し、変化時に `0x22` で送出する。振幅式は実測接地である (`src/proto/rumble.h`, `src/bt/hid.c:424-431`)
-- 中立化：`timeout-neutral` は 200ms 無受信の全解放であり、WDT とは別機構である (`src/main.c:547`)
-- 鍵削除：`keys deleted (classic + host tag)` は `FX_KEY_DELETE` の発火証拠である (`src/main.c:414`)。死亡前ログ全域にゼロ件なら `FX_KEY_DELETE` 否定の根拠になる
-- 秘密厳守：link-key・LTK バイトは出さない。peer BD_ADDR 程度は可 (`src/main.c:770-777,795-803`)
+- 認証：`auth complete status=0x..` が成功/失敗を示す。失敗時は鍵を捨てて再ペアに回す (`src/main.c:1313-1325`)
+- RUMBLE：`0x10` 受信は復号・蓄積し、変化時に `0x22` で送出する。振幅式は実測接地である (`src/proto/rumble.h`, `src/bt/hid.c:430-443`)
+- 中立化：`timeout-neutral` は 200ms 無受信の全解放であり、WDT とは別機構である (`src/main.c:1039`)
+- 鍵削除：`keys deleted (classic + host tag)` は `FX_KEY_DELETE` の発火証拠である (`src/main.c:791`)。死亡前ログ全域にゼロ件なら `FX_KEY_DELETE` 否定の根拠になる
+- 秘密厳守：link-key・LTK バイトは出さない。peer BD_ADDR 程度は可 (`src/main.c:1258-1272,1303-1334`)
 
 ## よくある落とし穴
 
-- Switch 2 ドックで USB 列挙しない：CYW43 給電中（無線一式が上がった状態）では実測で列挙しない。有線起動では無線を上げないこと。最終 FW は `WIRED_MODE` で無線停波を管理する (`spec/protocol_v3.md:250-252`, `src/main.c:831-839`)
-- 有線中に CAPTURE/BEACON が拒否される（`0x10`/`0x11`）：無線起動でのみ有効である。先に `WIRED_MODE=0`＋再起動が必要 (`spec/protocol_v3.md:147-149`)
-- 色を変えても Switch 表示が変わらない：Switch は初回接続時の色をキャッシュするため、登録解除→再接続で取り直させる (`spec/protocol_v3.md:245-246`)
+- Switch 2 ドックで USB 列挙しない：CYW43 給電中（無線一式が上がった状態）では実測で列挙しない。有線起動では無線を上げないこと。最終 FW は `WIRED_MODE` で無線停波を管理する (`spec/protocol_v3.md:290-292`, `src/main.c:1340-1342,1480-1482`)
+- 有線中に CAPTURE/BEACON が拒否される（`0x10`/`0x11`）：無線起動でのみ有効である。先に `WIRED_MODE=0`＋再起動が必要 (`spec/protocol_v3.md:157-158`)
+- 色を変えても Switch 表示が変わらない：Switch は初回接続時の色をキャッシュするため、登録解除→再接続で取り直させる (`spec/protocol_v3.md:287-288`)
 - `tusb.h` と `btstack.h` を同じ TU に含める：`hid_report_type_t` が二重定義になる。`src/usb/` と `src/bt/` を分離すること (`AGENTS.md:30`)
 - BT コールバック内に Flash 書込を足す：約 2 秒後の WDT 死を起こす。延期/quiesce し HW 検証すること (`AGENTS.md:37`)
-- `WIRED_MODE` 切替が即時反映されない：再起動適用であり、受理後約 500ms で自発再起動する (`src/main.c:427-431`)
-- CH340 で 1Mbps が通らない：CH340 は 1Mbps 以下推奨であり、FTDI 推奨・latency timer 1ms である (`spec/protocol_v3.md:31`)
+- `WIRED_MODE` 切替が即時反映されない：再起動適用であり、受理後約 500ms で自発再起動する (`src/main.c:804-808`)
+- CH340 で 1Mbps が通らない：CH340 は 1Mbps 以下推奨であり、FTDI 推奨・latency timer 1ms である (`spec/protocol_v3.md:32`)
 - SCR 値を直接信じる：2 回とも単独 boot モデルと矛盾したため不信扱いである。timer/BCON/dump 表示を正とする (`docs/handoff_bt_20260914.md:43`)

@@ -144,7 +144,7 @@ Off  Field        Size  説明
 ERRCODE：`0x00 正常／0x01 LEN不正／0x02 CRC不一致／0x03 SEQ欠番／0x04 UNSUPPORTED版／0x05 UART overrun／0x06 parser overflow／0x10-0x1F CONFIG拒否（0x10+TYPE下位）`。
 周期送信時のerrcodeは直近エラーを保持（正常復帰後に0へ戻す）。
 
-### 5.6 CONFIG（0x30-0x35）
+### 5.6 CONFIG（0x30-0x37）
 
 * CAPTURE_START：`[0]=秒数1-60`。範囲外は拒否（ERRCODE 0x10）。
 * BEACON_START：LEN0。未保存時は拒否（0x11）。

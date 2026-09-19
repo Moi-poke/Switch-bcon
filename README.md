@@ -18,7 +18,7 @@ BCON = Bridge Controller。Raspberry Pi Pico 2 W 用・バイナリ専用・最�
 ```
 spec/                 プロトコル仕様（SSOT）
 src/proto/            CRC8・パーサ・フレーム生成＋dispatch（Pico/BTstack非依存・host test可）
-src/proto/pokecon.*   PokeCon Modified互換のASCII行入力（同上・ビルド時選択）
+src/pokecon.*         PokeCon Modified互換のASCII行入力（同上・ビルド時選択）
 src/usb/              公式ProCon USB（有線HID＋記述子）
 src/bt/               Classic BT＋BLE wake（link/hid/cap/spi/store）＋振動出力の振幅転送
 src/main.c            統合ファーム（dual-core：Core1=UART取込／Core0=BT・USB・1ms poll）

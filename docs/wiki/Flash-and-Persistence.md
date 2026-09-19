@@ -2,47 +2,48 @@
 
 ## TLV タグ表
 
-bcon 独自の名前空間 `BCxx` を使う。wakecon（`NXxx`）とは別名前空間であり、同一 Pico 共存時に wakecon 保存値（特に WIRED）を拾わないようにする。Classic リンク鍵（BTstack 管理）は同一機器として共有するのが正しいため対象外である (`src/bt/store.c:13-20`)。
+bcon 独自の名前空間 `BCxx` を使う。wakecon（`NXxx`）とは別名前空間であり、同一 Pico 共存時に wakecon 保存値（特に WIRED）を拾わないようにする。Classic リンク鍵（BTstack 管理）は同一機器として共有するのが正しいため対象外である (`src/bt/store.c:14-22`)。
 
 | TAG | 値 | 内容 | サイズ |
 |---|---|---|---|
-| `BCHO` | `0x4243484F` | host 住所録（相手 BD_ADDR）(`src/bt/store.c:13`) | 6B |
-| `BCCL` | `0x4243434C` | グリップ色（SPI `0x6050` の 13B 目は仕様値のため戻さない）(`src/bt/store.c:14,165-187`) | 13B |
-| `BCW1` | `0x42435731` | 取込 blob（`CAP_BLOB_SIZE`）(`src/bt/store.c:15`, `src/bt/store.c:153-171`) | blob |
-| `BCWR` | `0x42435752` | 有線モード 0/1 (`src/bt/store.c:16,207-217`) | 1B |
+| `BCHO` | `0x4243484F` | host 住所録（相手 BD_ADDR）(`src/bt/store.c:14`) | 6B |
+| `BCCL` | `0x4243434C` | グリップ色（SPI `0x6050` の 13B 目は仕様値のため戻さない）(`src/bt/store.c:15,167-189`) | 13B |
+| `BCW1` | `0x42435731` | 取込 blob（`CAP_BLOB_SIZE`）(`src/bt/store.c:16`, `src/bt/store.c:191-229`) | blob |
+| `BCWR` | `0x42435752` | 有線モード 0/1 (`src/bt/store.c:17,248-276`) | 1B |
+| `BCBR` | `0x42434252` | ボーレート永続（rate index）(`src/bt/store.c:18,283-323`) | 1B |
 
-> 🚧 In-progress: 新 TAG `BCBR`（ボーレート永続）は定義のみ先行であり未実装である。`BAUD_SET` の永続先として設計書が指定している (`docs/superpowers/specs/2026-09-15-uart-features-design.md:46`)。
+> ✅ Done: 新 TAG `BCBR`（ボーレート永続）は実装済みであり、`BAUD_SET` の永続先として機能する (`src/bt/store.c:18`, `src/bt/store.c:283-323`)。由来は設計書 (`docs/superpowers/specs/2026-09-15-uart-features-design.md:46`)。
 
 ## TAG差分（再構築用）
 
-- `BCBR` は未実装であり現行表の 4 TAG が全部である (`src/bt/store.c:13-16`)。`BTL`（BTstack鍵 28B）は bcon TAG ではなく BTstack 管理であり、non-bonding のため fresh 鍵は保存されない設計だが当該セッションは生存した唯一例である (`docs/history/2026-09-15-wdt/verification-status.md:64-69`)
-- `BCCL` は 13B 保存・復元 12Bであり 13B 目は仕様値のため戻さない (`src/bt/store.c:165-187`)。由来と色値の確定経緯は [References](References.md) R3・R6 を見ること
+- `BCBR` も実装済みであり現行表の 5 TAG が全部である (`src/bt/store.c:14-18`)。`BTL`（BTstack鍵 28B）は bcon TAG ではなく BTstack 管理であり、non-bonding のため fresh 鍵は保存されない設計だが当該セッションは生存した唯一例である (`docs/history/2026-09-15-wdt/verification-status.md:64-69`)
+- `BCCL` は 13B 保存・復元 12Bであり 13B 目は仕様値のため戻さない (`src/bt/store.c:167-189`)。由来と色値の確定経緯は [References](References.md) R3・R6 を見ること
 
 ## 全書込経路（現行ツリーの呼び出し元）
 
 | # | 呼び出し元 | TAG/DB | 文脈 | 備考 |
 |---|---|---|---|---|
-| W1 | `handle_hid_meta` の `HID_SUBEVENT_CONNECTION_OPENED` → `store_host(a)` (`src/main.c:687-718`) | `BCHO` 6B | HID/HCI イベントコールバック、HID 接続直後 | BT 動作中の直接書込。WDT 死の主経路 |
-| W2 | `exec_fx` の `FX_COLOR_SET` → `store_color()` (`src/main.c:404-408`) | `BCCL` 13B | `poll_tick`（1ms timer 文脈）。Switch 接続中があり得る | BT 動作中の直接書込 |
-| W3 | `exec_fx` の `FX_KEY_DELETE` → `gap_delete_all_link_keys()` + `store_host_forget()` (`src/main.c:409-415`) | 鍵 DB + `BCHO` 削除 | `poll_tick`。BT 動作中の可能性あり | 二重書込（DB＋TAG） |
-| W4 | `exec_fx` の `FX_WIRED_MODE` → `store_wired(w)` 後に 500ms で自発再起動 (`src/main.c:416-433`) | `BCWR` 1B | `poll_tick`。BT 動作中の可能性あり | 再起動が約 2 秒の死亡窓を先取りするため歴史的に生存してきたが、quiesced 化または reboot-safe 化の対象 |
-| W5 | `link_cap_tick` の `CAP-DONE best>=0` → `store_cap_save()` (`src/bt/link_cap.c:100-132`) | `BCW1` blob | `link_poll` 経由で `poll_tick` から。スキャン停止直後、BT 稼働中 | BT 稼働中の書込 |
-| W6 | `link_cap_clear()` → `store_cap_forget()` (`src/bt/link_cap.c:91-98`, `src/bt/store.c:193-205`) | `BCW1` 削除 | 呼び出し元依存（現状は同期的） | W5 と同クラス。なお現ツリーで `link_cap_clear` 自体にリポジトリ内呼び出し元がゼロとの指摘がある（U3 関連。未解決点として記録） |
-| W7 | `packet_handler` の `HCI_EVENT_AUTHENTICATION_COMPLETE` 認証失敗 → `gap_delete_all_link_keys()` (`src/main.c:804-817`) | 鍵 DB | HCI イベントコールバック、ペアリング失敗直後。ACL 残存の可能性あり | BT 動作中の DB 変更であり、W3 と同様に遅延対象 |
+| W1 | `handle_hid_meta` の `HID_SUBEVENT_CONNECTION_OPENED` → `store_host(a)` (`src/main.c:1200-1225`) | `BCHO` 6B | HID/HCI イベントコールバック、HID 接続直後 | BT 動作中の直接書込。WDT 死の主経路 |
+| W2 | `exec_fx` の `FX_COLOR_SET` → `store_color()` (`src/main.c:781-784`) | `BCCL` 13B | `poll_tick`（1ms timer 文脈）。Switch 接続中があり得る | BT 動作中の直接書込 |
+| W3 | `exec_fx` の `FX_KEY_DELETE` → `gap_delete_all_link_keys()` + `store_host_forget()` (`src/main.c:786-791`) | 鍵 DB + `BCHO` 削除 | `poll_tick`。BT 動作中の可能性あり | 二重書込（DB＋TAG） |
+| W4 | `exec_fx` の `FX_WIRED_MODE` → `store_wired(w)` 後に 500ms で自発再起動 (`src/main.c:793-808`) | `BCWR` 1B | `poll_tick`。BT 動作中の可能性あり | 再起動が約 2 秒の死亡窓を先取りするため歴史的に生存してきたが、quiesced 化または reboot-safe 化の対象 |
+| W5 | `link_cap_tick` の `CAP-DONE best>=0` → `store_cap_save()` (`src/bt/link_cap.c:100-133`) | `BCW1` blob | `link_poll` 経由で `poll_tick` から。スキャン停止直後、BT 稼働中 | BT 稼働中の書込 |
+| W6 | `link_cap_clear()` → `store_cap_forget()` (`src/bt/link_cap.c:91-98`, `src/bt/store.c:231-245`) | `BCW1` 削除 | 呼び出し元依存（現状は同期的） | W5 と同クラス。なお現ツリーで `link_cap_clear` 自体にリポジトリ内呼び出し元がゼロとの指摘がある（U3 関連。未解決点として記録） |
+| W7 | `packet_handler` の `HCI_EVENT_AUTHENTICATION_COMPLETE` 認証失敗 → `gap_delete_all_link_keys()` (`src/main.c:1313-1325`) | 鍵 DB | HCI イベントコールバック、ペアリング失敗直後。ACL 残存の可能性あり | BT 動作中の DB 変更であり、W3 と同様に遅延対象 |
 
-上表は恒久修正設計書の現行経路一覧 (`docs/history/2026-09-15-wdt/plans/quiesced-worker-design.md:86-97`) をコード行付きで再構成したものである。読込系（`store_*_load`、`link_key_count`）は Core1 起動前の XIP 直読であり現状維持である (`src/main.c:903-910`, `docs/history/2026-09-15-wdt/plans/quiesced-worker-design.md:96-97`)。
+上表は恒久修正設計書の現行経路一覧 (`docs/history/2026-09-15-wdt/plans/quiesced-worker-design.md:86-97`) をコード行付きで再構成したものである。読込系（`store_*_load`、`link_key_count`）は Core1 起動前の XIP 直読であり現状維持である (`src/main.c:1417-1424`, `docs/history/2026-09-15-wdt/plans/quiesced-worker-design.md:96-97`)。
 
 ## 重複排除（dedupe）
 
-`store_host` は変化時のみ保存する。`probe_host_known` かつ `memcmp == 0` なら早期復帰し、Flash 摩耗も timer 危険も起こさない (`src/bt/store.c:110-118`)。この dedupe により、同一 host への再接続では書込が起きず生存する（Phase-3 S3、W7 対照 boot 等）。恒久 worker 設計でも set 時と flush 時の二重検査として温存する方針である (`docs/history/2026-09-15-wdt/plans/quiesced-worker-design.md:354-369`)。
+`store_host` は変化時のみ保存する。`probe_host_known` かつ `memcmp == 0` なら早期復帰し、Flash 摩耗も timer 危険も起こさない (`src/bt/store.c:112-134`)。この dedupe により、同一 host への再接続では書込が起きず生存する（Phase-3 S3、W7 対照 boot 等）。恒久 worker 設計でも set 時と flush 時の二重検査として温存する方針である (`docs/history/2026-09-15-wdt/plans/quiesced-worker-design.md:354-369`)。
 
 ## `flash_safe_execute` / Core1-lockout 規則
 
 - 書込 op は単発（single-level）の `flash_safe_execute` でのみ包む。**入れ子禁止**：SDK pico_flash はコア毎に単一スロット `irq_state[]` で PRIMASK を退避するため（`sdk/.../pico_flash/flash.c:106,203,210`）、外側の中から内側を呼ぶと共有スロットが上書きされ、外側 exit が PRIMASK=1 を復元して全 store が IRQ 禁止を置き去りにする（Death-B の確定機序。W10c で `pm=1` を 3/3 実測）。自前の外側ラッパは付けない。BTstack TLV/HAL が全 mutation を内側で包む（erase・page program・delete-via-zero。read は XIP 直読 — 9b safety case）。
-- `tag_store_safe` は `tag_store_fn` を直接呼び、復帰時に `store_irq_guard()` で PRIMASK 不変条件を検査・自己修復する（`src/bt/store.c:71-107`）。削除側も直接呼び＋guard（`src/bt/store.c:146-147,241-242`）。guard 発火行（`irq leak healed`）が出たら即報告すること。
-- Core1 は `flash_safe_execute_core_init()` を呼び、内部で victim init される。起動 log の `victim=1` は生値であり、Core1 lockout 参加の証拠である (`src/main.c:274-278`, `src/main.c:929-931`)。Core1 自体は flash 書込を行わないが XIP 上で実行するため、mutation 毎の内側 lockout で退避される。
-- TLV 読込は Core1 起動前に済ませる (`src/main.c:903-910`)。TLV 永続化の初期化（`btstack_tlv_flash_bank_init_instance`＋`btstack_tlv_set_instance`＋鍵 DB 設定）は Core1 起動前の純 RAM 設定のため Flash 保護不要である (`src/main.c:892-901`)
-- BCON に `pm=`（PRIMASK。0=IRQ 開）を恒久出力する (`src/main.c:573-592`)。store 直後の `pm=1` はリークの証拠であり、guard と対で監視する。
+- `tag_store_safe` は `tag_store_fn` を直接呼び、復帰時に `store_irq_guard()` で PRIMASK 不変条件を検査・自己修復する（`src/bt/store.c:73-108`）。削除側も直接呼び＋guard（`src/bt/store.c:147-149,242-244`）。guard 発火行（`irq leak healed`）が出たら即報告すること。
+- Core1 は `flash_safe_execute_core_init()` を呼び、内部で victim init される。起動 log の `victim=1` は生値であり、Core1 lockout 参加の証拠である (`src/main.c:520`, `src/main.c:1472-1474`)。Core1 自体は flash 書込を行わないが XIP 上で実行するため、mutation 毎の内側 lockout で退避される。
+- TLV 読込は Core1 起動前に済ませる (`src/main.c:1417-1424`)。TLV 永続化の初期化（`btstack_tlv_flash_bank_init_instance`＋`btstack_tlv_set_instance`＋鍵 DB 設定）は Core1 起動前の純 RAM 設定のため Flash 保護不要である (`src/main.c:1405-1415`)
+- BCON に `pm=`（PRIMASK。0=IRQ 開）を恒久出力する (`src/main.c:1072-1077,1107`)。store 直後の `pm=1` はリークの証拠であり、guard と対で監視する。
 
 ## WDT 危険の要約（詳細は Troubleshooting と history へ）
 

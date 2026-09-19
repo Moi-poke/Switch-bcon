@@ -17,8 +17,8 @@ $ninja = Join-Path $env:USERPROFILE '.pico-sdk/ninja/v1.13.2/ninja.exe'
 
 ## 派生構成（`-DPOC_DATA_BAUD` / `-DWIRED_DEFAULT`）
 
-- `-DPOC_DATA_BAUD=115200` は 115200bps 上限アダプタ向けの derated 構成である。既定は仕様通り 1Mbps (`AGENTS.md:16`, `src/main.c:52-53`)。データ UART の既定ピン・速度の定義は `src/main.c:51-56` にある
-- `-DWIRED_DEFAULT=0` は無線起動の試験用である。既定は 1（有線起動）(`AGENTS.md:16`)。未保存時の起動モードとして `store_wired_load_def(WIRED_DEFAULT != 0)` で使う (`src/main.c:907`)
+- `-DPOC_DATA_BAUD=115200` は 115200bps 上限アダプタ向けの derated 構成である。既定は仕様通り 1Mbps (`AGENTS.md:16`, `src/main.c:55-57`)。データ UART の既定ピン・速度の定義は `src/main.c:54-59` にある
+- `-DWIRED_DEFAULT=0` は無線起動の試験用である。既定は 1（有線起動）(`AGENTS.md:16`)。未保存時の起動モードとして `store_wired_load_def(WIRED_DEFAULT != 0)` で使う (`src/main.c:1421`)
 - 派生構成は `build/` を汚さないよう temp ディレクトリに別構成し、UF2 を `log/` へコピーする (`AGENTS.md:16`)。無線版の建て方の具体例（temp `bcon-wireless`、derated＋無線既定＋BUMP 等）は引継ぎに記録されている (`docs/handoff_bt_20260914.md:23`)
 
 ## ホスト単体試験（vcvars64 済み cmd）

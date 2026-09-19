@@ -1,15 +1,15 @@
 # switch-bcon 開発者Wiki — Home
 
-switch-bcon は Raspberry Pi Pico 2 W 上で動くファームウェアである。PC からの UART 入力を Nintendo Switch 1 向け Pro Controller 入力に変換し、有線 USB-HID または Classic Bluetooth で Switch に届ける。BLE は wake 取込・再生専用であり、Switch 2 の BLE 入力エミュレーションは対象外である (`spec/protocol_v3.md:5,11`)。
+switch-bcon は Raspberry Pi Pico 2 W 上で動くファームウェアである。PC からの UART 入力を Nintendo Switch 1 向け Pro Controller 入力に変換し、有線 USB-HID または Classic Bluetooth で Switch に届ける。BLE は wake 取込・再生専用であり、Switch 2 の BLE 入力エミュレーションは対象外である (`spec/protocol_v3.md:5`)。
 
 この Wiki の初版は HEAD `c366bf4` + 未コミット作業時点のツリーを記録する。プロトコル仕様書の SSOT は `spec/protocol_v3.md` であり、仕様と他文書が衝突した場合は仕様 + `src/proto/*` を正とする (`AGENTS.md:3`)。
 
-## 状態バッジ（文字版、2026-09-15 時点）
+## 状態バッジ（文字版、2026-09-19 時点）
 
 - プロトコル: v4 完了（`PROTO_VER=0x04`、仕様書 v4 文面、Commit C）(`src/proto/protocol.h:11`, `spec/protocol_v3.md:1`)
 - SUB 到達問題: 解決済み（SNIFF 受容が必須条件。AB1 勝利 2/2、AB5 敗北 4/4）([Bluetooth](Bluetooth.md))
 - WDT 問題: 解決済み（Death-B＝入れ子 flash 機序を外側除去＋guard で修正、HW 検証 PASS。quiesced worker は別案のまま未採用）([Flash-and-Persistence](Flash-and-Persistence.md), [Troubleshooting](Troubleshooting.md))
-- RUMBLE 振幅転送: 転送中（HW 実測接地、Commit C）([Roadmap](Roadmap.md))
+- RUMBLE 振幅転送: 完了（HW 実測接地、Commit C `2a3057c`）([Roadmap](Roadmap.md))
 - 仕様書 v4 改訂: 完了（Commit C）([Roadmap](Roadmap.md))
 
 ## ページ索引
@@ -21,7 +21,7 @@ switch-bcon は Raspberry Pi Pico 2 W 上で動くファームウェアである
 - [Bluetooth](Bluetooth.md) — 将来の personality 作業に向けた identity 接触点、SNIFF 要件、ペアリング/非ボンディング動作、再接続設計
 - [Troubleshooting](Troubleshooting.md) — WDT 署名と SUB 症状の見分け方、ログ読解ガイド、よくある落とし穴
 - [Glossary](Glossary.md) — SUB/BCON/TLV/SNIFF/FX/ACT/死亡 A/B などの用語集
-- [Roadmap](Roadmap.md) — 完了項目の記録（rumble 連鎖、spec v4 改訂、ボーレート Plan B）と将来項目（quiesced worker 承認、personality 基盤）
+- [Roadmap](Roadmap.md) — 完了項目の記録（rumble 連鎖、spec v4 改訂、ボーレート Plan B）と将来項目（personality 基盤）、および非採用の quiesced worker（Death-B は外側除去で修正済み）
 
 ## Reproduce path（AI向け読順）
 
@@ -29,7 +29,7 @@ switch-bcon は Raspberry Pi Pico 2 W 上で動くファームウェアである
 
 ## 運用ルール（全ページ共通）
 
-- 秘密鍵バイト（リンク鍵・LTK）はログ・文書に一切出さない。peer BD_ADDR 程度は可 (`AGENTS.md:38`, `src/main.c:749-750,770-777`)
+- 秘密鍵バイト（リンク鍵・LTK）はログ・文書に一切出さない。peer BD_ADDR 程度は可 (`AGENTS.md:38`, `src/main.c:1258-1272,1303-1334`)
 - `C:\Users\moilo\pico-wakecon` は参照専用。改変禁止 (`AGENTS.md:39`)
 - `build/`、`build-host/`、`log/`、`*.uf2` は git 管理外。コミットしない (`AGENTS.md:7`)
 - WDT 関連の生の試行錯誤は本 Wiki に複写しない。`docs/history/2026-09-15-wdt/README.md` が索引であり、UF2 と `log/COM3_*.txt` の対応表が正である (`AGENTS.md:40`)
