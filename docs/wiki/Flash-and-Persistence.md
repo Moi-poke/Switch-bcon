@@ -48,7 +48,7 @@ bcon 独自の名前空間 `BCxx` を使う。wakecon（`NXxx`）とは別名前
 
 確定事実は次の通り。BT 動作中の Flash 書込のうち**入れ子（二重 `flash_safe_execute`）のものは、完走しながら core0 の IRQ を置き去りにし、約 2.0 秒後に run-loop を殺す（Death-B）**。W10c の 2 秒窓計測で最終 poll 完走・timer list 健全・全 timer 発火中・HCI RX 生存のもと `PRIMASK=1` を 3/3 実測し、SDK 共有スロットの上書き機序と一致を確認した。修正（外側除去＋guard＋BCON `pm`）は検証 run（2026-09-16）で PASS：両 store 完走→SUB 完走→20 秒生存、`pm=0` 全行、guard 沈黙。詳細は台帳 task-12–14（`docs/history/2026-09-15-wdt/sdd/plan-a-task-{12,13,14}-report.md`）。
 
-機序の旧本命（Flash 書込時の割込みブラックアウト＋CYW43 連携の状態機械破損、at-time alarm 再予約経路・低優先度 IRQ 処理の疑域）は上記により置換された。op-in 死（若い bank での S3-lockout 不応答）は別機序として未決・分離追跡中である。
+機序の旧本命（Flash 書込時の割込みブラックアウト＋CYW43 連携の状態機械破損、at-time alarm 再予約経路・低優先度 IRQ 処理の疑域）は上記により置換された。op-in 死（若い bank での S3-lockout 不応答）は task-15 の2回陰性試験＋外側除去による機序消去で CLOSED となった（台帳 Task-15 VERDICT。間欠レースの注記付き）。
 
 > 🚧 In-progress: 恒久修正（quiesced flash worker）は設計のみであり未実装・未承認である。方針は「BT 動作中の Flash 変更を全面禁止し、dirty-flag＋安全条件付き単一 worker へ集約」である。ゲート条件（ACL=0・HID 切断・outgoing なし・pairing なし・L2CAP なし・TX 待ちなし）、固定排出順（鍵→host 削除→cap 削除→host→cap→色→有線）、`WIRED_MODE` 期限規則、失敗時意味論の全文は設計書を見ること (`docs/history/2026-09-15-wdt/plans/quiesced-worker-design.md:45-67,228-353`)。Stage 2（BT 停止→保存→再開）は将来課題であり、本設計は hook を残すのみである。
 

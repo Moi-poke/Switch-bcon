@@ -1,6 +1,5 @@
 build/
 build-host/
-build-verify/
 *.elf
 *.uf2
 *.hex

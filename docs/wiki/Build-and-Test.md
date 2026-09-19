@@ -2,7 +2,7 @@
 
 ## 前提
 
-ボードは `pico2_w` 固定、Pico SDK 2.3.0 である (`AGENTS.md:7`)。`build/`、`build-verify/`、`build-host/`、`log/`、`*.uf2` は git 管理外であり、コミットしない (`AGENTS.md:7`)。`cmake` は PATH にないためフルパスで呼ぶ。MSVC が要るホスト試験は `vcvars64.bat` 初期化済み cmd から行う（素の PowerShell にはコンパイラがない）(`AGENTS.md:9,18`)。
+ボードは `pico2_w` 固定、Pico SDK 2.3.0 である (`AGENTS.md:7`)。`build/`、`build-host/`、`log/`、`*.uf2` は git 管理外であり、コミットしない (`AGENTS.md:7`)。`cmake` は PATH にないためフルパスで呼ぶ。MSVC が要るホスト試験は `vcvars64.bat` 初期化済み cmd から行う（素の PowerShell にはコンパイラがない）(`AGENTS.md:9,18`)。
 
 ## ファームウェアのビルド（PowerShell）
 
@@ -31,7 +31,7 @@ ctest --test-dir build-host -V
 
 上記は `AGENTS.md:18-23` の正準手順である。`ctest.exe` は cmake と同じディレクトリのものをフルパスで呼ぶ。単体実行は `ctest --test-dir build-host -R <protocol|usb|config> -V` である。MSVC には `/utf-8` が要る（日本語コメント、C4819 対策）。`tests/host/CMakeLists.txt` に設定済みであり、外さないこと (`AGENTS.md:24`)。
 
-試験の構成は 3 本立てである。`protocol`（CRC・parser・`frame_build`）、`usb`（pack・SPI 等）、`config`（dispatch の HELLO/PING/CONFIG→FX 写像・outbox・STATUS 組立・PLAYER_INFO 遷移）である。`config` は `test_config.c` + `protocol.c` + `dispatch.c` から作られる。現行 3/3 ALL PASS が全 sub-project の gate である (`docs/superpowers/specs/2026-09-15-uart-features-design.md:31,58-59`)。
+試験の構成は 6 本立てである。`protocol`（CRC・parser・`frame_build`）、`usb`（pack・SPI 等）、`config`（dispatch の HELLO/PING/CONFIG→FX 写像・outbox・STATUS 組立・PLAYER_INFO 遷移・RUMBLE 遷移）、`baud`（レート表・sweep・lock）、`pokecon`（PokeCon 行写像・quirk・不正行棄却）、`rumble`（復号・dispatch）である。現行 6/6 ALL PASS が全 sub-project の gate である (`docs/superpowers/specs/2026-09-15-uart-features-design.md:31,58-59`)。
 
 ## UF2 / log の運用規約
 

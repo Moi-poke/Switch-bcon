@@ -2,7 +2,7 @@
 
 SSOT は `spec/protocol_v3.md` である。ただし現ツリーは v4 移行中のため、本ページは「仕様書 v3 の記述＋コード上の v4 差分」を分けて記録する。仕様とコードが衝突した場合は仕様 + `src/proto/*` を正とする (`AGENTS.md:3`)。
 
-> 🚧 In-progress: コードは `PROTO_VER=0x04` だが (`src/proto/protocol.h:11`)、仕様書の表題はまだ `(v3 / PROTO_VER=3)` のままである (`spec/protocol_v3.md:1`)。v4 改訂（§4 表、`§5.7` 予約解除、新 `§5.8`、改訂履歴）は Plan A Task 9 の未着手項目である (`docs/superpowers/plans/2026-09-15-plan-a-telemetry-v4.md:384-404`)。
+> ✅ Done (2026-09-18, Commit C `2a3057c`): 仕様書は v4 文面である。Task 9 閉鎖。
 
 ## フレーム構成
 
@@ -43,8 +43,8 @@ SSOT は `spec/protocol_v3.md` である。ただし現ツリーは v4 移行中
 | `0x11` | HELLO_ACK | Pico→PC | 4 | 版応答・RESULT |
 | `0x20` | STATUS | Pico→PC | 7 | 状態・統計・errcode |
 | `0x21` | PONG | Pico→PC | 1 | PING 自身 seq をエコー |
-| `0x22` | RUMBLE | Pico→PC | 2 | 振動振幅。v3 仕様では予約・未送出 (`spec/protocol_v3.md:65`)。コードも現状は送出しない（下記） |
-| `0x23` | PLAYER_INFO | Pico→PC | 2 | v4 追加。ランプ＋フラグ。dispatch+配線済み、HW 裏取り待ち |
+| `0x22` | RUMBLE | Pico→PC | 2 | 振動振幅。v4で送出開始（変化時のみ）。復号式は実測接地（`src/proto/rumble.h`） |
+| `0x23` | PLAYER_INFO | Pico→PC | 2 | v4 追加。ランプ＋フラグ。dispatch+配線＋HW裏取り済み |
 | `0x30` | CAPTURE_START | PC→Pico | 1 | wake 取込開始・秒数 1-60 |
 | `0x31` | BEACON_START | PC→Pico | 0 | wake 再生（約 1.5s） |
 | `0x32` | COLOR_SET | PC→Pico | 12 | 本体色 RGB×4 |
@@ -54,7 +54,7 @@ SSOT は `spec/protocol_v3.md` である。ただし現ツリーは v4 移行中
 
 `proto_expected_len` が既知型の正確長を一元管理する。`T_PLAYER_INFO` は `return 2` が追加済みであり、未知 `0x24` は `-1` のままである (`src/proto/protocol.c:31-50`, `tests/host/test_config.c:160-164`)。
 
-> 🚧 In-progress: `T_RUMBLE` の LEN2 予約解除・送出開始、`T_PLAYER_INFO` の仕様書追記、`0x36 BAUD_SET` / `0x37 PERSONALITY_SET` は未実装である。設計書の新フレーム一覧が定義のみ先行している (`docs/superpowers/specs/2026-09-15-uart-features-design.md:16-23`)。CONFIG 拒否 ERRCODE の延長規則（`0x10+TYPE 下位`→`0x36` は `0x16`、`0x37` は `0x17`）も同設計書の定義段階である。
+> ✅ Done: `T_RUMBLE` 送出・`T_PLAYER_INFO` 仕様追記・`0x36 BAUD_SET` は実装＋HW実証済み（Commit B `7cc4cc9`）。`0x37` は `T_BOOTSEL`（開発用）に割当て済みのため、`PERSONALITY_SET` には別番号が必要（要所有者判断）。CONFIG 拒否 ERRCODE 延長規則（`0x16`・`0x17`）も実装済みである。
 
 ## STATE（`0x01`、LEN8）
 
@@ -77,25 +77,25 @@ SSOT は `spec/protocol_v3.md` である。ただし現ツリーは v4 移行中
 
 組立は純粋関数 `v3_pack_status` が担う。`flags/last_seq/err_crc(LE16)/err_drop(LE16)/errcode` の順である (`src/proto/dispatch.c:116-125`, `spec/protocol_v3.md:125-133`)。送信側 `send_status` は新鮮な HW 状態で flags を作る。USB mounted、Switch ready、timeout-neutral、WDT recovered、UART overrun、wired mode、BT connected、RUMBLE 受信ありの各 bit である (`src/main.c:361-386`)。
 
-各 bit の対応は `ST_USB_MOUNTED`、`ST_SWITCH_READY`、`ST_TIMEOUT_NEUTRAL`、`ST_WDT_RECOVERED`、`ST_UART_OVERRUN`、`ST_WIRED_MODE`、`ST_BT_CONNECTED`、`ST_RUMBLE_SEEN` である (`src/proto/protocol.h:81-90`)。bit7（前回 STATUS 以降の振動受信あり）は v3 仕様書にはなく、未コミット差分で追加されたものである。受信有無のみを示し、振幅値は含まない。
+各 bit の対応は `ST_USB_MOUNTED`、`ST_SWITCH_READY`、`ST_TIMEOUT_NEUTRAL`、`ST_WDT_RECOVERED`、`ST_UART_OVERRUN`、`ST_WIRED_MODE`、`ST_BT_CONNECTED`、`ST_RUMBLE_SEEN` である (`src/proto/protocol.h:81-90`)。bit7（前回 STATUS 以降の振動受信あり）は受信有無のみを示し、振幅値は含まない。
 
 ERRCODE は `0x00` 正常／`0x01` LEN 不正／`0x02` CRC 不一致／`0x03` SEQ 欠番／`0x04` UNSUPPORTED 版／`0x05` UART overrun／`0x06` parser overflow／`0x10-0x1F` CONFIG 拒否（`0x10+TYPE 下位`）である (`spec/protocol_v3.md:135`)。CONFIG 拒否コードは `cfg_err` が作る (`src/proto/dispatch.c:24-27`)。周期送信時の errcode は直近エラーを保持し、正常復帰後に 0 へ戻す (`spec/protocol_v3.md:136`, `src/main.c:527-529`)。
 
 `STATUS_REQ` は STATUS 即時返送に加え、PLAYER_INFO を付随送出する（outbox に両方積む）(`src/proto/dispatch.c:94-97`, `tests/host/test_config.c:120-132`)。即時 STATUS の errcode は `0x00` 扱いである (`spec/protocol_v3.md:150`)。
 
-## PLAYER_INFO（`0x23`、LEN2）— dispatch+配線済み、HW 裏取り待ち
+## PLAYER_INFO（`0x23`、LEN2）— dispatch+配線＋HW裏取り済み
 
 ペイロードは `[0]=player lamp byte（SUB `0x30` report[10] の写し）、[1]=flags（bit0=IMU on、bit1=vibration on）` である (`docs/superpowers/specs/2026-09-15-uart-features-design.md:19`)。
 
 実装の到達点は次の通り。`T_PLAYER_INFO=0x23` 列挙と LEN2 (`src/proto/protocol.h:28`, `src/proto/protocol.c:41`)、送信箱 `ACT_SEND_PLAYER_INFO` (`src/proto/dispatch.h:22`)、セッション欄（`player_lamp/player_flags/player_valid/player_sent_*/player_ever_sent`）(`src/proto/dispatch.h:58-61`)、変化検出 `v3_player_tick`（初回は無条件送出、以後は変化時のみ）(`src/proto/dispatch.c:103-114`)、`STATUS_REQ` 付随 (`src/proto/dispatch.c:94-97`)、hid 側の `probe_player_id`/`probe_player_seen`/`probe_imu_enabled`/`probe_vibration_enabled` 取得 (`src/bt/hid.c:328-366`, `src/bt/hid.h:36-39`)、tick 供給＋flush 送信 (`src/main.c:474-479,453-458`)、ホスト試験 (`tests/host/test_config.c:160-191`)。
 
-> 🚧 In-progress: HW 裏取りが未了である。`STATUS_REQ` 応答に `PLAYER_INFO (0x23, LEN2)` が含まれること、`[0]` が Switch のプレイヤーランプ表示と一致することの確認は HW バッチ手順の項目である (`docs/history/2026-09-15-wdt/hw-batch-2026-09-15.md:33-35`)。
+> ✅ Done (2026-09-18, Commit D `9915acf`): lamp=0x01/flags=0x03 を HW 確認（P-1/P-2/P-5）。P-3/P-4/P-6 は未検証残。
 
-## RUMBLE（`0x22`、LEN2）— 現状は計数のみ、振幅転送は駐車中
+## RUMBLE（`0x22`、LEN2）— 振幅転送中（実測接地）
 
-v3 仕様では予約であり送出しない。Switch 出力受信パーサの受け口のみ確保し、ACK 返送＋破棄する (`spec/protocol_v3.md:154`)。コードも現状はその通りで、BT `0x10` 受信は初回のみ log し、カウンタ `bcon_bt_rumble_n` を増やすだけである (`src/bt/hid.c:424-431`)。所有元は `main.c` であり (`src/bt/hid.h:60-62`, `src/main.c:101-102`)、STATUS bit7 の源になる (`src/main.c:378-382`)。
+v4 で送出する。復号は `src/proto/rumble.h`（HF 式＋LF 中立相対・per-motor max、実測ベクタ接地）、intake 蓄積（`src/bt/hid.c`）、`ACT_SEND_RUMBLE`＋変化時のみ送出、flush arm（`src/main.c`）で行う。
 
-> 🚧 In-progress: 振幅復号〜送出の連鎖（純粋復号器 `rumble.c`、intake 蓄積、`ACT_SEND_RUMBLE`、変化時のみ送出）は設計・計画済みだが、HW 振動キャプチャ待ちで駐車中である。復号式は捏造禁止であり、実ログの非ゼロ `A2 10` 行が 1 行以上必要である (`docs/superpowers/specs/2026-09-15-uart-features-design.md:28-31`, `docs/superpowers/plans/2026-09-15-plan-a-telemetry-v4.md:98-116`, `docs/history/2026-09-15-wdt/hw-batch-2026-09-15.md:20-24`)。`RUMBLE` を「送出中」と読めるのは HW 確認の後である。
+> ✅ Done (2026-09-18, Commit C `2a3057c`): 非ゼロ 4 種・3 強度段階の実測で接地。
 
 ## CONFIG（`0x30-0x35`）
 

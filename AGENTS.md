@@ -1,10 +1,10 @@
 # AGENTS.md
 
-SSOT is `spec/protocol_v3.md` (`PROTO_VER=3`). If spec conflicts with docs/history, trust spec + `src/proto/*`.
+SSOT is `spec/protocol_v3.md` (`PROTO_VER=4`). If spec conflicts with docs/history, trust spec + `src/proto/*`.
 
 ## Build
 
-Board is `pico2_w` fixed (Pico SDK 2.3.0). `build/`, `build-verify/`, `build-host/`, `log/`, `*.uf2` are git-ignored — never commit them.
+Board is `pico2_w` fixed (Pico SDK 2.3.0). `build/`, `build-host/`, `log/`, `*.uf2` are git-ignored — never commit them.
 
 Firmware (PowerShell; `cmake` is NOT on PATH, use full path):
 ```powershell
@@ -29,7 +29,7 @@ Single test: `ctest --test-dir build-host -R <protocol|usb|config> -V`. MSVC nee
 - `src/proto/` (`protocol.c`, `pack.c`, `spi.c`, `dispatch.c`): Pico/BTstack-independent, host-testable. `dispatch.h` is pure: returns `FX_*` effects + `ACT_*` outbox; all HW side effects (Flash/TLV/BT/UART-TX) live in `main.c`. Keep it that way.
 - `src/usb/` (TinyUSB wired ProCon) vs `src/bt/` (Classic BT + BLE wake capture): never include `tusb.h` and `btstack.h` in the same TU — `hid_report_type_t` double-defines (see `docs/poc_dualcore_result.md`).
 - UART wiring: log = UART0 GP0/1 @115200; data = UART1 GP4/5 @1Mbps 8N1, no flow control. FTDI recommended, latency timer 1ms.
-- Protocol basics: binary-only (no ASCII), frame `[SYNC=0xAB][TYPE][LEN][PAYLOAD][SEQ][CRC8/SMBUS over TYPE..SEQ]`; STATE = `0x01` LEN8 = BTN u32-LE (VIIPER order, 22 bits, reserved bits send 0 / receive-ignore) + 4 stick bytes, no HAT; SEQ counters are per-direction mod256. PC sender (`src/poc_dualcore/poc_send.py`, PoC-only) does one `write()` per frame.
+- Protocol basics: binary-first (v3 frames default; PokeCon ASCII-line mode is build-flag selected), frame `[SYNC=0xAB][TYPE][LEN][PAYLOAD][SEQ][CRC8/SMBUS over TYPE..SEQ]`; STATE = `0x01` LEN8 = BTN u32-LE (VIIPER order, 22 bits, reserved bits send 0 / receive-ignore) + 4 stick bytes, no HAT; SEQ counters are per-direction mod256. PC sender (`src/poc_dualcore/poc_send.py`, PoC-only) does one `write()` per frame.
 
 ## Gotchas
 
@@ -38,4 +38,4 @@ Single test: `ctest --test-dir build-host -R <protocol|usb|config> -V`. MSVC nee
 - Secrets: never print LTK/link-key bytes to logs/docs (`hci_dump` is temp-diagnosis only). Peer BD_ADDR is OK.
 - `C:\Users\moilo\pico-wakecon` is reference-only, do not modify.
 - History/diagnostics: `docs/history/2026-09-15-wdt/README.md` is the index for BT/WDT trials (UF2 + `log/COM3_*.txt` correspondence); `docs/poc_dualcore_result.md` records the dual-core adoption evidence.
-- HW talk: `opencode.json` provides `serial` MCP (`uvx --from pyserial-mcp serial-mcp`); `src/poc_dualcore/poc_send.py` has `--hello/--ping/--sweep` modes for HELLO/PING/button checks.
+- HW talk: `opencode.json` provides `serial` MCP (`uvx --from pyserial-mcp serial-mcp`); `src/poc_dualcore/poc_send.py` has `--hello/--ping/--sweep/--hold12/--sweep12/--break_/--probe-ladder/--bootsel/--key-delete` modes.

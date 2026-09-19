@@ -35,7 +35,7 @@
 - SUB 群：`SUB=0x..` 行が Switch→Pico 方向サブコマンドの到達証拠である (`src/bt/hid.c:397-410`)。AB1 勝利ログ（`log/COM3_2026_09_14.22.32.18.050_ab1.txt`、680KB）は SUB フル完走×2 セッションの証拠である
 - 旧死亡パターン：`hid open done`→（tick/cansend/TX）→沈黙→バナー `wdt=1`。`0x66` は `linkkey req`→`hid open FAIL 0x66`→`auth complete 0x05`（基本 outgoing 発）。stall は `conn ok`→`disc 0x05` 約 80ms・SSP なし。現行（4:04 以降）は open→約 1 秒無言→Switch が切断（`0x13`）→BCON 継続（死亡なし）である (`docs/handoff_bt_20260914.md:46-52`)
 - 認証：`auth complete status=0x..` が成功/失敗を示す。失敗時は鍵を捨てて再ペアに回す (`src/main.c:804-817`)
-- RUMBLE：`RUMBLE 0x10 intake` は初回のみ出し、以後は計数のみである (`src/bt/hid.c:424-431`)
+- RUMBLE：`0x10` 受信は復号・蓄積し、変化時に `0x22` で送出する。振幅式は実測接地である (`src/proto/rumble.h`, `src/bt/hid.c:424-431`)
 - 中立化：`timeout-neutral` は 200ms 無受信の全解放であり、WDT とは別機構である (`src/main.c:547`)
 - 鍵削除：`keys deleted (classic + host tag)` は `FX_KEY_DELETE` の発火証拠である (`src/main.c:414`)。死亡前ログ全域にゼロ件なら `FX_KEY_DELETE` 否定の根拠になる
 - 秘密厳守：link-key・LTK バイトは出さない。peer BD_ADDR 程度は可 (`src/main.c:770-777,795-803`)

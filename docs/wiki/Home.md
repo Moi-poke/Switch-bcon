@@ -6,11 +6,11 @@ switch-bcon は Raspberry Pi Pico 2 W 上で動くファームウェアである
 
 ## 状態バッジ（文字版、2026-09-15 時点）
 
-- プロトコル: `PROTO_VER=0x04` へ移行中。仕様書の表題はまだ v3 のまま (`src/proto/protocol.h:11`, `spec/protocol_v3.md:1`)
+- プロトコル: v4 完了（`PROTO_VER=0x04`、仕様書 v4 文面、Commit C）(`src/proto/protocol.h:11`, `spec/protocol_v3.md:1`)
 - SUB 到達問題: 解決済み（SNIFF 受容が必須条件。AB1 勝利 2/2、AB5 敗北 4/4）([Bluetooth](Bluetooth.md))
-- WDT 問題: 原因ほぼ特定（BT 動作中の Flash 書込→約 2.0 秒後に WDT）。恒久修正は設計のみ、HW 判定待ち ([Flash-and-Persistence](Flash-and-Persistence.md), [Troubleshooting](Troubleshooting.md))
-- RUMBLE 振幅転送: 駐車中（HW 振動キャプチャ待ち）([Roadmap](Roadmap.md))
-- 仕様書 v4 改訂: 未着手（Plan A Task 9）([Roadmap](Roadmap.md))
+- WDT 問題: 解決済み（Death-B＝入れ子 flash 機序を外側除去＋guard で修正、HW 検証 PASS。quiesced worker は別案のまま未採用）([Flash-and-Persistence](Flash-and-Persistence.md), [Troubleshooting](Troubleshooting.md))
+- RUMBLE 振幅転送: 転送中（HW 実測接地、Commit C）([Roadmap](Roadmap.md))
+- 仕様書 v4 改訂: 完了（Commit C）([Roadmap](Roadmap.md))
 
 ## ページ索引
 
@@ -21,7 +21,7 @@ switch-bcon は Raspberry Pi Pico 2 W 上で動くファームウェアである
 - [Bluetooth](Bluetooth.md) — 将来の personality 作業に向けた identity 接触点、SNIFF 要件、ペアリング/非ボンディング動作、再接続設計
 - [Troubleshooting](Troubleshooting.md) — WDT 署名と SUB 症状の見分け方、ログ読解ガイド、よくある落とし穴
 - [Glossary](Glossary.md) — SUB/BCON/TLV/SNIFF/FX/ACT/死亡 A/B などの用語集
-- [Roadmap](Roadmap.md) — 駐車中の項目（rumble 連鎖、spec v4 改訂、quiesced worker 承認、personality 基盤、ボーレート Plan B）
+- [Roadmap](Roadmap.md) — 完了項目の記録（rumble 連鎖、spec v4 改訂、ボーレート Plan B）と将来項目（quiesced worker 承認、personality 基盤）
 
 ## Reproduce path（AI向け読順）
 
@@ -37,7 +37,7 @@ switch-bcon は Raspberry Pi Pico 2 W 上で動くファームウェアである
 
 ## 関連 SSOT・索引への入口
 
-- プロトコル SSOT: `spec/protocol_v3.md`（表題 v3、コードは v4 移行中という乖離に注意）
+- プロトコル SSOT: `spec/protocol_v3.md`（v4 文面。旧版乖離の注意は解消済み）
 - 運用 SSOT: `AGENTS.md`（ビルド手順、アーキテクチャ、gotcha）
 - BT/WDT 来歴索引: `docs/history/2026-09-15-wdt/README.md`、検証状態 `docs/history/2026-09-15-wdt/verification-status.md`、時系列 `docs/history/2026-09-15-wdt/trial-history.md`
 - UART 機能拡張設計: `docs/superpowers/specs/2026-09-15-uart-features-design.md`、実装計画 `docs/superpowers/plans/2026-09-15-plan-a-telemetry-v4.md`
