@@ -4,16 +4,16 @@
 
 ## identity 接触点（将来の personality 作業用）
 
-> 🚧 In-progress: 機種偽装基盤（personality テーブル、`PERSONALITY_SET 0x37`、再起動適用）は設計のみであり未実装である。Phase C-0（spike、接触点の列挙）が設計入力として指定されている (`docs/superpowers/specs/2026-09-15-uart-features-design.md:52-54`)。下表は現行 ProCon 値の所在を示すものであり、変更手順ではない。なお `0x37` は `T_BOOTSEL`（開発用）に割当て済みのため、`PERSONALITY_SET` には別番号が必要（要所有者判断）。
+> 🚧 In-progress: 機種偽装基盤（personality テーブル、`PERSONALITY_SET 0x37`、再起動適用）は設計のみで未実装であり、変更手順ではない。下表は現行 ProCon 値の所在を示すものであり、Phase C-0（spike、接触点の列挙）の設計入力として指定されている (`docs/superpowers/specs/2026-09-15-uart-features-design.md:52-54`)。なお `0x37` は `T_BOOTSEL`（開発用）に割当て済みのため、`PERSONALITY_SET` には別番号が必要（要所有者判断）。
 
 | 接触点 | 所在 | 値・内容 |
 |---|---|---|
-| BT 識別情報（CoD・VID/PID・記述子・名前） | `src/bt/switch_hid.h:59-76` | `SWITCH_VENDOR_ID 0x057E`、 `SWITCH_PRODUCT_ID 0x2009`、版 `0x0001`、OUI `7c:bb:8a`、GAP 名 `Pro Controller` (`src/bt/switch_hid.h:59-76` 付近の定義群。grep で確認) |
+| BT 識別情報（CoD・VID/PID・記述子・名前） | `src/bt/switch_hid.h:59-76` | `SWITCH_VENDOR_ID 0x057E`、`SWITCH_PRODUCT_ID 0x2009`、版 `0x0001`、CoD `0x2508`、OUI `7c:bb:8a`、GAP 名 `Pro Controller`、HID 名 `Wireless Gamepad` |
 | 自 MAC 生成 | `src/bt/link_conn.c:14-24` | OUI 固定＋基板 unique ID 下 3B。bump なし安定 MAC が proven 組合せである旨の注記付き |
 | GAP 名・クラス・SDP | `src/main.c:1500-1501,1514-1527` | `gap_set_class_of_device`、`gap_set_local_name(SWITCH_GAP_NAME)`、HID/PNP の SDP 登録。HID パラメタは `hid_params` で初期化 (`src/main.c:1370-1376,1514-1527`) |
 | report builder 群 | `src/bt/hid.c:283-449` | SUB 応答 `answer_subcmd`、入力 report 送出、振動 intake。SUB `0x30` で `probe_player_id` 取得、SUB `0x31` で応答に使用 (`src/bt/hid.c:334-345`) |
 | SPI 応答（色・シリアル） | `src/proto/spi.c`、`src/proto/spi.h` | ProCon SPI フラッシュの中身。移植元は pico-wakecon (`src/proto/spi.h:4`) |
-| USB 側 VID/PID/文字列 | `src/usb/usb_descriptors.c:21,176` | `idVendor 0x057E`、製品名 `Pro Controller`（grep で確認） |
+| USB 側 VID/PID/文字列 | `src/usb/usb_descriptors.c:21,176` | `idVendor 0x057E`、`idProduct 0x2009`、製品名 `Pro Controller`（grep で確認） |
 
 自 MAC は起動時に印字される (`src/main.c:1397-1399`)。無線再投入で transport の MAC が既定に戻るため、`link_radio_update` の電源再投入時は `hci_set_bd_addr(probe_addr)` を掛け直す。掛けないと別機器扱いになり再接続できない (`src/bt/link_conn.c:128-131`)。
 
@@ -25,9 +25,9 @@
 
 ## SNIFF 要件（SUB 到達の必須条件）
 
-Switch 2 は SNIFF 受容なしでは HID open 後に SUB を送らず、約 1 秒で `0x13` 切断する。AB1（link-policy 1 行変更）で SUB フル完走×2 セッション・切断ゼロ、AB5（BUMP のみ・SNIFF OFF のまま）で open→SUB なし→`0x13` を×4 反復・SUB ゼロ件であり、単一変数分離は clean である (`docs/history/2026-09-15-wdt/verification-status.md:14-19`, `docs/history/2026-09-15-wdt/trial-history.md:16-18`)。
+Switch 2 は SNIFF 受容なしでは HID open 後に SUB を送らず、約 1 秒で `0x13` 切断する。AB1（link-policy 1 行変更）で SUB フル完走 2/2・切断ゼロである。AB5（BUMP のみ・SNIFF OFF のまま）で open→SUB なし→`0x13` を 4/4 反復・SUB ゼロ件であり、単一変数分離は clean である (`docs/history/2026-09-15-wdt/verification-status.md:14-19`, `docs/history/2026-09-15-wdt/trial-history.md:16-18`)。
 
-コードは既定で SNIFF を有効化する。`gap_set_default_link_policy_settings` に `ROLE_SWITCH | SNIFF_MODE` を渡す (`src/main.c:1504-1505`)。コメントにも AB1 proven の旨が記録されている。SNIFF 突入自体は無害であり、AB1 ログに `MODE_CHANGE` 6 回＋完走、W6 生存セッションに 3 回＋30 秒生存があるため「SNIFF 突入が殺す」説は棄却済みである (`docs/history/2026-09-15-wdt/verification-status.md:39-41`)。
+コードは既定で SNIFF を有効化し、`gap_set_default_link_policy_settings` に `ROLE_SWITCH | SNIFF_MODE` を渡す (`src/main.c:1504-1505`)。コメントにも AB1 proven の旨が記録されている。SNIFF 突入自体は無害であり、AB1 ログに `MODE_CHANGE` 6 回＋完走、W6 生存セッションに 3 回＋30 秒生存があるため「SNIFF 突入が殺す」説は棄却済みである (`docs/history/2026-09-15-wdt/verification-status.md:39-41`)。
 
 ## ペアリング / 非ボンディング動作
 

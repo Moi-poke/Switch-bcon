@@ -1,14 +1,16 @@
 # switch-bcon 開発者Wiki — Home
 
-switch-bcon は Raspberry Pi Pico 2 W 上で動くファームウェアである。PC からの UART 入力を Nintendo Switch 1 向け Pro Controller 入力に変換し、有線 USB-HID または Classic Bluetooth で Switch に届ける。BLE は wake 取込・再生専用であり、Switch 2 の BLE 入力エミュレーションは対象外である (`spec/protocol_v3.md:5`)。
+switch-bcon は Raspberry Pi Pico 2 W 上で動くファームウェアである。
+PC からの UART 入力を Nintendo Switch 1 向け Pro Controller 入力に変換し、有線 USB-HID または Classic Bluetooth で Switch に届ける。
+BLE は wake 取込・再生専用であり、Switch 2 の BLE 入力エミュレーションは対象外である (`spec/protocol_v3.md:5`)。
 
-この Wiki の初版は HEAD `c366bf4` + 未コミット作業時点のツリーを記録する。プロトコル仕様書の SSOT は `spec/protocol_v3.md` であり、仕様と他文書が衝突した場合は仕様 + `src/proto/*` を正とする (`AGENTS.md:3`)。
+この Wiki の初版は未コミット作業時点のツリーを記録したものである。プロトコル仕様書の SSOT は `spec/protocol_v3.md` である。仕様と他文書が衝突した場合は、仕様 + `src/proto/*` を正とする (`AGENTS.md:3`)。
 
 ## 状態バッジ（文字版、2026-09-19 時点）
 
 - プロトコル: v4 完了（`PROTO_VER=0x04`、仕様書 v4 文面、Commit C）(`src/proto/protocol.h:11`, `spec/protocol_v3.md:1`)
 - SUB 到達問題: 解決済み（SNIFF 受容が必須条件。AB1 勝利 2/2、AB5 敗北 4/4）([Bluetooth](Bluetooth.md))
-- WDT 問題: 解決済み（Death-B＝入れ子 flash 機序を外側除去＋guard で修正、HW 検証 PASS。quiesced worker は別案のまま未採用）([Flash-and-Persistence](Flash-and-Persistence.md), [Troubleshooting](Troubleshooting.md))
+- WDT 問題: 解決済み（Death-B＝入れ子 flash 機序を外側除去＋guard で修正、HW 検証 PASS。quiesced worker は不採用確定）([Flash-and-Persistence](Flash-and-Persistence.md), [Troubleshooting](Troubleshooting.md))
 - RUMBLE 振幅転送: 完了（HW 実測接地、Commit C `2a3057c`）([Roadmap](Roadmap.md))
 - 仕様書 v4 改訂: 完了（Commit C）([Roadmap](Roadmap.md))
 
@@ -23,9 +25,11 @@ switch-bcon は Raspberry Pi Pico 2 W 上で動くファームウェアである
 - [Glossary](Glossary.md) — SUB/BCON/TLV/SNIFF/FX/ACT/死亡 A/B などの用語集
 - [Roadmap](Roadmap.md) — 完了項目の記録（rumble 連鎖、spec v4 改訂、ボーレート Plan B）と将来項目（personality 基盤）、および非採用の quiesced worker（Death-B は外側除去で修正済み）
 
-## Reproduce path（AI向け読順）
+## Reproduce path（読順）
 
-等価ファームを再構築するAIは次の順で読む。`spec/protocol_v3.md` → [References](References.md)（R1–R8→G1–G6の順で公開解析リポジトリに当たる） → [Protocol](Protocol.md)（フレーム→写像→レポート配置→ハンドシェイク） → [Architecture](Architecture.md)（tick順）・[Bluetooth](Bluetooth.md)（identity接触点）・[Flash-and-Persistence](Flash-and-Persistence.md)（TLV差分） → `docs/history/2026-09-15-wdt/README.md`・`trial-history.md`・`verification-status.md`（AB1/AB5・W0–W8の証拠対応）。値は必ずin-repoのfile:lineと公開資料の両方で裏取りし、欠値は捏造せずG1–G6に積む。
+初回はspec→Protocol→Architectureまで読めば最低限である。
+人間は概要把握が目的であり、再構築手順をたどる必要はない。
+等価ファームを再構築するAIは次の順で読む。まず `spec/protocol_v3.md` → [References](References.md)（R1–R8→G1–G6の順で公開解析リポジトリに当たる） → [Protocol](Protocol.md)（フレーム→写像→レポート配置→ハンドシェイク）の順に通読する。続いて [Architecture](Architecture.md)（tick順）・[Bluetooth](Bluetooth.md)（identity接触点）・[Flash-and-Persistence](Flash-and-Persistence.md)（TLV差分）で実装対応を確認する。最後に `docs/history/2026-09-15-wdt/README.md`・`trial-history.md`・`verification-status.md`（AB1/AB5・W0–W8の証拠対応）に当たる。値は必ずin-repoのfile:lineと公開資料の両方で裏取りし、欠値は捏造せずG1–G6に積む。
 
 ## 運用ルール（全ページ共通）
 
@@ -42,3 +46,6 @@ switch-bcon は Raspberry Pi Pico 2 W 上で動くファームウェアである
 - BT/WDT 来歴索引: `docs/history/2026-09-15-wdt/README.md`、検証状態 `docs/history/2026-09-15-wdt/verification-status.md`、時系列 `docs/history/2026-09-15-wdt/trial-history.md`
 - UART 機能拡張設計: `docs/superpowers/specs/2026-09-15-uart-features-design.md`、実装計画 `docs/superpowers/plans/2026-09-15-plan-a-telemetry-v4.md`
 - 恒久修正設計: `docs/history/2026-09-15-wdt/plans/quiesced-worker-design.md`、HW バッチ手順 `docs/history/2026-09-15-wdt/hw-batch-2026-09-15.md`
+
+最終更新日: 2026-09-20。
+解決しない疑問は関連SSOTの指す文書の来歴に当たる。
