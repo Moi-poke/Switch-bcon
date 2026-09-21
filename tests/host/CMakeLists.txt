@@ -60,6 +60,45 @@ add_executable(test_rumble
 )
 target_include_directories(test_rumble PRIVATE ../../src/proto)
 
+add_executable(test_personality
+  test_personality.c
+  ../../src/proto/protocol.c
+  ../../src/proto/pack.c
+  ../../src/bt/personality.c
+  ../../src/usb/usb_hid.c
+)
+target_include_directories(test_personality PRIVATE
+  ../../src/proto
+  ../../src/bt
+  ../../src/usb
+)
+
+add_executable(test_joy_scopeA
+  test_joy_scopeA.c
+  ../../src/proto/protocol.c
+  ../../src/proto/pack.c
+  ../../src/bt/personality.c
+  ../../src/usb/usb_hid.c
+)
+target_include_directories(test_joy_scopeA PRIVATE
+  ../../src/proto
+  ../../src/bt
+  ../../src/usb
+)
+
+add_executable(test_joy_scopeB
+  test_joy_scopeB.c
+  ../../src/proto/protocol.c
+  ../../src/proto/pack.c
+  ../../src/bt/personality.c
+  ../../src/usb/usb_hid.c
+)
+target_include_directories(test_joy_scopeB PRIVATE
+  ../../src/proto
+  ../../src/bt
+  ../../src/usb
+)
+
 enable_testing()
 add_test(NAME protocol COMMAND test_protocol)
 add_test(NAME usb COMMAND test_usb)
@@ -67,3 +106,6 @@ add_test(NAME config COMMAND test_config)
 add_test(NAME baud COMMAND test_baud)
 add_test(NAME pokecon COMMAND test_pokecon)
 add_test(NAME rumble COMMAND test_rumble)
+add_test(NAME personality COMMAND test_personality)
+add_test(NAME joy_scopeA COMMAND test_joy_scopeA)
+add_test(NAME joy_scopeB COMMAND test_joy_scopeB)
