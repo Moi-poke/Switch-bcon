@@ -293,6 +293,47 @@ int main(void) {
               s.rumble_sent_r == 20, "after drain -> queued + sent updated");
     }
 
+    printf("[22] EMULATE_MODE 0/1/2 only (else 0x18)\n");
+    v3_session_init(&s);
+    {
+        const uint8_t procon[] = { 0x00 };
+        const uint8_t joyl[] = { 0x01 };
+        const uint8_t joyr[] = { 0x02 };
+        const uint8_t bad[] = { 0x03 };
+        CHECK(proto_expected_len(T_EMULATE_MODE) == 1, "EMULATE_MODE LEN=1");
+        CHECK(T_EMULATE_MODE == 0x38, "EMULATE_MODE TYPE=0x38");
+        CHECK(EMUL_ROLE_PROCON == 0 && EMUL_ROLE_JOY_L == 1 &&
+              EMUL_ROLE_JOY_R == 2, "EMUL roles 0/1/2");
+        CHECK(v3_on_frame(&s, T_EMULATE_MODE, procon, 1, 1) == V3_IGNORE &&
+              s.fx == FX_EMULATE_MODE && s.fx_arg == 0 && s.emulate_val == 0,
+              "EMULATE=0 (ProCon) accepted");
+        CHECK(v3_on_frame(&s, T_EMULATE_MODE, joyl, 1, 2) == V3_IGNORE &&
+              s.fx == FX_EMULATE_MODE && s.fx_arg == 1 && s.emulate_val == 1,
+              "EMULATE=1 (JoyL) accepted");
+        CHECK(v3_on_frame(&s, T_EMULATE_MODE, joyr, 1, 3) == V3_IGNORE &&
+              s.fx == FX_EMULATE_MODE && s.fx_arg == 2 && s.emulate_val == 2,
+              "EMULATE=2 (JoyR) accepted");
+        CHECK(v3_on_frame(&s, T_EMULATE_MODE, bad, 1, 4) == V3_IGNORE &&
+              s.errcode == 0x18 && s.fx == FX_NONE, "EMULATE=3 rejected (0x18)");
+        CHECK(v3_on_frame(&s, T_EMULATE_MODE, procon, 0, 5) == V3_IGNORE &&
+              s.errcode == ERR_BAD_LEN, "LEN=0 rejected (BAD_LEN)");
+        CHECK(FW_MINOR == 2, "FW_MINOR==2");
+    }
+
+    printf("[23] EMULATE intent is reboot-applied (role latch proof)\n");
+    v3_session_init(&s);
+    {
+        const uint8_t joyl[] = { 0x01 };
+        /* Blocker 4, latch proof by construction: dispatch only records the
+         * FX_EMULATE_MODE intent (pinned here); main.c exec_fx persists it
+         * and arms s_reboot_at (+500ms, main.c:815-832); usb_set_role runs
+         * once pre-enumeration (usb_hid.h). A mid-session persona switch is
+         * therefore impossible — no runtime guard needed. */
+        CHECK(v3_on_frame(&s, T_EMULATE_MODE, joyl, 1, 1) == V3_IGNORE &&
+              s.fx == FX_EMULATE_MODE && s.fx_arg == 1 && s.emulate_val == 1,
+              "EMULATE=1 -> FX_EMULATE_MODE reboot-path intent");
+    }
+
     printf("\nRESULT: %s (%d failures)\n", fails == 0 ? "ALL PASS" : "HAS FAILURES", fails);
     return fails;
 }
