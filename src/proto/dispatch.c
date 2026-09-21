@@ -119,6 +119,16 @@ v3_live_t v3_on_frame(v3_session_t *s, uint8_t type,
             ob_push(s, ACT_SEND_STATUS, 0);
             return V3_IGNORE;
         }
+        case T_EMULATE_MODE: {
+            uint8_t v;
+            if (len != 1 || payload == NULL) { s->errcode = ERR_BAD_LEN; return V3_IGNORE; }
+            v = payload[0];
+            if (v > 2u) { s->errcode = cfg_err(type); return V3_IGNORE; }
+            s->emulate_val = v;
+            s->fx = FX_EMULATE_MODE;
+            s->fx_arg = v;
+            return V3_IGNORE;
+        }
         default:
             return V3_IGNORE;
     }
