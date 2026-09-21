@@ -1,6 +1,10 @@
 /* 移植元: pico-wakecon src/usb_hid.c (応答バイト同一。帰属は usb_hid.h 参照)。
  * 変更点: util_pack_stick_12bit → pack_stick_12bit (src/proto/pack.c)。
  * 日本語コメントは残す。でたらめ値は返さない。 */
+/* [PABot-ref]
+ * 一部のUSB応答はPABotBase2で観測された応答を参考に同等機能を実装している。
+ * 互換製品であることや完全一致を主張するものではない。
+ * 文中の [PABot-ref] はこの注記への参照。 */
 #include <string.h>
 #include "usb_hid.h"
 #include "spi.h"
@@ -131,10 +135,8 @@ int usb_build_81_reply(const uint8_t *req, int req_len, uint8_t *out,
     memset(out, 0, 64);
     switch (sub) {
         case 0x01u:
-            /* 81 01 00 <type> <mac6> + 0 埋め。
-             * PABot parity: type は全 role 0x03 (live Joy-L capture 通り。
-             * 列挙 identity であり role 表現ではない)。dev_type 引数は
-             * 0x01 系では使わない (0x02 応答・kick 判定側は従来通り)。 */
+            /* 81 01 00 <type> <mac6> + 0 埋め。type は全 role 0x03 [PABot-ref]。
+             * dev_type 引数は 0x01 系では使わない (0x02 応答・kick 判定側は従来通り)。 */
             out[0] = 0x81u; out[1] = 0x01u; out[2] = 0x00u;
             out[3] = 0x03u;
             (void)dev_type;
@@ -174,12 +176,10 @@ void usb_pack_controller_data(uint8_t out12[12], const usb_sub_ctx_t *ctx)
     rx = (role == 1u) ? 0x800u : ctx->rx;
     ry = (role == 1u) ? 0x800u : ctx->ry;
     out12[0] = ctx->timer;
-    /* 電池・接続バイト: PABot parity で全 role 0x91 (live capture に 0x97
-     * は現れない。旧 dekuNukem 準拠の Joy=JC (0x97) は廃止)。 */
+    /* 電池・接続バイト: 全 role 0x91 [PABot-ref]。 */
     out12[1] = 0x91u;
     out12[2] = b3[0];
-    /* PABot parity: Joy は b3[1] 素通し (forced 0x80 bit なし。live capture
-     * の idle は 0x00)。ProCon は従来通り |0x80 (Golden で pin 留め)。 */
+    /* Joy は b3[1] 素通し [PABot-ref]。ProCon は従来通り |0x80 (Golden で pin 留め)。 */
     out12[3] = (role == 0u) ? (uint8_t)(b3[1] | 0x80u) : b3[1];
     /* B2 マスクは role 条件付き: JoyL (role1) の輸送 B2 は SL/SR (b4/b5 =
      * 0x30) を含むため素通し。role0/2 は従来通り &0xCF で role0 バイト同一。
@@ -202,9 +202,7 @@ int usb_build_30_report(const usb_sub_ctx_t *ctx, uint8_t out64[64])
     out64[0] = 0x30u;
     usb_pack_controller_data(&out64[1], ctx);
     if (role != 0u) {
-        /* PABot parity: Joy 0x30 は vib [12]=0x00・IMU 36B ゼロ (live
-         * capture 通り。0x21 共通 12B ヘッダは共有のまま)。
-         * 報告長・形状は不変 (ID + 12B + 36B + 15B)。 */
+        /* Joy 0x30 は vib [12]=0x00・IMU 36B ゼロ [PABot-ref]。報告長・形状は不変。 */
         out64[12] = 0x00u;
         return 64;
     }
@@ -269,7 +267,7 @@ static void usb_mac_ascii(char *dst12, const uint8_t mac[6])
 
 /* 0x02 機器情報本文。role0 は従来バイトと同一 (fw 03 48・straight MAC・
  * byte11 0x02。BT の 03 8B ではない)。
- * PABot parity: Joy (role!=0) は fw 04 33・MAC バイト反転・byte11 0x01
+ * Joy (role!=0) は fw 04 33・MAC バイト反転・byte11 0x01 [PABot-ref]
  * (live Joy-L bytes: 82 02 04 33 01 02 <mac6-reversed> 01 01 00)。
  * dev_type (out[17]) のみ全 role で role 依存のまま (03/01/02)。 */
 static void build_device_info_response(uint8_t *out, uint8_t role,
@@ -334,7 +332,7 @@ static int build_spi_response_procon(uint16_t addr, uint8_t want, uint8_t *out)
 /* Joy SPI 応答 (provisional)。header framing 済みを前提とし out[20..] を埋める。
  * 判定順: 6050/601B exact 例外 → 0x6000 常に 0xFF serial-none (両 role。
  * 0x6000 は表エントリでもあるため table-hit より先) → spi_find hit かつ
- * want<=size は表値 (Change A で NEW) → 0x6086 は 0xFF (PABot parity。
+ * want<=size は表値 (Change A で NEW) → 0x6086 は 0xFF ([PABot-ref]。
  * 共有表に加えず Joy 側のみ) → in-range blank ゼロ → else FF+ACK。
  * USB-transport divergence (BT Joy は full-blank のまま): 有線 init は
  * 6020/6080/603D/6086 を厳密に読み、ゼロは検証落ちの恐れがある
@@ -391,7 +389,7 @@ static int build_spi_response_joy(uint16_t addr, uint8_t want, uint8_t *out)
         }
     }
     if (addr == 0x6086u) {
-        /* PABot parity: 6086 は 0xFF fill (live capture T14 通り)。
+        /* 6086 は 0xFF fill [PABot-ref]。
          * 共有表には加えない (BT 影響回避。BT Joy は blank のまま)。 */
         memset(&out[20], 0xFF, want);
         return 64;
@@ -435,7 +433,7 @@ int usb_build_21_reply(const uint8_t *req, int req_len, uint8_t *out,
     memset(out, 0, 64);
     out[0] = 0x21u;
     usb_pack_controller_data(&out[1], ctx);
-    /* PABot parity: Joy 0x21 の vib バイトは 0x00 (live capture 通り)。
+    /* Joy 0x21 の vib バイトは 0x00 [PABot-ref]。
      * 共有 12B ヘッダは 0x09 のまま (0x30 側は build_30_report が Joy を
      * 0x00 化済み)。ProCon は 0x09 のまま。 */
     if (((ctx->role <= 2u) ? ctx->role : 0u) != 0u) {
