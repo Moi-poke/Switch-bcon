@@ -38,9 +38,11 @@
 #include "pokecon.h"
 #include "spi.h"
 #include "usb_wired.h"
+#include "usb_hid.h" // usb_set_role (dep-free header, no tusb/btstack)
 #include "bt/hid.h"
 #include "bt/link.h"
 #include "bt/store.h"
+#include "bt/personality.h"
 #include "bt/cap.h"
 #include "bt/switch_hid.h"
 #include "bt/bt_compat.h"
@@ -121,6 +123,8 @@ uint32_t bcon_bt_rumble_n;
 static v3_session_t g_vs;
 static uint8_t g_tx_seq; // Pico->PC 方向SEQ (方向独立・mod256)
 static bool s_wired = true;
+static uint8_t s_emulate; // emulate-role (EMUL_ROLE_* in protocol.h)。
+                          // TLV永続・再起動適用。既定0=ProCon (personality row 0)。
 static bool s_baud_tx_ok; // hunt確定までUART1 TX抑制 (B-0)。起動時に初期化。
 static bool s_baud_was_locked; // re-hunt行の検出用 (起動時に初期化)。
 static uint32_t s_boot_baud; // 起動baud (ready表示用。BCBR/sweep解決済み)。
@@ -808,6 +812,25 @@ static void exec_fx(uint32_t now_ms) {
                          : "WIRED_MODE=0 -> reboot to wireless");
             break;
         }
+        case FX_EMULATE_MODE: {
+            uint8_t role = g_vs.fx_arg;
+            char el[40];
+            if (role == s_emulate) {
+                break; // 変化なし。再起動しない。
+            }
+            s_emulate = role;
+            store_emulate(role);
+            // STATE ingestはrole非依存u32のまま; roleはCore0 pack/output
+            // (poll_tickの素u32保持→hid.cのrole pack) のみに効く。
+            // cross-core handoffなし。BTstack/CYW43/descriptorが起動時確定の
+            // ため再起動適用 (WIRED_MODEと同型)。usb/link呼出はしない。
+            // 同一tickのoutbox flush後に落ちるよう500ms猶予。
+            s_reboot_at = now_ms + 500u;
+            snprintf(el, sizeof(el), "EMULATE=%u -> reboot to apply",
+                     (unsigned)role); // role idのみ (MAC/LTKは出さない)
+            probe_line(el);
+            break;
+        }
         case FX_BAUD_SET: {
             // B §3: ACK (STATUS) はdispatch時にqueue済みで旧rate送信。
             // ここではCore1への切替要求のみ (実行・復帰はCore1)。
@@ -1006,6 +1029,9 @@ static void poll_tick(uint32_t now) {
     probe_ly = cp.state.ly;
     probe_rx = cp.state.rx;
     probe_ry = cp.state.ry;
+    // BT送出はhid.cで素u32＋roleからpackする (role0はctrl_pack_btn3委譲で同一)。
+    // STATE ingest自体はrole非依存 (Core1はu32のまま格納)。
+    probe_procon_u32 = cp.state.buttons;
 
     // STATE到着追跡＋timeout-neutral (200ms。spec §8)。
     advanced = (cp.frames != s_last_frames);
@@ -1077,7 +1103,7 @@ static uint32_t pm_rd(void)
 }
 
 static void stats_print(void) {
-    char line[224];
+    char line[384];
     usb_wired_stats_t ws;
     bcon_shared_t cp;
     mutex_enter_blocking(&g_m);
@@ -1088,8 +1114,9 @@ static void stats_print(void) {
              "BCON t=%lus hs=%d mnt=%d cid=%u wired=%d "
              "cap=%d/%d/%d res=%d err=%02x rum=%lu+%lu "
               "ibdrop=%lu obdrop=%u frames=%lu crc=%lu drop=%lu ovr=%lu "
-              "rx80=%lu tx81=%lu tx21=%lu in30=%lu iters=%lu pm=%lu "
-              "baud=%u%c",
+               "rx80=%lu tx81=%lu tx21=%lu in30=%lu iters=%lu pm=%lu "
+               "baud=%u%c",
+              (unsigned long)(to_ms_since_boot(get_absolute_time()) / 1000),
              (unsigned long)(to_ms_since_boot(get_absolute_time()) / 1000),
              usb_wired_handshake_done() ? 1 : 0,
              usb_wired_is_configured() ? 1 : 0,
@@ -1107,6 +1134,30 @@ static void stats_print(void) {
               (unsigned long)cp.iters, (unsigned long)pm_rd(),
               (unsigned)cp.baud_idx, cp.baud_locked ? 'L' : 'H');
     printf("%s\n", line);
+    /* USB dock観測用 (一時計装・Joy PIDの初期化列捕捉)。
+     * 振る舞いは変えない (表示のみ)。 */
+    {
+        char uline[256];
+        snprintf(uline, sizeof(uline),
+                 "UHB mnt=%lu unm=%lu rx80=%lu last80=%02x "
+                 "h80=%02x%02x%02x%02x h01=%02x%02x%02x%02x "
+                 "f8n=%u f8=%02x%02x%02x%02x unk=%02x/%u "
+                 "tx81=%lu tx21=%lu ep=%lu ctl=%lu short=%u",
+                 (unsigned long)ws.mount, (unsigned long)ws.unmount,
+                 (unsigned long)ws.rx80, ws.last80,
+                 ws.hist[0], ws.hist[1], ws.hist[2], ws.hist[3],
+                 ws.hist01[0], ws.hist01[1], ws.hist01[2], ws.hist01[3],
+                 ws.first8_n,
+                 ws.first8_n > 0u ? ws.first8[0] : 0u,
+                 ws.first8_n > 1u ? ws.first8[1] : 0u,
+                 ws.first8_n > 2u ? ws.first8[2] : 0u,
+                 ws.first8_n > 3u ? ws.first8[3] : 0u,
+                 ws.unk_id, ws.unk_n,
+                 (unsigned long)ws.tx81, (unsigned long)ws.tx21,
+                 (unsigned long)ws.ep_rx, (unsigned long)ws.ctl_rx,
+                 ws.short_n);
+        printf("%s\n", uline);
+    }
     if (g_vs.auto_status) {
         send_status();
     }
@@ -1367,13 +1418,6 @@ static void wired_loop(void) {
 
 // ---------------- Core0 main ----------------
 int main(void) {
-    hid_sdp_record_t hid_params = {
-        SWITCH_CLASS_OF_DEVICE,
-        33, 1, 1, 1, 0, 0, 0xFFFF, 0xFFFF, 3200,
-        switch_bt_report_descriptor,
-        sizeof(switch_bt_report_descriptor),
-        SWITCH_HID_NAME,
-    };
     stdio_init_all();
     uart_init(LOG_UART, LOG_BAUD);
     gpio_set_function(LOG_TX_PIN, GPIO_FUNC_UART);
@@ -1419,9 +1463,10 @@ int main(void) {
     store_host_load();
     store_cap_load();
     s_wired = store_wired_load_def(WIRED_DEFAULT != 0); // 未保存時の既定
-    printf("wired=%d(wdef=%d) host=%d cap=%d wdt=%d\n", s_wired ? 1 : 0, WIRED_DEFAULT,
+    s_emulate = store_emulate_load_def(0u); // 未保存/範囲外時の既定=ProCon
+    printf("wired=%d(wdef=%d) host=%d cap=%d wdt=%d emul=%u\n", s_wired ? 1 : 0, WIRED_DEFAULT,
            probe_host_known ? 1 : 0, probe_cap_valid ? 1 : 0,
-           s_wdt_recovered ? 1 : 0);
+           s_wdt_recovered ? 1 : 0, (unsigned)s_emulate);
 
     mutex_init(&g_m);
     memset(&g_s, 0, sizeof(g_s));
@@ -1474,6 +1519,8 @@ int main(void) {
            (int)multicore_lockout_victim_is_initialized(1));
 
     // 有線起動ではBTより先にUSB (列挙前電流制限にかからないよう)。
+    // roleは列挙より先に1回だけ確定 (未設定/範囲外はsetter側でProCon fallback)。
+    usb_set_role(s_emulate);
     usb_wired_init();
     usb_wired_set_enabled(s_wired);
 
@@ -1495,10 +1542,28 @@ int main(void) {
         for (k = 0; k < 6; k++) bcon_mac[k] = probe_addr[5 - k];
     }
 
+    // emulate-role identity (reboot-apply): roleは起動時1回だけ解決。
+    // NULL/out-of-range時はProCon行にfallback (role0配線と同一値になる)。
+    // SwitchはMAC単位でペアを覚えるためrole別MACが必須。
+    // personality_macはrole0で恒等 (out[5]^=0) のためProCon配線バイト不変。
+    // (bcon_macはUSB側のため素MACのまま。BT addrと同一機器の注記はrole0で成立。)
+    const personality_t *personality = personality_get(s_emulate);
+    if (personality == NULL) {
+        personality = &PERSONALITY_TABLE[(uint8_t)EMUL_ROLE_PROCON];
+    }
+    {
+        uint8_t role_mac[6];
+        personality_mac(probe_addr, s_emulate, role_mac);
+        memcpy(probe_addr, role_mac, sizeof(probe_addr));
+    }
+    // BT送出側 (hid.c) のrole固定。STATE ingestはu32のままrole非依存;
+    // roleはCore0 pack/outputのみに効く (cross-core handoffなし)。
+    probe_role = s_emulate;
+
     gap_discoverable_control(1);
     gap_connectable_control(1);
-    gap_set_class_of_device(SWITCH_CLASS_OF_DEVICE);
-    gap_set_local_name(SWITCH_GAP_NAME);
+    gap_set_class_of_device(personality->cod); // ProCon行=0x2508で現行値と同一
+    gap_set_local_name(personality->gap_name); // ProCon行="Pro Controller"で同一
     // Switch 2 requires SNIFF acceptance: without it the console never sends
     // SUB after HID open and drops the link with 0x13 after ~1s (AB1 proven).
     gap_set_default_link_policy_settings(LM_LINK_POLICY_ENABLE_ROLE_SWITCH |
@@ -1511,6 +1576,16 @@ int main(void) {
     l2cap_init();
     sdp_init();
 
+    // SDP HID情報はpersonality行から (ProCon行は現行define値と同一)。
+    // HID名はSWITCH_HID_NAMEを維持 (row->gap_nameはGAP専用; role0同一性gate)。
+    // Report descriptorバイトは全role共通・無変更 (Joyも同形のため)。
+    hid_sdp_record_t hid_params = {
+        personality->cod,
+        33, 1, 1, 1, 0, 0, 0xFFFF, 0xFFFF, 3200,
+        switch_bt_report_descriptor,
+        sizeof(switch_bt_report_descriptor),
+        SWITCH_HID_NAME,
+    };
     memset(hid_service_buffer, 0, sizeof(hid_service_buffer));
     hid_create_sdp_record(hid_service_buffer,
                           sdp_create_service_record_handle(), &hid_params);
@@ -1521,7 +1596,7 @@ int main(void) {
     device_id_create_sdp_record(pnp_service_buffer,
                                 sdp_create_service_record_handle(),
                                 DEVICE_ID_VENDOR_ID_SOURCE_USB,
-                                SWITCH_VENDOR_ID, SWITCH_PRODUCT_ID,
+                                personality->usb_vid, personality->usb_pid,
                                 SWITCH_PRODUCT_VERSION);
     btstack_assert(de_get_len(pnp_service_buffer) <= sizeof(pnp_service_buffer));
     sdp_register_service(pnp_service_buffer);
@@ -1535,7 +1610,7 @@ int main(void) {
     hci_events.callback = &packet_handler;
     hci_add_event_handler(&hci_events);
 
-    hci_set_bd_addr(probe_addr);
+    hci_set_bd_addr(probe_addr); // 起動時にpersonality_mac済みrole MAC (role0は素MACと同一)
     usb_wired_pump();
 
     // 有線/無線の初期反映 (電波・待ち受け・USB再列挙の決定)。
