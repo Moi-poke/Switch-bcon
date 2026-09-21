@@ -11,6 +11,7 @@
 |-----|------|---------|
 | 3.0 | 2026-09-13 | 初版（本リポジトリ）。STATE=ボタンu32-LE（VIIPER順）LEN8・HAT廃止／CONFIG面 0x30-0x35 新設／RUMBLE 0x22 予約／STATUS 7B・HELLO_ACK 4B維持／USBは任天堂写し・bInterval 8 |
 | 4.0 | 2026-09-18 | RUMBLE送出開始（0x22 sending）・PLAYER_INFO新設（0x23）・PROTO_VER=4・RESULT DOWNGRADED廃止 |
+| 4.1 | 2026-09-19 | EMULATE_MODE新設（0x38）・Joy mapping・FW_MINOR=2・PROTO_VER=4維持 |
 
 > フィールド追加・意味変更時は必ず本表と `PROTO_VER` を更新する。
 
@@ -73,6 +74,7 @@ Offset  Field    Size  説明
 | 0x35 | STATUS_REQ | PC→Pico | 0 | STATUS即時返送要求 |
 | 0x36 | BAUD_SET | PC→Pico | 1 | rate index（B §3・合意切替） |
 | 0x37 | BOOTSEL | PC→Pico | 1 | 開発用：magic 0x5AでUSB BOOTSEL再起動 |
+| 0x38 | EMULATE_MODE | PC→Pico | 1 | role選択（0=ProCon・1=JoyL・2=JoyR、Flash保存） |
 
 ## 5. ペイロード定義
 
@@ -144,7 +146,7 @@ Off  Field        Size  説明
 ERRCODE：`0x00 正常／0x01 LEN不正／0x02 CRC不一致／0x03 SEQ欠番／0x04 UNSUPPORTED版／0x05 UART overrun／0x06 parser overflow／0x10-0x1F CONFIG拒否（0x10+TYPE下位）`。
 周期送信時のerrcodeは直近エラーを保持（正常復帰後に0へ戻す）。
 
-### 5.6 CONFIG（0x30-0x37）
+### 5.6 CONFIG（0x30-0x38）
 
 * CAPTURE_START：`[0]=秒数1-60`。範囲外は拒否（ERRCODE 0x10）。
 * BEACON_START：LEN0。未保存時は拒否（0x11）。
@@ -161,7 +163,14 @@ ERRCODE：`0x00 正常／0x01 LEN不正／0x02 CRC不一致／0x03 SEQ欠番／0
 * BOOTSEL：`[0]=0x5A`（magic）。開発用・単独UART運用のためのUSB BOOTSEL再起動。
   不正値は拒否（0x17）。受理後は旧rateでSTATUS ACK→約500ms後に`reset_usb_boot`。
   LOG_UART（UART0）側でも `bootsel` 行（大小不問・改行終端）で同一動作。
-  Flash書き込みなし。PROTO_VER据置（Task 9のv4改訂時に統合）。
+   Flash書き込みなし。PROTO_VER据置（Task 9のv4改訂時に統合）。
+* EMULATE_MODE：`[0]=role（0=ProCon・1=Joy-Con (L)・2=Joy-Con (R)）`。範囲外（3以上）は
+  拒否（0x18。CONFIG拒否式 `0x10|(TYPE&0x0F)` 通り）。Flash保存（TAG `BCEM`）・
+  起動時復元。切替はWIRED_MODEと同型の再起動適用（受理後約500msで自発再起動。
+  BTstack/CYW43/descriptorが起動時確定のため。変化なしの再送では再起動しない）。
+  STATE取込はrole非依存u32のまま。roleはCore0のpack/outputにのみ効く。
+  追加コマンドのためPROTO_VERは4のまま（版交渉は不変。旧PCツールはそのまま動く）。
+  FW_MINORは1→2に上げる（HELLO_ACK `[2]` が2を返す）。
 
 ### 5.7 RUMBLE (LEN=2、送出)
 
@@ -257,6 +266,53 @@ BT 3BとUSB 0x30ボタン3Bは任天堂が同一順序のため、両表は同�
 B0.b4/b5 (右SR/SL)・B1.b6・B2.b4/b5 (左SR/SL) に相当するu32 bitは存在しない。
 pack出力は常に0 (ProConにSR/SLはない)。
 
+Joy-Con role写像 (EMULATE_MODE=1/2。`src/bt/personality.c` の `joy_pack_btn3` 通り)。
+線路u32に新しいbitは追加しない。Joy側に物理位置のないボタンは落とす。
+消費した肩ペアはSL/SRに転用する（L側: R→SL・ZR→SR、R側: L→SL・ZL→SR）。
+輸送bit配置は両Joy共通で B0=`Y/X/B/A/SR/SL/R/ZR`、
+B1=`Minus/Plus/R押込/L押込/Home/Capture`、B2=`Down/Up/Right/Left/SR/SL/L/ZL`。
+
+Joy-Con (L) allowlist：
+
+| u32 bit | ボタン | Joy byte.bit | 備考 |
+|---------|--------|--------------|------|
+| 14 | Minus(-) | B1.b0 | |
+| 15 | L押込 | B1.b3 | |
+| 17 | Capture | B1.b5 | |
+| 8 | Down | B2.b0 | |
+| 11 | Up | B2.b1 | |
+| 9 | Right | B2.b2 | |
+| 10 | Left | B2.b3 | |
+| 5 | ZR→左SR | B2.b4 | ProCon B0.b7位置では出さない（消費） |
+| 4 | R→左SL | B2.b5 | ProCon B0.b6位置では出さない（消費） |
+| 12 | L | B2.b6 | |
+| 13 | ZL | B2.b7 | |
+
+B0は全0。落とす：A/B/X/Y・Plus・Home・R押込（左半分に位置なし）。
+
+Joy-Con (R) allowlist：
+
+| u32 bit | ボタン | Joy byte.bit | 備考 |
+|---------|--------|--------------|------|
+| 2 | Y | B0.b0 | |
+| 3 | X | B0.b1 | |
+| 0 | B | B0.b2 | |
+| 1 | A | B0.b3 | |
+| 13 | ZL→右SR | B0.b4 | ProCon B2.b7位置では出さない（消費） |
+| 12 | L→右SL | B0.b5 | ProCon B2.b6位置では出さない（消費） |
+| 4 | R | B0.b6 | |
+| 5 | ZR | B0.b7 | |
+| 6 | Plus(+) | B1.b1 | |
+| 7 | R押込 | B1.b2 | |
+| 16 | Home | B1.b4 | |
+
+B2は全0。落とす：十字キー・Minus・Capture・L押込（右半分に位置なし）。
+
+片手Joyに無い側のスティックは中央埋めする（live側のみ実値）。
+欠側は `0x800` をpackする（`pack_stick_12bit(0x800,0x800)` の出力が中央値）。
+Joy-Con (L) は右スティックを、Joy-Con (R) は左スティックを中央埋めする。
+ProConは両スティックlive（従来通り）。
+
 輸送report層の固定加工 (pack関数の外・各輸送のbuilderが行う):
 
 - USB 0x30/0x21: `btn[1] |= 0x80`、`btn[2] &= 0xCF`、電池 `0x91`、振動 `0x09`
@@ -290,3 +346,48 @@ pack出力は常に0 (ProConにSR/SLはない)。
 - 無線OFF要求: CYW43/BT動作中はSwitch 2ドックがUSB列挙しない実測
   (wakecon知見) のため、有線FWは無線を上げない。最終FWは `WIRED_MODE`
   (Task 4) で無線停波を管理する。
+
+## 12.1 USB role別値 (EMULATE_MODE)
+
+roleは起動時に1回だけ確定する（USB列挙より先。範囲外はProCon扱い）。
+PID以外は全role同一（VID・bcd・EP・間隔・構成は不変）。
+
+| role | PID | 製品名 | 備考 |
+|------|-----|--------|------|
+| 0=ProCon | 0x2009 | `Pro Controller` | 従来値と同一 |
+| 1=Joy-Con (L) | 0x2009 | `Pro Controller` | Plan A（PABotBase2実測でUSB記述子は2009単一。Joyは応答内容で表現、有線HW検証済み） |
+| 2=Joy-Con (R) | 0x2009 | `Pro Controller` | Plan A（同上、有線HW検証済み） |
+
+製造者・シリアルは全role同一（`Nintendo Co., Ltd` / `000000000001` 純正固定値のまま）。
+`0x02` 機器情報応答の種別のみrole依存（ProCon=0x03・L=0x01・R=0x02）。
+fwはProCon=`03 48`（2wiCC実働値。BTの `03 8B` ではない）、Joy=`04 33`（PABotBase2生キャプチャ実測）。
+`81 01` の種別は全role `0x03`（PABotBase2実測通り）。
+電池は全role `0x91`、Joy の `0x30` IMU は36Bゼロ（PABotBase2実測通り）。
+role=0は従来バイトと同一。
+
+## 12.2 BT role別値 (EMULATE_MODE)
+
+roleは起動時に1回だけ解決する（範囲外はProCon行にfallback）。
+GAP名・CoD・機器情報は `PERSONALITY_TABLE`（`src/bt/personality.c`）の行を使う。
+
+| role | GAP名 | CoD | 機器情報種別 | fw |
+|------|-------|-----|--------------|-----|
+| 0=ProCon | `Pro Controller` | 0x2508 | 0x03 | `03 8B`（従来バイトと同一。出典：`src/bt/hid.c` 機器情報・`src/bt/switch_hid.h`） |
+| 1=Joy-Con (L) | `Joy-Con (L)` | 0x2508 | 0x01 | `03 48`（出典：switchnotes console_pairing_session 機器情報・hid-nintendo.c JoyL種別。USB文字列と異なりBT値は実測由来） |
+| 2=Joy-Con (R) | `Joy-Con (R)` | 0x2508 | 0x02 | `03 48`（出典：同上 console_pairing_session 機器情報・hid-nintendo.c JoyR種別） |
+
+MACはrole-tagged：素MACを写し最終バイトに `(role & 0x03)` をXORする
+（`personality_mac`。`src/bt/personality.h` 通り）。
+role0は恒等（XOR 0）のためProCon配線バイト不変。
+SwitchはMAC単位でペアを覚えるためrole別MACが必須。
+SDPのHID名は `SWITCH_HID_NAME` を維持する（row側のGAP名はGAP専用）。
+Report descriptorバイトは全role共通・無変更（Joyも同形のため）。
+
+## 12.3 SPI Joy応答 (provisional)
+
+Joy roleのSPI読出しは暫定ゼロ埋めで答える（`spi_joy_blank`。`src/proto/spi.h` 契約通り）。
+出典：switchnotes console_pairing_session（bare minimum eeprom `0x6000`-`0x8FFF`。
+ゼロ埋めEEPROMでペア成功・色は黒表示）。
+BTは当該契約を実装済み（`0x6000`以上`0x9000`未満はゼロ埋め＋ACK `0x90`、
+それ以外はtransport-default miss＝無応答。ProConの `spi_find` 経路は通らない）。
+ProCon応答バイトは一切変えない。Joyの実機SPI値は未採取のためprovisionalのまま。
