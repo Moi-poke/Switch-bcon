@@ -1,7 +1,8 @@
 // test_joy_scopeA.c -- Joy-Con scope A + USB wired contract tests (FAILING-first, RED).
 // No Pico SDK needed. CTest name: joy_scopeA. No src/ changes (contract only).
+// [PABot-ref]: PABotBase2観測応答を参考に同等機能を再現 (互換主張なし)。詳細は src/usb/usb_hid.c 先頭。
 //
-// Locked IMU decision (scope A + Copilot review A-plan, PABot parity):
+// Locked IMU decision (scope A + Copilot review A-plan, [PABot-ref]):
 // ProCon 0x30 keeps static-1g rest (2wiCC layout: gyro XYZ=0, accel X/Y=0
 // Z=0x4000, same all 3 samples); Joy roles serve zero IMU (PABot live
 // capture shows 36B zeros). No new frame TYPE. The USB 0x30 report keeps
@@ -163,9 +164,9 @@ int main(void) {
             CHECK(memcmp(&out12[8], live, 3) == 0,
                   "T-CENTER role2 rx/ry stays live");
         }
-        /* 0x30 report: Joy IMU 36B zeros (PABot parity: live capture shows
+        /* 0x30 report: Joy IMU 36B zeros ([PABot-ref]: live capture shows
          * zero IMU, not static-1g; ProCon keeps static-1g, see test_usb
-         * [6] + T-PARITY-BATT role0 pin). Tail 15B fill stays zero. */
+         * [6] + T-PABOT-BATT role0 pin). Tail 15B fill stays zero. */
         {
             usb_sub_ctx_t ctx;
             uint8_t rep[64];
@@ -178,7 +179,7 @@ int main(void) {
                   "T-CENTER role1 30 report builds 64B");
             CHECK(rep[0] == 0x30u, "T-CENTER role1 30 report ID stays 0x30");
             CHECK(memcmp(&rep[13], zeros36, 36) == 0,
-                  "T-CENTER role1 IMU 36B zeros (PABot capture)");
+                  "T-CENTER role1 IMU 36B zeros [PABot-ref]");
             CHECK(memcmp(&rep[49], zeros15, 15) == 0,
                   "T-CENTER role1 tail 15B fill stays zero");
         }
@@ -307,7 +308,7 @@ int main(void) {
             "Pro Controller", "Pro Controller", "Pro Controller",
         };
         static const uint8_t want_dev[3] = { 0x03u, 0x01u, 0x02u };
-        /* PABot parity: battery/conn byte is 0x91 for ALL roles (live
+        /* [PABot-ref]: battery/conn byte is 0x91 for ALL roles (live
          * capture never shows 0x97). */
         static const uint8_t want_conn[3] = { 0x91u, 0x91u, 0x91u };
         static const uint8_t mac[6] = { 0x7C, 0xBB, 0x8A, 0x01, 0x02, 0x03 };
@@ -337,7 +338,7 @@ int main(void) {
             snprintf(msg, sizeof(msg), "T-ROLE-CONSIST role%d conn 0x%02X",
                      role, want_conn[role]);
             CHECK(out12[1] == want_conn[role], msg);
-            /* PABot parity: 81 01 controller type is always 0x03 (type is
+            /* [PABot-ref]: 81 01 controller type is always 0x03 (type is
              * enumeration identity, not role expression). 0x02 dev byte
              * below keeps the per-role devtype. */
             n81 = usb_build_81_reply(req81, 2, out64, 64, mac,
@@ -517,9 +518,9 @@ int main(void) {
               "T-HS-8004-SILENT 80 01 still acks (sanity)");
     }
 
-    printf("[T-PARITY-81] 81 01 controller type always 0x03 (PABot capture)\n");
+    printf("[T-PABOT-81] 81 01 controller type always 0x03 [PABot-ref]\n");
     {
-        /* PABot parity: live Joy-L capture answers 81 01 00 03 even in Joy
+        /* [PABot-ref]: live Joy-L capture answers 81 01 00 03 even in Joy
          * mode (type is enumeration identity, not role expression).
          * RED: roles 1/2 currently answer 01/02. */
         uint8_t out[64];
@@ -529,15 +530,15 @@ int main(void) {
             char msg[96];
             int n = usb_build_81_reply(req01, 2, out, 64, mac,
                                        usb_devtype_for_role((uint8_t)role));
-            snprintf(msg, sizeof(msg), "T-PARITY-81 role%d type 0x03", role);
+            snprintf(msg, sizeof(msg), "T-PABOT-81 role%d type 0x03", role);
             CHECK(n == 64 && out[0] == 0x81u && out[1] == 0x01u &&
                   out[3] == 0x03u, msg);
         }
     }
 
-    printf("[T-PARITY-02] Joy 0x02 fw 04 33 + reversed MAC (PABot capture)\n");
+    printf("[T-PABOT-02] Joy 0x02 fw 04 33 + reversed MAC [PABot-ref]\n");
     {
-        /* PABot parity (Joy-L live bytes, capture T07):
+        /* [PABot-ref] (Joy-L live bytes, capture T07):
          * 82 02 04 33 01 02 <mac6 reversed vs 81 01> 01 01 00.
          * RED: Joy currently answers fw 03 48, straight MAC, byte11 0x02.
          * role0 keeps 03 48 / straight MAC / 0x02. */
@@ -556,9 +557,9 @@ int main(void) {
         n = usb_build_21_reply(req, 11, o02, 64, &ctx);
         CHECK(n == 64 && o02[13] == 0x82u && o02[14] == 0x02u &&
               o02[15] == 0x04u && o02[16] == 0x33u && o02[17] == 0x01u,
-              "T-PARITY-02 Joy fw 04 33 type 01");
+              "T-PABOT-02 Joy fw 04 33 type 01");
         CHECK(n == 64 && o02[26] == 0x01u,
-              "T-PARITY-02 Joy byte11 0x01");
+              "T-PABOT-02 Joy byte11 0x01");
         {
             const uint8_t req81[] = { 0x80, 0x01 };
             m = usb_build_81_reply(req81, 2, o81, 64, mac,
@@ -569,13 +570,13 @@ int main(void) {
                 }
             }
             CHECK(m == 64 && n == 64 && rev,
-                  "T-PARITY-02 Joy MAC reversed vs 81 01");
+                  "T-PABOT-02 Joy MAC reversed vs 81 01");
         }
     }
 
-    printf("[T-PARITY-BATT] Joy battery 0x91 + 0x30 vib/IMU zeros (PABot capture)\n");
+    printf("[T-PABOT-BATT] Joy battery 0x91 + 0x30 vib/IMU zeros [PABot-ref]\n");
     {
-        /* PABot parity: every 0x30/0x21 header battery byte is 0x91 (never
+        /* [PABot-ref]: every 0x30/0x21 header battery byte is 0x91 (never
          * 0x97); Joy 0x30 byte[12]==0x00 and IMU[13..48]==0x00 (live capture
          * shows zero IMU, not static-1g). ProCon keeps 0x91/0x09/static-1g.
          * RED: Joy currently answers 0x97/0x09/static-1g. */
@@ -590,12 +591,12 @@ int main(void) {
             ctx.lx = ctx.ly = ctx.rx = ctx.ry = 0x800u;
             ctx.role = (uint8_t)role;
             usb_pack_controller_data(h12, &ctx);
-            snprintf(msg, sizeof(msg), "T-PARITY-BATT role%d header 0x91", role);
+            snprintf(msg, sizeof(msg), "T-PABOT-BATT role%d header 0x91", role);
             CHECK(h12[1] == 0x91u, msg);
             n = usb_build_30_report(&ctx, rep);
-            snprintf(msg, sizeof(msg), "T-PARITY-BATT role%d 0x30 [12]==0x00", role);
+            snprintf(msg, sizeof(msg), "T-PABOT-BATT role%d 0x30 [12]==0x00", role);
             CHECK(n == 64 && rep[0] == 0x30u && rep[12] == 0x00u, msg);
-            snprintf(msg, sizeof(msg), "T-PARITY-BATT role%d 0x30 IMU zeros", role);
+            snprintf(msg, sizeof(msg), "T-PABOT-BATT role%d 0x30 IMU zeros", role);
             CHECK(n == 64 && memcmp(&rep[13], zeros36, 36) == 0, msg);
         }
         {
@@ -607,16 +608,16 @@ int main(void) {
             ctx.role = 0u;
             usb_pack_controller_data(h12, &ctx);
             CHECK(h12[1] == 0x91u,
-                  "T-PARITY-BATT role0 header 0x91 (unchanged)");
+                  "T-PABOT-BATT role0 header 0x91 (unchanged)");
             CHECK(usb_build_30_report(&ctx, rep) == 64 && rep[12] == 0x09u &&
                   memcmp(&rep[13], zeros36, 36) != 0,
-                  "T-PARITY-BATT role0 0x09 + static-1g (unchanged)");
+                  "T-PABOT-BATT role0 0x09 + static-1g (unchanged)");
         }
     }
 
-    printf("[T-PARITY-HDR] Joy header bytes w/o forced bits (PABot capture)\n");
+    printf("[T-PABOT-HDR] Joy header bytes w/o forced bits [PABot-ref]\n");
     {
-        /* PABot parity (Joy-L live bytes): button byte carries b3[1] as-is
+        /* [PABot-ref] (Joy-L live bytes): button byte carries b3[1] as-is
          * (idle 0x00 — no forced 0x80 bit) in both 0x30 and 0x21 headers,
          * and the 0x21 vib byte is 0x00. ProCon keeps |0x80 and 0x09.
          * RED: Joy currently forces 0x80 and 0x09. */
@@ -634,24 +635,24 @@ int main(void) {
             ctx.lx = ctx.ly = ctx.rx = ctx.ry = 0x800u;
             ctx.role = (uint8_t)role;
             usb_pack_controller_data(h12, &ctx);
-            snprintf(msg, sizeof(msg), "T-PARITY-HDR role%d idle btn ==0x00", role);
+            snprintf(msg, sizeof(msg), "T-PABOT-HDR role%d idle btn ==0x00", role);
             CHECK(h12[3] == 0x00u, msg);
             ctx.btn[1] = pressed;
             usb_pack_controller_data(h12, &ctx);
-            snprintf(msg, sizeof(msg), "T-PARITY-HDR role%d pressed bit kept w/o 0x80", role);
+            snprintf(msg, sizeof(msg), "T-PABOT-HDR role%d pressed bit kept w/o 0x80", role);
             CHECK(h12[3] == pressed, msg);
             memset(&ctx, 0, sizeof(ctx));
             ctx.lx = ctx.ly = ctx.rx = ctx.ry = 0x800u;
             ctx.role = (uint8_t)role;
             n30 = usb_build_30_report(&ctx, rep30);
-            snprintf(msg, sizeof(msg), "T-PARITY-HDR role%d 0x30 [4]==0x00", role);
+            snprintf(msg, sizeof(msg), "T-PABOT-HDR role%d 0x30 [4]==0x00", role);
             CHECK(n30 == 64 && rep30[4] == 0x00u, msg);
             memset(req, 0, sizeof(req));
             req[0] = 0x01u; req[10] = 0x03u;
             n21 = usb_build_21_reply(req, 11, rep21, 64, &ctx);
-            snprintf(msg, sizeof(msg), "T-PARITY-HDR role%d 0x21 [4]==0x00", role);
+            snprintf(msg, sizeof(msg), "T-PABOT-HDR role%d 0x21 [4]==0x00", role);
             CHECK(n21 == 64 && rep21[4] == 0x00u, msg);
-            snprintf(msg, sizeof(msg), "T-PARITY-HDR role%d 0x21 [12]==0x00", role);
+            snprintf(msg, sizeof(msg), "T-PABOT-HDR role%d 0x21 [12]==0x00", role);
             CHECK(n21 == 64 && rep21[12] == 0x00u, msg);
         }
         {
@@ -664,18 +665,18 @@ int main(void) {
             ctx.role = 0u;
             usb_pack_controller_data(h12, &ctx);
             CHECK(h12[3] == 0x80u,
-                  "T-PARITY-HDR role0 idle btn keeps 0x80 (unchanged)");
+                  "T-PABOT-HDR role0 idle btn keeps 0x80 (unchanged)");
             memset(req, 0, sizeof(req));
             req[0] = 0x01u; req[10] = 0x03u;
             CHECK(usb_build_21_reply(req, 11, rep21, 64, &ctx) == 64 &&
                   rep21[12] == 0x09u,
-                  "T-PARITY-HDR role0 0x21 [12]==0x09 (unchanged)");
+                  "T-PABOT-HDR role0 0x21 [12]==0x09 (unchanged)");
         }
     }
 
-    printf("[T-PARITY-6086] Joy 0x6086 want18 FF fill (PABot capture)\n");
+    printf("[T-PABOT-6086] Joy 0x6086 want18 FF fill [PABot-ref]\n");
     {
-        /* PABot parity: 6086+18 answers 18xFF (capture T14). Explicit Joy
+        /* [PABot-ref]: 6086+18 answers 18xFF (capture T14). Explicit Joy
          * branch before the blank window; NOT a shared table entry (avoids
          * BT impact — BT Joy keeps blank per its transport).
          * RED: currently blank zeros. */
@@ -696,7 +697,7 @@ int main(void) {
         n = usb_build_21_reply(req, 16, out, 64, &ctx);
         CHECK(n == 64 && out[13] == 0x90u && out[14] == 0x10u &&
               out[19] == 18u && memcmp(&out[20], ff18, 18) == 0,
-              "T-PARITY-6086 Joy 6086 want18 FF fill");
+              "T-PABOT-6086 Joy 6086 want18 FF fill");
     }
 
     printf("[T-SPI-JOY-HAPPY] Joy SPI 0x6000 0xFF serial-none (Change A)\n");

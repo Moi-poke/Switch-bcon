@@ -1,5 +1,6 @@
 // test_joy_scopeB.c -- Joy-Con scope B contract tests (FAILING-first, RED).
 // No Pico SDK needed. CTest name: joy_scopeB. No src/ changes (contract only).
+// [PABot-ref]: PABotBase2観測応答を参考に同等機能を再現 (互換主張なし)。詳細は src/usb/usb_hid.c 先頭。
 //
 // HW fact (Switch wired JoyR init): Switch ran full JoyR init then one-shot
 // 80 05 reject tailing on SPI reads (0x6020/0x603D answered zeros). These RED
@@ -144,7 +145,7 @@ int main(void) {
     printf("[T-DEVINFO-JOY] device-info dev + fw bytes per role\n");
     {
         /* S-HAPPY-DEVINFO: 0x02 device-info dev byte + fw (role0 03 48;
-         * Joy roles 04 33 per PABot parity, live Joy-L bytes).
+         * Joy roles 04 33 per [PABot-ref], live Joy-L bytes).
          * Closest existing API: usb_build_21_reply sub 0x02 + ctx.role.
          * This group PASSES today (pins the vector so CAL RED cannot
          * regress devinfo). */
@@ -169,7 +170,7 @@ int main(void) {
             CHECK(n == 64 && out[13] == 0x82u && out[14] == 0x02u &&
                   out[17] == want_dev[role], msg);
             snprintf(msg, sizeof(msg), "T-DEVINFO-JOY role%d fw %s", role,
-                     (role == 0) ? "03 48" : "04 33 (PABot parity)");
+                     (role == 0) ? "03 48" : "04 33 ([PABot-ref])");
             CHECK(n == 64 && ((role == 0 && out[15] == 0x03u && out[16] == 0x48u) ||
                   (role != 0 && out[15] == 0x04u && out[16] == 0x33u)), msg);
         }
@@ -189,15 +190,15 @@ int main(void) {
          * role-conditional). Rationale for deferral: no lamp/Home-LED
          * public API exists yet (no usb_* / joy_* / ctrl_* lamp accessor
          * in usb_hid.h, personality.h, pack.h, spi.h, protocol.h); the
-         * conn-nibble in usb_pack_controller_data (0x91 all roles per PABot
-         * parity) says nothing about lamps. If a lamp API lands,
+         * conn-nibble in usb_pack_controller_data (0x91 all roles: [PABot-ref])
+         * says nothing about lamps. If a lamp API lands,
          * uncomment/extend the disabled CHECK at the end of this group:
          *   CHECK(lamp_L == 0, "T-LAMP-38 FUTURE L-no-Home-LED"); */
         for (int role = 0; role <= 2; role++) {
             usb_sub_ctx_t ctx;
             uint8_t out12[12];
             char msg[128];
-            /* PABot parity: 0x91 all roles (live capture never shows 0x97). */
+            /* [PABot-ref]: 0x91 all roles (live capture never shows 0x97). */
             uint8_t want_conn = 0x91u;
             memset(&ctx, 0, sizeof(ctx));
             ctx.lx = ctx.ly = ctx.rx = ctx.ry = 0x800u;
@@ -255,7 +256,7 @@ int main(void) {
             "Pro Controller", "Pro Controller", "Pro Controller",
         };
         static const uint8_t want_dev[3] = { 0x03u, 0x01u, 0x02u };
-        /* PABot parity: 0x91 all roles. */
+        /* [PABot-ref]: 0x91 all roles. */
         static const uint8_t want_conn[3] = { 0x91u, 0x91u, 0x91u };
         static const uint8_t mac[6] = { 0x7C, 0xBB, 0x8A, 0x01, 0x02, 0x03 };
         for (int role = 0; role <= 2; role++) {
@@ -279,7 +280,7 @@ int main(void) {
             usb_pack_controller_data(out12, &ctx);
             snprintf(msg, sizeof(msg), "T-ROLE-CONSIST role%d conn 0x%02X", role, want_conn[role]);
             CHECK(out12[1] == want_conn[role], msg);
-            /* PABot parity: 81 01 type always 0x03 (mirrors scopeA). */
+            /* [PABot-ref]: 81 01 type always 0x03 (mirrors scopeA). */
             n81 = usb_build_81_reply(req81, 2, out64, 64, mac, usb_devtype_for_role(r));
             snprintf(msg, sizeof(msg), "T-ROLE-CONSIST role%d 81 type 0x03", role);
             CHECK(n81 == 64 && out64[0] == 0x81u && out64[1] == 0x01u &&
@@ -334,7 +335,7 @@ int main(void) {
             memset(q21, 0, sizeof(q21));
             q21[0] = 0x01u; q21[10] = 0x02u;
             n21 = usb_build_21_reply(q21, 11, o21, 64, &c2);
-            /* PABot parity: 81 01 type is always 0x03 while 02 dev keeps
+            /* [PABot-ref]: 81 01 type is always 0x03 while 02 dev keeps
              * the per-role devtype (mirrors scopeA). */
             snprintf(msg, sizeof(msg), "T-HANDSHAKE-ORDER role%d 81-type 0x03 + 02-dev 0x%02X", role, usb_devtype_for_role(r));
             CHECK(n81 == 64 && n21 == 64 && o81[3] == 0x03u &&
