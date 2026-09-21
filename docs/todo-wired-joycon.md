@@ -8,14 +8,14 @@
 
 - ProCon 有線: 認識 OK
 - Joy-Con 無線: 認識 OK
-- Joy-Con 有線 (旧版): 認識 NG → PABot parity 版で再テスト中
-- 2026-09-21 22時台: parity 版 (`log/switch-bcon-pabotparity-20260921.uf2`,
+- Joy-Con 有線 (旧版): 認識 NG → PABot参考再現 版で再テスト中
+- 2026-09-21 22時台: PABot参考再現版 (`log/switch-bcon-pabotparity-20260921.uf2`,
   SHA256 `D7994BCD…`) 書込済み。poc_send --ping は TIMEOUT するが、
   FW 生存は確定 (BT Joy-Con が Pico 抜去で消える + PokeCon の ping 疎通OK)。
   --ping 不一致の理由: PONG 返信は baud hunt ロック後 (2 連続良フレーム) の
   TX 抑制解除が条件。fire-and-forget 系 (--emulate/--bootsel) は無応答で
   済むため通る。poc_send --ping の 2 発ではロック前に終わる。
-  注: parity 変更は USB 応答 builder のみで起動時経路・Flash 書込なし。
+  注: PABot参考再現の変更は USB 応答 builder のみで起動時経路・Flash 書込なし。
   旧 joyfix2 版 (`log/switch-bcon-joyfix2-20260921.uf2`) で切り分け可能。
 
 ## 実施済み (2026-09-21)

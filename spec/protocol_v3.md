@@ -355,14 +355,14 @@ PID以外は全role同一（VID・bcd・EP・間隔・構成は不変）。
 | role | PID | 製品名 | 備考 |
 |------|-----|--------|------|
 | 0=ProCon | 0x2009 | `Pro Controller` | 従来値と同一 |
-| 1=Joy-Con (L) | 0x2009 | `Pro Controller` | Plan A（PABotBase2実測でUSB記述子は2009単一。Joyは応答内容で表現、有線HW検証済み） |
+| 1=Joy-Con (L) | 0x2009 | `Pro Controller` | Plan A（PABotBase2の応答を参考にUSB記述子は2009単一。Joyは応答内容で表現、有線HW検証済み） |
 | 2=Joy-Con (R) | 0x2009 | `Pro Controller` | Plan A（同上、有線HW検証済み） |
 
 製造者・シリアルは全role同一（`Nintendo Co., Ltd` / `000000000001` 純正固定値のまま）。
 `0x02` 機器情報応答の種別のみrole依存（ProCon=0x03・L=0x01・R=0x02）。
-fwはProCon=`03 48`（2wiCC実働値。BTの `03 8B` ではない）、Joy=`04 33`（PABotBase2生キャプチャ実測）。
-`81 01` の種別は全role `0x03`（PABotBase2実測通り）。
-電池は全role `0x91`、Joy の `0x30` IMU は36Bゼロ（PABotBase2実測通り）。
+fwはProCon=`03 48`（2wiCC実働値。BTの `03 8B` ではない）、Joy=`04 33`（PABotBase2の応答を参考にした値）。
+`81 01` の種別は全role `0x03`（PABotBase2の応答を参考にした値）。
+電池は全role `0x91`、Joy の `0x30` IMU は36Bゼロ（PABotBase2の応答を参考にした値）。
 role=0は従来バイトと同一。
 
 ## 12.2 BT role別値 (EMULATE_MODE)
