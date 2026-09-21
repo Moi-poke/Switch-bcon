@@ -18,6 +18,11 @@ extern "C" {
 
 extern uint8_t probe_btn[3];
 extern uint16_t probe_lx, probe_ly, probe_rx, probe_ry;
+/* BT送出のrole pack源。procon側u32 (VIIPER) 素値＋起動時固定role。
+ * hid.cは送出時にjoy_pack_btn3/joy_use_left_stickでrole packする
+ * (role0はctrl_pack委譲・両stick liveで従来バイトと同一)。 */
+extern uint32_t probe_procon_u32;
+extern uint8_t probe_role;
 extern uint32_t probe_btn_press_count;
 extern bool probe_btn_was_down;
 void probe_input_reset(void);

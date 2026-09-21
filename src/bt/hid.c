@@ -12,6 +12,7 @@
 #include "store.h"
 #include "bt_compat.h"
 #include "pack.h"
+#include "personality.h"
 #include "rumble.h"
 
 #define HID_REPLY_WANT (2u + 48u)
@@ -20,6 +21,8 @@
 uint8_t probe_btn[3];
 uint16_t probe_lx = 0x800, probe_ly = 0x800;
 uint16_t probe_rx = 0x800, probe_ry = 0x800;
+uint32_t probe_procon_u32;
+uint8_t probe_role; // EMUL_ROLE_* (既定0=ProCon)。main.cが起動時に固定。
 uint32_t probe_btn_press_count;
 bool probe_btn_was_down;
 
@@ -28,6 +31,7 @@ void probe_input_reset(void)
     probe_btn[0] = 0u;
     probe_btn[1] = 0u;
     probe_btn[2] = 0u;
+    probe_procon_u32 = 0u;
     probe_lx = 0x800u;
     probe_ly = 0x800u;
     probe_rx = 0x800u;
@@ -132,18 +136,32 @@ uint32_t probe_send_interval_ms(void)
 }
 
 /* 応答の共通部 16B を作り、中身の書込位置を返す。
- * [3] 以降は 0x30 と同じ「今の姿勢」を載せる（固定値にしない）。 */
+ * [3] 以降は 0x30 と同じ「今の姿勢」を載せる（固定値にしない）。
+ * ボタンは素u32＋roleから都度pack (role0はctrl_pack_btn3委譲で従来と同一)。
+ * stickはroleのlive側のみ実値、欠側はcenter 0x800
+ * (pack_stick_12bit(0x800,0x800)=00 08 80)。timer・ratesは不変。 */
+static void pack_role_sticks(uint8_t out6[6])
+{
+    bool left_live = joy_use_left_stick(probe_role);
+    bool right_live = (probe_role != (uint8_t)EMUL_ROLE_JOY_L);
+    pack_stick_12bit(left_live ? probe_lx : 0x800u,
+                     left_live ? probe_ly : 0x800u, &out6[0]);
+    pack_stick_12bit(right_live ? probe_rx : 0x800u,
+                     right_live ? probe_ry : 0x800u, &out6[3]);
+}
+
 uint16_t probe_build_reply(uint8_t ack, uint8_t subcmd)
 {
+    uint8_t btn3[3];
+    joy_pack_btn3(probe_procon_u32, probe_role, btn3);
     reply_buf[0] = 0xA1u;
     reply_buf[1] = 0x21u;
     reply_buf[2] = probe_report_timer++;
     reply_buf[3] = 0x80u;
-    reply_buf[4] = probe_btn[0];
-    reply_buf[5] = probe_btn[1];
-    reply_buf[6] = probe_btn[2];
-    pack_stick_12bit(probe_lx, probe_ly, &reply_buf[7]);
-    pack_stick_12bit(probe_rx, probe_ry, &reply_buf[10]);
+    reply_buf[4] = btn3[0];
+    reply_buf[5] = btn3[1];
+    reply_buf[6] = btn3[2];
+    pack_role_sticks(&reply_buf[7]);
     reply_buf[13] = 0x08u;
     reply_buf[14] = ack;
     reply_buf[15] = subcmd;
@@ -160,15 +178,16 @@ void probe_can_send_now(void)
         reply_len = 0u;
     } else if (probe_full_mode) {
         uint8_t f[14];
+        uint8_t btn3[3];
+        joy_pack_btn3(probe_procon_u32, probe_role, btn3);
         f[0] = 0xA1u;
         f[1] = 0x30u;
         f[2] = probe_report_timer++;
         f[3] = 0x80u;
-        f[4] = probe_btn[0];
-        f[5] = probe_btn[1];
-        f[6] = probe_btn[2];
-        pack_stick_12bit(probe_lx, probe_ly, &f[7]);
-        pack_stick_12bit(probe_rx, probe_ry, &f[10]);
+        f[4] = btn3[0];
+        f[5] = btn3[1];
+        f[6] = btn3[2];
+        pack_role_sticks(&f[7]);
         f[13] = 0x08u;
         hid_device_send_interrupt_message(probe_hid_cid, f, sizeof(f));
         probe_state_sent++;
@@ -204,14 +223,19 @@ static void note_subcmd(uint8_t sub)
 /* ack 上位ニブルは中身の予告: 80 無し / 82 機器 / 83 トリガ / 90 SPI /
  * 81 ペア / B0 灯 / C0 IMU / D0 電圧。実物(GP2040)通り。 */
 
-/* 機器情報: fw 03 8B(実測値) / 種別 03(Pro) / 自アドレス。 */
+/* 機器情報: fw・種別はpersonality行、MACは起動時role-tag済みprobe_addr。
+ * ProCon行 (fw 03 8B / 種別 03 / role0恒等MAC) で従来バイトと同一。 */
 static void reply_device_info(uint16_t *p)
 {
+    const personality_t *row = personality_get(probe_role);
     int k;
+    if (row == NULL) {
+        row = &PERSONALITY_TABLE[(uint8_t)EMUL_ROLE_PROCON];
+    }
     *p = probe_build_reply(0x82u, 0x02u);
-    reply_buf[(*p)++] = 0x03u;
-    reply_buf[(*p)++] = 0x8Bu;
-    reply_buf[(*p)++] = 0x03u;
+    reply_buf[(*p)++] = row->fw_major;
+    reply_buf[(*p)++] = row->fw_minor;
+    reply_buf[(*p)++] = row->dev_type;
     reply_buf[(*p)++] = 0x02u;
     for (k = 0; k < 6; k++) {
         reply_buf[(*p)++] = probe_addr[k];
@@ -259,6 +283,73 @@ static void reply_spi(const uint8_t *report, int report_size)
     }
     addr = (uint16_t)report[10] | ((uint16_t)report[11] << 8);
     want = report[14];
+    if (probe_role != (uint8_t)EMUL_ROLE_PROCON) {
+        /* Joy SPI (spi.hのcall-site rule通り): 0x6000<=addr<0x9000は
+         * T6所有 spi_joy_blank＋ACK 0x90、それ以外はtransport-default miss
+         * (BT: 応答なし。ProConのspi_find経路は通らない)。 */
+        uint8_t blen = 0u;
+        const uint8_t *blank;
+        if (addr < 0x6000u || addr >= 0x9000u) {
+            snprintf(msg, sizeof(msg),
+                     "  SPI joy miss addr=0x%04x size=%u (no reply)",
+                     (unsigned)addr, (unsigned)want);
+            probe_line(msg);
+            reply_len = 0u;
+            return;
+        }
+        /* Joy color exception: 0x6050/0x601Bだけは共有カラーバッファを
+         * 返す (COLOR_SETで設定可。暫定ゼロで真っ黒になるため)。
+         * 他域はblankのまま。 */
+        if (addr == 0x6050u) {
+            uint8_t n = (want > 13u) ? 13u : want;
+            p = probe_build_reply(0x90u, 0x10u);
+            reply_buf[p++] = (uint8_t)(addr & 0xFFu);
+            reply_buf[p++] = (uint8_t)(addr >> 8);
+            reply_buf[p++] = 0x00u;
+            reply_buf[p++] = 0x00u;
+            reply_buf[p++] = want;
+            memcpy(&reply_buf[p], spi_color_6050, n);
+            if (want > n) {
+                memset(&reply_buf[p + n], 0, (size_t)(want - n));
+            }
+            p = (uint16_t)(p + want);
+            reply_len = p;
+            return;
+        }
+        if (addr == 0x601Bu) {
+            /* 色情報あり=0x01。0だとSwitchは0x6050を無視する (dekuNukem準拠)。 */
+            static const uint8_t joy_601b = 0x01u;
+            uint8_t n = (want > 1u) ? 1u : want;
+            p = probe_build_reply(0x90u, 0x10u);
+            reply_buf[p++] = (uint8_t)(addr & 0xFFu);
+            reply_buf[p++] = (uint8_t)(addr >> 8);
+            reply_buf[p++] = 0x00u;
+            reply_buf[p++] = 0x00u;
+            reply_buf[p++] = want;
+            memcpy(&reply_buf[p], &joy_601b, n);
+            if (want > n) {
+                memset(&reply_buf[p + n], 0, (size_t)(want - n));
+            }
+            p = (uint16_t)(p + want);
+            reply_len = p;
+            return;
+        }
+        blank = spi_joy_blank(want, &blen);
+        if (blank == NULL || blen == 0u) {
+            reply_len = 0u;
+            return;
+        }
+        p = probe_build_reply(0x90u, 0x10u);
+        reply_buf[p++] = (uint8_t)(addr & 0xFFu);
+        reply_buf[p++] = (uint8_t)(addr >> 8);
+        reply_buf[p++] = 0x00u;
+        reply_buf[p++] = 0x00u;
+        reply_buf[p++] = want;
+        memcpy(&reply_buf[p], blank, blen);
+        p = (uint16_t)(p + blen);
+        reply_len = p;
+        return;
+    }
     hit = spi_find(addr);
     if (hit == NULL || want > hit->size) {
         /* 未知・不足は答えない。でたらめ校正値は渡さない。 */
@@ -347,6 +438,10 @@ static void answer_subcmd(uint8_t sub, const uint8_t *report, int report_size)
             p = probe_build_reply(0x80u, 0x33u);
             reply_buf[p++] = 0x03u;
             reply_len = p;
+            break;
+        case 0x38:
+            /* R-only HOME light: non-support ack */
+            reply_len = probe_build_reply(0x80u, 0x38u);
             break;
         case 0x40:
             if (report_size > 10) {
