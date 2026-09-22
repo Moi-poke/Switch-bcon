@@ -1,30 +1,28 @@
 # switch-bcon
 
-Raspberry Pi Pico 2 W 上で動作する Nintendo Switch 用 Pro Controller エミュレータです。
+Nintendo Switch 用 Pro Controller エミュレータ
+Raspberry Pi Pico 2 W 上で動作確認済
 
-USB 接続および Classic Bluetooth 接続に対応し、PC から UART 経由で入力状態を受信して Switch へ転送します。
+USB 接続/Classic Bluetooth 接続に対応し、PC から UART 経由で入力状態を受信して Switch へ転送します。
 また、BLE Wake Beacon の取得・再生機能を備えています。
 
 本プロジェクトは Poke-Controller 系ツールとの連携を主な利用目的として開発しています。
 
-## クイックスタート
-
-ビルド不要で試せます。
+## 導入方法
 
 1. `../../releases` から利用する構成の UF2 をダウンロードする
 2. BOOTSEL ボタンを押しながら Pico 2 W を PC に接続する
 3. マウントされたドライブに UF2 をドラッグ＆ドロップする
-4. PC の UART を GP4 / GP5 に接続する（1Mbps 8N1）
-5. Switch の「コントローラーの持ちかた/順番をかえる」画面で接続する
+4. UART を GP4 / GP5 に接続する
 
 ## 主な機能
 
 - Nintendo Switch Pro Controller エミュレーション
 - USB HID（有線接続）
 - Classic Bluetooth HID（無線接続）
-- BLE Wake Beacon の記録・再生
+- BLE Wake Beacon の記録・再生 (Switch2のスリープ解除)
 - UART 経由でのコントローラ状態入力
-- Poke-Controller Modified 互換モード
+- Poke-Controller Modified 旧版との互換モード(ビルド時定数変更)
 - ホスト環境での単体テスト対応
 
 ## 動作状況
@@ -41,10 +39,10 @@ USB 接続および Classic Bluetooth 接続に対応し、PC から UART 経由
 | ジャイロ入力 | ❌ | — |
 | Joy-Con L/R | ✅ | 有線対応 |
 
-有線Joy-Con L/R に対応しました。
-Switch実機で認識および操作を確認済みです。
+有線Joy-Con L/R に対応。
+Switch実機で認識および操作を確認済み。
 
-## システム構成
+## 構成
 
 ```text
 PC ──UART──▶ Raspberry Pi Pico 2 W ──┬── USB HID ──────────────┬──▶ Nintendo Switch
@@ -61,7 +59,7 @@ PC ──UART──▶ Raspberry Pi Pico 2 W ──┬── USB HID ───�
 
 ### アーキテクチャ
 
-デュアルコア構成です。Core1 が UART 受信・パース専用、Core0 が BT・USB 処理と 1ms 周期の tick 駆動を担当します。詳細は開発者 Wiki を参照してください。
+デュアルコア構成です。Core1 が UART 受信・パース専用、Core0 が BT・USB 処理と 1ms 周期の tick 駆動を担当します。詳細は Wiki を参照。
 
 - `docs/wiki/Architecture.md`
 
@@ -69,7 +67,7 @@ PC ──UART──▶ Raspberry Pi Pico 2 W ──┬── USB HID ───�
 
 通信プロトコルの詳細は以下を参照してください。
 
-- `spec/protocol_v3.md`（単一の真実源、`PROTO_VER=4`。ファイル名の v3 は歴史的経緯によるもので、内容の v4 が正です）
+- `spec/protocol_v3.md`
 
 主な仕様は次の通りです。
 
