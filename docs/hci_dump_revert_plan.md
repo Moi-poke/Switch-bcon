@@ -62,7 +62,7 @@ $bd    = Join-Path $env:TEMP 'bcon-hcidump'
 
 ## REVERT the instrumentation (remove the 3 lines)
 
-Because the artifact was built from the isolated pristine copy, the main `C:\pico-bcon`
+Because the artifact was built from the isolated pristine copy, the main `C:\PokeCon\Switch-bcon`
 tree carries **no** hci_dump changes from this task. To revert the 3 lines from any tree
 that did receive them:
 
