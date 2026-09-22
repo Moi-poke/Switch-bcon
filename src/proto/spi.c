@@ -84,3 +84,19 @@ const spi_entry_t *spi_find(uint16_t addr) {
     }
     return NULL;
 }
+
+/* Joy-Con provisional zero-fill (see spi.h). Zeros ONLY, provisional. */
+static const uint8_t SPI_JOY_BLANK[32] = {0};
+
+const uint8_t *spi_joy_blank(uint8_t req_len, uint8_t *out_len) {
+    if (out_len == NULL || req_len == 0u) {
+        return NULL;
+    }
+    *out_len = req_len > 32u ? 32u : req_len;
+    return SPI_JOY_BLANK;
+}
+
+/* NOTE (Change A): Joy cal serving moved to table values shared with ProCon
+ * (build_spi_response_joy spi_find hit). The former virtual-cal RAM-shadow
+ * (spi_virtual_joy) is removed; scopeB CAL NOT-zeros contracts hold via
+ * table bytes. BT Joy keeps full-blank (transport divergence). */

@@ -7,10 +7,17 @@
 
 #include "tusb.h"
 
-/* Device: USB 2.00, EP0 64B, VID 0x057E / PID 0x2009。
+#include "usb_hid.h"
+
+/* Device: USB 2.00, EP0 64B, VID 0x057E / PID は Plan A で全 role 0x2009 固定
+ * (USB_PID_BY_ROLE 全要素 0x2009。PERSONALITY_TABLE の BT 側 2006/2007 は
+ * 無線用プレースホルダで USB 列挙には使わない)。
  * bcdDevice は ToadKing の線上のバイト 0x00,0x02 (LE) = 0x0200 を採る。
- * 実測未確認: 0x0210 説あり、ドック検証で確定。 */
-static tusb_desc_device_t const desc_device = {
+ * 実測未確認: 0x0210 説あり、ドック検証で確定。
+ * 記述子は全 role 同一 (VID・PID・bcd・EP・間隔・構成は不変)。
+ * desc_device を const にしない理由: 歴史的に PID を起動時 role で選んでいた
+ * 名残 (現状は固定値の再代入。USB init/列挙より先に確定)。 */
+static tusb_desc_device_t desc_device = {
     .bLength = sizeof(tusb_desc_device_t),
     .bDescriptorType = TUSB_DESC_DEVICE,
     .bcdUSB = 0x0200,
@@ -29,6 +36,8 @@ static tusb_desc_device_t const desc_device = {
 
 uint8_t const *tud_descriptor_device_cb(void)
 {
+    /* Plan A: 全 role 0x2009 固定 (usb_pid_for_role は全 role 0x2009 を返す)。 */
+    desc_device.idProduct = usb_pid_for_role(usb_get_role());
     return (uint8_t const *)&desc_device;
 }
 
@@ -162,7 +171,9 @@ uint8_t const *tud_descriptor_configuration_cb(uint8_t index)
     return desc_configuration;
 }
 
-/* 文字列 (純正の写し。シリアルは純正固定値)。 */
+/* 文字列 (純正の写し。シリアルは純正固定値)。
+ * Plan A: 製品名も全 role "Pro Controller" 固定 (usb_product_for_role は
+ * 全 role 同値を返す。BT 側 PERSONALITY_TABLE の Joy-Con 文字列は無線用)。 */
 enum {
     WIRED_STRID_LANGID = 0,
     WIRED_STRID_MANUFACTURER,
@@ -173,7 +184,7 @@ enum {
 static char const *const wired_string_desc_arr[] = {
     (const char[]){0x09, 0x04}, /* 0: 英語 (0x0409) */
     "Nintendo Co., Ltd",        /* 1: 製造者 */
-    "Pro Controller",           /* 2: 製品名 */
+    "Pro Controller",           /* 2: 製品名 (Plan A で全 role 固定) */
     "000000000001",             /* 3: シリアル (純正固定値) */
 };
 
@@ -195,6 +206,9 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid)
             return NULL;
         }
         str = wired_string_desc_arr[index];
+        if (index == WIRED_STRID_PRODUCT) {
+            str = usb_product_for_role(usb_get_role());
+        }
         chr_count = strlen(str);
         max_count = (sizeof(wired_desc_str) / sizeof(wired_desc_str[0])) - 1u;
         if (chr_count > max_count) {
@@ -210,6 +224,8 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid)
 
 /* GET_REPORT 要求が来た実測はないため 0 (STALL) のまま。
  * でたらめ値は返さない。観測されたら usb_wired 側で持つ。 */
+void probe_line(const char *s);
+
 uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
                                hid_report_type_t report_type, uint8_t *buffer,
                                uint16_t reqlen)
@@ -219,6 +235,7 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
     (void)report_type;
     (void)buffer;
     (void)reqlen;
+    probe_line("UGET");
     return 0;
 }
 

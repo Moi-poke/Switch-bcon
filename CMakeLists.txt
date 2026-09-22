@@ -97,6 +97,7 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
     src/usb/usb_hid.c
     src/usb/usb_wired.c
     src/bt/hid.c
+    src/bt/personality.c
     src/bt/link.c
     src/bt/link_conn.c
     src/bt/link_cap.c

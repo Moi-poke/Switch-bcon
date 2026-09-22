@@ -16,6 +16,7 @@
 #define TAG_CAP 0x42435731u   /* 'BCW1' */
 #define TAG_WIRED 0x42435752u /* 'BCWR' */
 #define TAG_BAUD 0x42434252u  /* 'BCBR' (B §3＋B-0共有レート表index) */
+#define TAG_EMULATE 0x4243454Du /* 'BCEM' */
 /* 注意: wakeconとは別名前空間にする。同一Picoで共存しBT MACも同一導出の
  * ため、NXxx系TAGを共有するとwakecon保存値 (特にWIRED) を拾ってしまう。
  * Classicリンク鍵 (BTstack管理) は同一機器として共有するのが正しいため
@@ -273,6 +274,39 @@ bool store_wired_load_def(bool dflt)
         return dflt;
     }
     return v != 0u;
+}
+
+/* emulate-role保持 (0/1/2=EMUL_ROLE_* in proto/protocol.h)。Core0 exec_fxのみ
+ * (Core1/BTコールバックから呼ばない)。単発tag_store_safe (外側flash_safe_execute禁止)。 */
+void store_emulate(uint8_t role)
+{
+    const btstack_tlv_t *tlv = NULL;
+    void *ctx = NULL;
+    uint8_t v = role;
+    if (role > 2u) {
+        return;
+    }
+    if (!get_tlv(&tlv, &ctx)) {
+        return;
+    }
+    (void)tag_store_safe(tlv, ctx, TAG_EMULATE, &v, 1);
+}
+
+uint8_t store_emulate_load_def(uint8_t dflt)
+{
+    const btstack_tlv_t *tlv = NULL;
+    void *ctx = NULL;
+    uint8_t v = 0u;
+    if (!get_tlv(&tlv, &ctx)) {
+        return dflt;
+    }
+    if (tlv->get_tag(ctx, TAG_EMULATE, &v, 1) != 1) {
+        return dflt;
+    }
+    if (v > 2u) {
+        return dflt;
+    }
+    return v;
 }
 
 /* baud hunt (B-0) の last-good 永続。変化時のみ1 write (Flash wear配慮)。

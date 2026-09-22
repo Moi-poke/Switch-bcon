@@ -10,8 +10,12 @@
 #include "pico/time.h"
 #include "tusb.h"
 
+#include <stdio.h>
+
 #include "usb_wired.h"
 #include "usb_hid.h"
+
+void probe_line(const char *s);
 
 /* 入力状態の所有元は main.c。読みのみ。 */
 extern uint8_t bcon_btn[3];
@@ -25,12 +29,13 @@ extern uint32_t bcon_usb_rumble_n; /* 所有元main.c。USB振動0x10受信累�
 #define USB_WIRED_REPORT_ID_REPLY 0x81u
 /* 送信周期8ms (bInterval 8写しに合わせる。到着即更新はCore0のpull側)。 */
 #define USB_WIRED_INPUT_INTERVAL_MS 8u
-/* 81 01 応答の機種別 type。Pro=0x03 (2wiCC kUsbDeviceTypeProController)。 */
-#define USB_WIRED_DEV_TYPE_PRO 0x03u
+/* 81 01 応答の機種別 type は起動時 role 由来 (ProCon=0x03)。
+ * 2wiCC の kUsbDeviceTypeProController で確認した ProCon 値が既定。 */
 
 static bool wired_enabled;
 static bool handshake_done; /* 80 04 受信で true。80 05・抜線で false に戻す。 */
 static bool wired_inited;
+static bool kick81_done; /* mount毎1回: Joy役の81 01先制通知済み */
 static uint32_t last_input_ms;
 static usb_wired_stats_t wired_stats;
 
@@ -38,6 +43,7 @@ void usb_wired_init(void)
 {
     wired_enabled = false;
     handshake_done = false;
+    kick81_done = false;
     last_input_ms = 0u;
     (void)tud_init(BOARD_TUD_RHPORT);
     /* SOF 計数はバス生存の証拠 (ホストがフレームを回しているか)。
@@ -92,6 +98,9 @@ static void build_input_report(uint8_t out[USB_WIRED_INPUT_LEN])
     ctx.ry = bcon_ry;
     ctx.timer =
         (uint8_t)(to_ms_since_boot(get_absolute_time()) >> 5);
+    /* role は起動時1回だけ決まる (usb_set_role)。入力 pack (ボタン・
+     * 親指側選択) と 0x02 機器情報は usb_hid 側が ctx.role で適用する。 */
+    ctx.role = usb_get_role();
     usb_build_30_report(&ctx, out);
 }
 
@@ -117,6 +126,7 @@ void usb_wired_reconnect(void)
 {
     handshake_done = false;
     pend_resp_valid = false;
+    kick81_done = false;
     tud_disconnect();
     sleep_ms(500);
     tud_connect();
@@ -131,6 +141,23 @@ void usb_wired_task(uint32_t now_ms)
 {
     uint8_t report[USB_WIRED_INPUT_LEN];
     tud_task();
+    /* Joy役の81 01先制通知 (espp式kick-start)。ドックは2006/2007に
+     * 80 01を送ってこない実測のため、mount直後にこちらから
+     * 81 01 00<type><mac>を出し80 02を誘う。ProConは実績経路のため
+     * 対象外 (usb_kick81_due が条件を固定)。mount毎1回・送信は
+     * pend経路のみ (コールバック内送信禁止)。 */
+    if (usb_kick81_due(usb_get_role(), wired_enabled, tud_mounted(),
+                       kick81_done, pend_resp_valid)) {
+        uint8_t kick81[2] = { 0x80u, 0x01u };
+        int n = usb_build_81_reply(kick81, 2, pend_resp,
+                                   (int)sizeof(pend_resp), bcon_mac,
+                                   usb_devtype_for_role(usb_get_role()));
+        if (n > 0) {
+            pend_resp_id = USB_WIRED_REPORT_ID_REPLY;
+            pend_resp_valid = true;
+            kick81_done = true;
+        }
+    }
     /* 保留中の応答を先に送る (2wiCC の special first 相当)。
      * 送れなければ次 tick に持ち越す。 */
     if (pend_resp_valid) {
@@ -138,6 +165,11 @@ void usb_wired_task(uint32_t now_ms)
             tud_hid_report(pend_resp_id, &pend_resp[1],
                            (uint16_t)(sizeof(pend_resp) - 1u))) {
             pend_resp_valid = false;
+            {
+                char ul[24];
+                snprintf(ul, sizeof(ul), "UTX id=%02x", pend_resp_id);
+                probe_line(ul);
+            }
             if (pend_resp_id == USB_WIRED_REPORT_ID_REPLY) {
                 wired_stats.tx81++;
             } else {
@@ -219,12 +251,20 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
         } else if (wired_enabled && sub == 0x05u) {
             handshake_done = false;
         }
+        {
+            char ul[32];
+            snprintf(ul, sizeof(ul), "U80 s=%02x hs=%d", sub,
+                     handshake_done ? 1 : 0);
+            probe_line(ul);
+        }
         /* 応答は積むだけにする。送信は usb_wired_task 側で行う。 */
         n = usb_build_81_reply(req, (int)req_len, pend_resp,
                                (int)sizeof(pend_resp), bcon_mac,
-                               USB_WIRED_DEV_TYPE_PRO);
+                               usb_devtype_for_role(usb_get_role()));
         if (n <= 0) {
-            return; /* 不正入力のみ送らない。応答は常に 64B (ID+63)。 */
+            /* 送らない: 不正入力 or 80 04 実機沈黙 (Change B。hs=true は
+             * 上で立て済み)。応答は常に 64B (ID+63)。 */
+            return;
         }
         pend_resp_id = USB_WIRED_REPORT_ID_REPLY;
         pend_resp_valid = true;
@@ -273,6 +313,13 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
             req[11] == 0x30u) {
             handshake_done = true;
         }
+        {
+            char ul[40];
+            uint8_t sd = (req_len >= 12u) ? req[11] : 0u;
+            snprintf(ul, sizeof(ul), "U01 s=%02x d=%02x hs=%d", sub, sd,
+                     handshake_done ? 1 : 0);
+            probe_line(ul);
+        }
         if (sub == 0x30u && req_len >= 12) {
             usb_player = req[11];
         }
@@ -287,6 +334,7 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
             (uint8_t)(to_ms_since_boot(get_absolute_time()) >> 5);
         memcpy(ctx.mac, bcon_mac, 6);
         ctx.player = usb_player;
+        ctx.role = usb_get_role();
         n = usb_build_21_reply(req, (int)req_len, pend_resp,
                                (int)sizeof(pend_resp), &ctx);
         if (n <= 0) {
@@ -310,6 +358,7 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
 void tud_mount_cb(void)
 {
     wired_stats.mount++;
+    probe_line("MMOUNT");
 }
 
 /* 抜線で handshake を落とす。次セッションは 80 04 からやり直し。
@@ -319,6 +368,8 @@ void tud_umount_cb(void)
 {
     wired_stats.unmount++;
     handshake_done = false;
+    kick81_done = false;
+    probe_line("UUMOUNT");
 }
 
 /* SOF 到達 = ホストがバスにフレームを流している (列挙前でも進む)。

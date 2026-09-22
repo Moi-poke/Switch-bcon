@@ -2,6 +2,7 @@
 // Covers: u32->3B pack (spec section 11), stick 12bit pack,
 // 81/21/30 builders (ported from wakecon, response bytes identical).
 // Build: via tests/host/CMakeLists.txt (ctest name: usb).
+// [PABot-ref]: PABotBase2観測応答を参考に同等機能を再現 (互換主張なし)。詳細は src/usb/usb_hid.c 先頭。
 #include <stdio.h>
 #include <string.h>
 #include "../../src/proto/protocol.h"
@@ -106,9 +107,15 @@ int main(void) {
         CHECK(n == 64 && out[0] == 0x81 && out[1] == 0x01 && out[2] == 0x00 &&
               out[3] == 0x03 && memcmp(&out[4], mac, 6) == 0 && out[63] == 0,
               "81 01 + MAC + 64B");
+        /* Change B: real HW is silent on 80 04 (known FW quirk) — the
+         * builder queues nothing (receive path still sets hs=true).
+         * 80 05 keeps its 81 05 reply. */
         const uint8_t req04[] = { 0x80, 0x04 };
         n = usb_build_81_reply(req04, 2, out, 64, mac, 0x03);
-        CHECK(n == 64 && out[0] == 0x81 && out[1] == 0x04, "81 04 ack");
+        CHECK(n == 0, "80 04 silent (no 81 04)");
+        const uint8_t req05[] = { 0x80, 0x05 };
+        n = usb_build_81_reply(req05, 2, out, 64, mac, 0x03);
+        CHECK(n == 64 && out[0] == 0x81 && out[1] == 0x05, "80 05 keeps 81 05");
         const uint8_t bad[] = { 0x00, 0x04 };
         CHECK(usb_build_81_reply(bad, 2, out, 64, mac, 0x03) == 0, "non-80 rejected");
         CHECK(usb_build_81_reply(req01, 2, out, 63, mac, 0x03) == 0, "short buf rejected");
@@ -207,6 +214,47 @@ int main(void) {
             usb_build_30_report(&ctx, rep);
             CHECK((rep[3] & 0x08) != 0, "A reaches USB byte0 bit3");
         }
+    }
+
+    printf("[8] kick81 gate: joy-only, wired, mounted, once per mount\n");
+    {
+        CHECK(usb_kick81_due(1, true, true, false, false),
+              "JoyL ready -> kick");
+        CHECK(usb_kick81_due(2, true, true, false, false),
+              "JoyR ready -> kick");
+        CHECK(!usb_kick81_due(0, true, true, false, false),
+              "ProCon never kicks (proven path)");
+        CHECK(!usb_kick81_due(3, true, true, false, false),
+              "out-of-range role -> no kick");
+        CHECK(!usb_kick81_due(1, false, true, false, false),
+              "wireless boot -> no kick");
+        CHECK(!usb_kick81_due(1, true, false, false, false),
+              "unmounted -> no kick");
+        CHECK(!usb_kick81_due(1, true, true, true, false),
+              "already kicked this mount -> no repeat");
+        CHECK(!usb_kick81_due(2, true, true, false, true),
+              "pend slot busy -> defer");
+    }
+
+    /* [PABot-ref]: battery/conn byte is 0x91 for ALL roles (live capture
+     * never shows 0x97; old dekuNukem JC nibble retired). */
+    printf("[9] conn nibble: 0x91 all roles [PABot-ref]\n");
+    {
+        usb_sub_ctx_t ctx;
+        uint8_t out12[12];
+        memset(&ctx, 0, sizeof(ctx));
+        ctx.lx = ctx.ly = ctx.rx = ctx.ry = 0x800;
+        usb_pack_controller_data(out12, &ctx);
+        CHECK(out12[1] == 0x91u, "role0 (ProCon) keeps 0x91");
+        ctx.role = 1u;
+        usb_pack_controller_data(out12, &ctx);
+        CHECK(out12[1] == 0x91u, "role1 (JoyL) sends 0x91 ([PABot-ref])");
+        ctx.role = 2u;
+        usb_pack_controller_data(out12, &ctx);
+        CHECK(out12[1] == 0x91u, "role2 (JoyR) sends 0x91 ([PABot-ref])");
+        ctx.role = 9u;
+        usb_pack_controller_data(out12, &ctx);
+        CHECK(out12[1] == 0x91u, "out-of-range role falls back to 0x91");
     }
 
     printf("\nRESULT: %s (%d failures)\n", fails == 0 ? "ALL PASS" : "HAS FAILURES", fails);

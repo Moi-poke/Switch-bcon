@@ -76,6 +76,7 @@ T_STATUS = 0x20
 T_STATUS_REQ = 0x35
 T_BAUD_SET = 0x36
 T_BOOTSEL = 0x37
+T_EMULATE = 0x38  # EMULATE_MODE (role 0=ProCon 1=JoyConL 2=JoyConR)
 BOOTSEL_MAGIC = 0x5A
 
 # B §3 / B-0 共有レート表 (src/proto/baud.c と同一)。
@@ -91,6 +92,12 @@ def build_baudset(idx: int, seq: int) -> bytes:
 def build_bootsel(seq: int) -> bytes:
     """BOOTSEL LEN=1 magic 0x5A (dev only: USB BOOTSEL reboot)."""
     body = bytes((T_BOOTSEL, 1, BOOTSEL_MAGIC, seq & 0xFF))
+    return bytes((SYNC,)) + body + bytes((crc8_smbus(body),))
+
+
+def build_emulate(role: int, seq: int) -> bytes:
+    """EMULATE_MODE LEN=1 role 0=ProCon 1=JoyConL 2=JoyConR."""
+    body = bytes((T_EMULATE, 1, role & 0xFF, seq & 0xFF))
     return bytes((SYNC,)) + body + bytes((crc8_smbus(body),))
 
 
@@ -473,6 +480,10 @@ def main() -> int:
     ap.add_argument("--bootsel", action="store_true",
                     help="send BOOTSEL magic (TYPE 0x37 magic 0x5A) once,"
                     " then exit (dev only: FW reboots to USB BOOTSEL in ~500ms)")
+    ap.add_argument("--emulate", type=int, choices=(0, 1, 2), default=None,
+                    metavar="{0,1,2}",
+                    help="send EMULATE_MODE (TYPE 0x38 role 0=ProCon 1=L 2=R) once,"
+                    " then exit")
     args = ap.parse_args()
 
     try:
@@ -509,6 +520,22 @@ def main() -> int:
             f = build_bootsel(seq)
             ser.write(f)
             print(f"bootsel sent seq={seq} {f.hex(' ')}", flush=True)
+            return 0
+        finally:
+            ser.close()
+    if args.emulate is not None:
+        try:
+            f = build_emulate(args.emulate, seq)
+            ser.write(f)
+            print(f"emulate sent role={args.emulate} seq={seq} {f.hex(' ')}", flush=True)
+            for typ, rseq, pay in scan_frames(ser, 2.0):
+                if typ == T_STATUS and len(pay) == 7:
+                    print(f"STATUS flags=0x{pay[0]:02X} last=0x{pay[1]:02X} "
+                          f"crc={pay[2] | (pay[3] << 8)} drop={pay[4] | (pay[5] << 8)} "
+                          f"err=0x{pay[6]:02X} seq=0x{rseq:02X}", flush=True)
+                    break
+            else:
+                print(f"raw {f.hex(' ')}", flush=True)
             return 0
         finally:
             ser.close()

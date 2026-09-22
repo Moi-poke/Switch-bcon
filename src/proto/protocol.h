@@ -34,6 +34,13 @@ enum {
     T_STATUS_REQ    = 0x35, // PC->Pico LEN=0
     T_BAUD_SET      = 0x36, // PC->Pico LEN=1 rate index (B §3)
     T_BOOTSEL       = 0x37, // PC->Pico LEN=1 magic 0x5A -> USB BOOTSEL (dev only)
+    T_EMULATE_MODE  = 0x38, // PC->Pico LEN=1 role 0=ProCon/1=JoyL/2=JoyR
+};
+
+enum {
+    EMUL_ROLE_PROCON = 0,
+    EMUL_ROLE_JOY_L  = 1,
+    EMUL_ROLE_JOY_R  = 2,
 };
 
 enum {
