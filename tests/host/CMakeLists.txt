@@ -2,7 +2,7 @@
 # Run from a cmd with vcvars64.bat already called:
 #   cmake -S tests/host -B build-host
 #   cmake --build build-host --config Debug
-#   ctest --test-dir build-host -V
+#   ctest --test-dir build-host -C Debug -V
 cmake_minimum_required(VERSION 3.16)
 project(switch_bcon_host_tests C)
 
