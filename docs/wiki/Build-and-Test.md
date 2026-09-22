@@ -28,10 +28,10 @@ $ninja = Join-Path $env:USERPROFILE '.pico-sdk/ninja/v1.13.2/ninja.exe'
 ```text
 cmake -S tests/host -B build-host
 cmake --build build-host --config Debug
-ctest --test-dir build-host -V
+ctest --test-dir build-host -C Debug -V
 ```
 
-上記は `AGENTS.md:18-23` の正準手順である。`ctest.exe` は cmake と同じディレクトリのものをフルパスで呼ぶ。単体実行は `ctest --test-dir build-host -R <protocol|usb|config> -V` である。MSVC には `/utf-8` が要る（日本語コメント、C4819 対策）。`tests/host/CMakeLists.txt` に設定済みであり、外さないこと (`AGENTS.md:24`)。
+上記は `AGENTS.md:18-23` の正準手順である。`ctest.exe` は cmake と同じディレクトリのものをフルパスで呼ぶ。単体実行は `ctest --test-dir build-host -C Debug -R <protocol|usb|config> -V` である。MSVC には `/utf-8` が要る（日本語コメント、C4819 対策）。`tests/host/CMakeLists.txt` に設定済みであり、外さないこと (`AGENTS.md:24`)。
 
 試験は次の6本立てである。
 

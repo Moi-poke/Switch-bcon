@@ -29,7 +29,7 @@
     応答生成の helper 分離、Device Info の role コンテキスト化
   - USB PID/製品名を `2009` / `Pro Controller` に固定
   - `80 04` 無応答化 (実機準拠)
-- host テスト全 green (9 suite相当: `ctest --test-dir build-host`)
+- host テスト全 green (9 suite相当: `ctest --test-dir build-host -C Debug`)
 - 実機フラッシュ版: `log/switch-bcon-joyfix2-20260921.uf2`
   (SHA256 `8EC99902…DBC`)
 - 職場 Edge の Copilot で設計+実装レビュー (条件付き承認→5点反映→承認)
