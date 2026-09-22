@@ -11,3 +11,6 @@ firmware/
 __pycache__/
 docs/superpowers/
 log/
+.omo/
+.opencode/
+skills-lock.json
