@@ -19,9 +19,9 @@ Host unit tests — must run from a `vcvars64.bat`-initialized cmd (plain PowerS
 ```
 cmake -S tests/host -B build-host
 cmake --build build-host --config Debug
-ctest --test-dir build-host -V
+ctest --test-dir build-host -C Debug -V
 ```
-Single test: `ctest --test-dir build-host -R <protocol|usb|config|baud|pokecon|rumble|personality> -V`. MSVC needs `/utf-8` (Japanese comments, C4819) — already set in `tests/host/CMakeLists.txt`, don't remove.
+Single test: `ctest --test-dir build-host -C Debug -R <protocol|usb|config|baud|pokecon|rumble|personality|joy_scopeA|joy_scopeB> -V`. MSVC needs `/utf-8` (Japanese comments, C4819) — already set in `tests/host/CMakeLists.txt`, don't remove.
 Targets: `switch-bcon` is the integrated FW; `poc_dualcore` is the PoC-only predecessor (don't extend it).
 
 ## Architecture
