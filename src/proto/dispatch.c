@@ -30,7 +30,6 @@ static uint8_t cfg_err(uint8_t type) {
 v3_live_t v3_on_frame(v3_session_t *s, uint8_t type,
                       const uint8_t *payload, uint8_t len, uint8_t seq) {
     (void)seq; // SEQ欠番検出はparser統計 (link_stats_t) が担う
-    s->fx = FX_NONE;
     switch (type) {
         case T_STATE:
             if (!proto_state_len_ok(len)) { s->errcode = ERR_BAD_LEN; return V3_IGNORE; }

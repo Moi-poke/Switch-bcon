@@ -220,7 +220,7 @@ int main(void) {
         CHECK(v3_on_frame(&s, T_BAUD_SET, ok4, 1, 2) == V3_IGNORE &&
               s.fx == FX_BAUD_SET && s.fx_arg == 4, "idx4 accepted");
         CHECK(v3_on_frame(&s, T_BAUD_SET, bad5, 1, 3) == V3_IGNORE &&
-              s.errcode == 0x16 && s.fx == FX_NONE, "idx5 rejected (0x16)");
+               s.errcode == 0x16 && s.fx == FX_BAUD_SET && s.fx_arg == 4, "idx5 rejected (0x16, fx preserved)");
         CHECK(v3_on_frame(&s, T_BAUD_SET, ok0, 0, 4) == V3_IGNORE &&
               s.errcode == ERR_BAD_LEN, "LEN=0 rejected (BAD_LEN)");
     }
@@ -236,7 +236,7 @@ int main(void) {
         CHECK(s.ob_n == 1 && s.ob[0].act == ACT_SEND_STATUS,
               "accept queues STATUS ACK (old rate)");
         CHECK(v3_on_frame(&s, T_BOOTSEL, bad, 1, 2) == V3_IGNORE &&
-              s.errcode == 0x17 && s.fx == FX_NONE, "wrong magic rejected (0x17)");
+               s.errcode == 0x17 && s.fx == FX_BOOTSEL && s.fx_arg == 0x5A, "wrong magic rejected (0x17, fx preserved)");
         CHECK(v3_on_frame(&s, T_BOOTSEL, ok, 0, 3) == V3_IGNORE &&
               s.errcode == ERR_BAD_LEN, "LEN=0 rejected (BAD_LEN)");
     }
@@ -314,7 +314,7 @@ int main(void) {
               s.fx == FX_EMULATE_MODE && s.fx_arg == 2 && s.emulate_val == 2,
               "EMULATE=2 (JoyR) accepted");
         CHECK(v3_on_frame(&s, T_EMULATE_MODE, bad, 1, 4) == V3_IGNORE &&
-              s.errcode == 0x18 && s.fx == FX_NONE, "EMULATE=3 rejected (0x18)");
+               s.errcode == 0x18 && s.fx == FX_EMULATE_MODE && s.fx_arg == 2, "EMULATE=3 rejected (0x18, fx preserved)");
         CHECK(v3_on_frame(&s, T_EMULATE_MODE, procon, 0, 5) == V3_IGNORE &&
               s.errcode == ERR_BAD_LEN, "LEN=0 rejected (BAD_LEN)");
         CHECK(FW_MINOR == 2, "FW_MINOR==2");
@@ -332,6 +332,27 @@ int main(void) {
         CHECK(v3_on_frame(&s, T_EMULATE_MODE, joyl, 1, 1) == V3_IGNORE &&
               s.fx == FX_EMULATE_MODE && s.fx_arg == 1 && s.emulate_val == 1,
               "EMULATE=1 -> FX_EMULATE_MODE reboot-path intent");
+    }
+
+    printf("[24] same-drain CAPTURE+STATUS_REQ preserves fx\n");
+    v3_session_init(&s);
+    {
+        const uint8_t cap[] = { 30 };
+        bool has_status = false, has_pi = false;
+        /* main.c:994-1012 の同drain再現: reset無しで2フレーム連続処理 */
+        CHECK(v3_on_frame(&s, T_CAPTURE_START, cap, 1, 1) == V3_IGNORE &&
+              s.fx == FX_CAPTURE_START && s.fx_arg == 30,
+              "CAPTURE_START sec=30 -> FX");
+        CHECK(v3_on_frame(&s, T_STATUS_REQ, NULL, 0, 2) == V3_IGNORE,
+              "STATUS_REQ ignored (outbox only)");
+        for (uint8_t k = 0; k < s.ob_n; k++) {
+            if (s.ob[k].act == ACT_SEND_STATUS) has_status = true;
+            if (s.ob[k].act == ACT_SEND_PLAYER_INFO) has_pi = true;
+        }
+        CHECK(s.fx == FX_CAPTURE_START && s.fx_arg == 30,
+              "fx survives STATUS_REQ in same drain");
+        CHECK(s.ob_n == 2 && has_status && has_pi,
+              "STATUS_REQ -> STATUS + PLAYER_INFO");
     }
 
     printf("\nRESULT: %s (%d failures)\n", fails == 0 ? "ALL PASS" : "HAS FAILURES", fails);
