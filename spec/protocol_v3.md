@@ -13,6 +13,7 @@
 | 4.0 | 2026-09-18 | RUMBLE送出開始（0x22 sending）・PLAYER_INFO新設（0x23）・PROTO_VER=4・RESULT DOWNGRADED廃止 |
 | 4.1 | 2026-09-19 | EMULATE_MODE新設（0x38）・Joy mapping・FW_MINOR=2・PROTO_VER=4維持 |
 | 4.2 | 2026-09-24 | PLAYER_INFO flags bit2=cap_saved追加（probe_cap_valid写し）・PROTO_VER=4・LEN=2・FW_MINOR据置（2のまま。新規フレームなし・意味拡張のみのため版上げ不要） |
+| 4.3 | 2026-09-24 | COLOR_GET新設（0x39・PC→Pico・LEN0）・COLOR_INFO新設（0x3A・Pico→PC・LEN12）・PROTO_VER=4維持・FW_MINOR=3 |
 
 > フィールド追加・意味変更時は必ず本表と `PROTO_VER` を更新する。
 
@@ -76,6 +77,8 @@ Offset  Field    Size  説明
 | 0x36 | BAUD_SET | PC→Pico | 1 | rate index（B §3・合意切替） |
 | 0x37 | BOOTSEL | PC→Pico | 1 | 開発用：magic 0x5AでUSB BOOTSEL再起動 |
 | 0x38 | EMULATE_MODE | PC→Pico | 1 | role選択（0=ProCon・1=JoyL・2=JoyR、Flash保存） |
+| 0x39 | COLOR_GET | PC→Pico | 0 | 色読出要求（RAM先頭12BをCOLOR_INFOで返送） |
+| 0x3A | COLOR_INFO | Pico→PC | 12 | 色応答（RGB×4。本体・ボタン・左・右） |
 
 ## 5. ペイロード定義
 
@@ -205,6 +208,17 @@ BEACON再生そのものは成功信号ではない（再生可否はbit2で判�
 初回SUB 0x30受信後に有効化し、変化時のみ送出する（lamp/flagsのバイト比較。
 bit2変化も送出対象）。STATUS_REQ受信時はSTATUSに付随して送出する。
 PROTO_VER=4・LEN=2のまま（新規フレームなし・FW_MINOR据置）。
+
+### 5.9 COLOR_GET (LEN=0) / COLOR_INFO (LEN=12、送出)
+
+`COLOR_GET`：LEN0。色読出要求。受理時は `COLOR_INFO` を送信箱に積む（戻り値は
+`V3_IGNORE` のまま。`STATUS_REQ` 同形）。
+`COLOR_INFO`：`[0..11]=RGB×4（本体・ボタン・左・右）`。RAM `spi_color_6050`
+（13B）の先頭12Bの写し。13B目（不明1B・既定 `0x00`）は送出対象外。
+RAM読出のみでFlash書込なし。`COLOR_INFO` はPico→PC送出型のため
+PC→Pico方向ではdispatch対象外（無視・STATUS/PONG/RUMBLE/PLAYER_INFO同形）。
+新規フレーム追加のためPROTO_VERは4のまま（版交渉は不変・EMULATE_MODE前例）。
+FW_MINORは2→3に上げる（HELLO_ACK `[2]` が3を返す）。
 
 ## 6. CRC8
 
