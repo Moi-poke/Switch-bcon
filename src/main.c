@@ -941,8 +941,11 @@ static void poll_tick(uint32_t now) {
     // (旧コードはスナップショット判定で無限ループしたためlive indexで回す。)
     g_vs.cap_valid = probe_cap_valid;
     g_vs.player_lamp = probe_player_id;
+    // PLAYER_INFO flags (spec §5.8): bit0 IMU・bit1 vib・bit2 cap_saved。
+    // bit2は取込済みwakeの保存有無 (BEACON再生可否)。再生自体は成功信号にしない。
     g_vs.player_flags = (uint8_t)((probe_imu_enabled ? 0x01u : 0u) |
-                                  (probe_vibration_enabled ? 0x02u : 0u));
+                                  (probe_vibration_enabled ? 0x02u : 0u) |
+                                  (probe_cap_valid ? 0x04u : 0u));
     g_vs.player_valid = probe_player_seen;
     v3_player_tick(&g_vs);
     g_vs.rumble_l = probe_rumble_l;
@@ -1409,6 +1412,10 @@ static void wired_loop(void) {
         }
         last_ms = now;
         poll_tick(now);
+        /* 有線 0x30 格納値 -> v3_player_tick 入力 (無線 probe_* 路の代わり)。
+         * poll_tick は probe_* (無線) を見る共有 tick のため、有線値は
+         * ここで後付けする。queue 分は次 tick の flush で送出される。 */
+        usb_wired_feed_player(&g_vs);
         if (now - last_log >= 1000u) {
             last_log = now;
             stats_print();

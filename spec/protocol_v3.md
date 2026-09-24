@@ -12,6 +12,7 @@
 | 3.0 | 2026-09-13 | 初版（本リポジトリ）。STATE=ボタンu32-LE（VIIPER順）LEN8・HAT廃止／CONFIG面 0x30-0x35 新設／RUMBLE 0x22 予約／STATUS 7B・HELLO_ACK 4B維持／USBは任天堂写し・bInterval 8 |
 | 4.0 | 2026-09-18 | RUMBLE送出開始（0x22 sending）・PLAYER_INFO新設（0x23）・PROTO_VER=4・RESULT DOWNGRADED廃止 |
 | 4.1 | 2026-09-19 | EMULATE_MODE新設（0x38）・Joy mapping・FW_MINOR=2・PROTO_VER=4維持 |
+| 4.2 | 2026-09-24 | PLAYER_INFO flags bit2=cap_saved追加（probe_cap_valid写し）・PROTO_VER=4・LEN=2・FW_MINOR据置（2のまま。新規フレームなし・意味拡張のみのため版上げ不要） |
 
 > フィールド追加・意味変更時は必ず本表と `PROTO_VER` を更新する。
 
@@ -198,9 +199,12 @@ LFは中立相対 `M[3]<=0x40→0`・それ以外 `((M[3]-0x40)*255+41)/82`
 
 ### 5.8 PLAYER_INFO (LEN=2)
 
-`[0]=lamp（SUB 0x30応答のplayer ID写し）、[1]=flags（bit0=IMU有効、bit1=振動有効）`。
-初回SUB 0x30受信後に有効化し、変化時のみ送出する。STATUS_REQ受信時は
-STATUSに付随して送出する。
+`[0]=lamp（SUB 0x30応答のplayer ID写し）、[1]=flags（bit0=IMU有効、bit1=振動有効、bit2=cap_saved、bit3-7予約0）`。
+bit2は `probe_cap_valid` の写し（取込済みwakeのFlash保存あり＝BEACON再生可）。
+BEACON再生そのものは成功信号ではない（再生可否はbit2で判断する）。
+初回SUB 0x30受信後に有効化し、変化時のみ送出する（lamp/flagsのバイト比較。
+bit2変化も送出対象）。STATUS_REQ受信時はSTATUSに付随して送出する。
+PROTO_VER=4・LEN=2のまま（新規フレームなし・FW_MINOR据置）。
 
 ## 6. CRC8
 
