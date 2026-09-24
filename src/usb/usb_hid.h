@@ -6,6 +6,7 @@
  * (Nintendo順3B) を受ける。u32→3B変換自体はここでは行わない。 */
 #include <stdbool.h>
 #include <stdint.h>
+#include "dispatch.h" /* v3_session_t (純粋型のみ。tusb/btstack非依存は維持) */
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -61,6 +62,16 @@ void usb_role_pack_btn3(const uint8_t procon3[3], uint8_t role,
  * host test で固定する。FW 動作は usb_wired_task 側がこの戻りで決める。 */
 bool usb_kick81_due(uint8_t role, bool wired_en, bool mounted,
                     bool kick_done, bool pend_valid);
+/* 有線プレイヤーランプ配管 (無線 probe_player_id/seen の鏡像)。
+ * 0x30 受信値を溜めるだけだった dead-end (usb_wired.c) を host-testable な
+ * 出入口で外へ出す。save は tud_hid_set_report_cb (0x30受信) が呼び、
+ * get は 0x31 読戻し (ctx.player) が読む。feed は wired_loop 側が
+ * 1ms tick 毎に呼び、格納値を v3_session へ移して v3_player_tick で
+ * ACT_SEND_PLAYER_INFO を queue する。いずれも純粋な格納・転記のみ
+ * (printf/BT/CYW43/Flash なし。Core1安全・parser路可)。 */
+void usb_wired_player_save(uint8_t id);
+uint8_t usb_wired_player_get(void);
+void usb_wired_feed_player(v3_session_t *s);
 #ifdef __cplusplus
 }
 #endif

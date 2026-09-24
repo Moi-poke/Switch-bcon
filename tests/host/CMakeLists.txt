@@ -26,6 +26,7 @@ add_executable(test_usb
   ../../src/proto/protocol.c
   ../../src/proto/pack.c
   ../../src/proto/spi.c
+  ../../src/proto/dispatch.c
   ../../src/usb/usb_hid.c
 )
 target_include_directories(test_usb PRIVATE
@@ -64,6 +65,7 @@ add_executable(test_personality
   test_personality.c
   ../../src/proto/protocol.c
   ../../src/proto/pack.c
+  ../../src/proto/dispatch.c
   ../../src/bt/personality.c
   ../../src/usb/usb_hid.c
 )
@@ -77,6 +79,7 @@ add_executable(test_joy_scopeA
   test_joy_scopeA.c
   ../../src/proto/protocol.c
   ../../src/proto/pack.c
+  ../../src/proto/dispatch.c
   ../../src/bt/personality.c
   ../../src/usb/usb_hid.c
 )
@@ -90,6 +93,7 @@ add_executable(test_joy_scopeB
   test_joy_scopeB.c
   ../../src/proto/protocol.c
   ../../src/proto/pack.c
+  ../../src/proto/dispatch.c
   ../../src/bt/personality.c
   ../../src/usb/usb_hid.c
 )
@@ -98,6 +102,27 @@ target_include_directories(test_joy_scopeB PRIVATE
   ../../src/bt
   ../../src/usb
 )
+
+add_executable(test_wired_player
+  test_wired_player.c
+  ../../src/proto/protocol.c
+  ../../src/proto/pack.c
+  ../../src/proto/spi.c
+  ../../src/proto/dispatch.c
+  ../../src/usb/usb_hid.c
+)
+target_include_directories(test_wired_player PRIVATE
+  ../../src/proto
+  ../../src/usb
+)
+# 有線プレイヤーランプ配管 (save/get/feed は src/usb/usb_hid.c が提供)。
+
+add_executable(test_player_capsaved
+  test_player_capsaved.c
+  ../../src/proto/protocol.c
+  ../../src/proto/dispatch.c
+)
+target_include_directories(test_player_capsaved PRIVATE ../../src/proto)
 
 enable_testing()
 add_test(NAME protocol COMMAND test_protocol)
@@ -109,3 +134,5 @@ add_test(NAME rumble COMMAND test_rumble)
 add_test(NAME personality COMMAND test_personality)
 add_test(NAME joy_scopeA COMMAND test_joy_scopeA)
 add_test(NAME joy_scopeB COMMAND test_joy_scopeB)
+add_test(NAME wired_player COMMAND test_wired_player)
+add_test(NAME player_capsaved COMMAND test_player_capsaved)

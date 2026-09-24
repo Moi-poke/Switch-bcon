@@ -10,6 +10,36 @@
 #include "spi.h"
 #include "pack.h"
 
+/* 有線 0x30 受信値の格納 (無線 probe_player_id/probe_player_seen の鏡像)。
+ * usb_wired.c の static dead-end をここへ移し、host test からも触れる
+ * 出入口 (save/get/feed) で外へ出す。格納・転記のみで副作用なし。 */
+static uint8_t s_wired_player;
+static bool s_wired_player_seen;
+
+void usb_wired_player_save(uint8_t id)
+{
+    s_wired_player = id;
+    s_wired_player_seen = true;
+}
+
+uint8_t usb_wired_player_get(void)
+{
+    return s_wired_player;
+}
+
+/* 格納値を v3_session へ移し v3_player_tick で PLAYER_INFO を queue する。
+ * 未受信 (seen=false) の間は session を invalid のまま残す (BT と同形:
+ * 初回 SUB 0x30 まで送出しない)。flags は有線側に源がないため触らない。 */
+void usb_wired_feed_player(v3_session_t *s)
+{
+    if (s == NULL || !s_wired_player_seen) {
+        return;
+    }
+    s->player_lamp = s_wired_player;
+    s->player_valid = true;
+    v3_player_tick(s);
+}
+
 /* 起動時 role (EMUL_ROLE_* in proto/protocol.h, pack.h 経由で可視)。
  * 既定 0=ProCon。usb_set_role() で起動時に1回だけ上書きする。 */
 static uint8_t s_usb_role = 0u;
@@ -496,6 +526,12 @@ int usb_build_21_reply(const uint8_t *req, int req_len, uint8_t *out,
         case 0x48u:
             out[13] = 0x80u;
             out[14] = sub;
+            return 64;
+        case 0x31u:
+            /* 読戻しは B0+id (無線 hid.c:432-436 の鏡像)。ACK 形は変えない。 */
+            out[13] = 0xB0u;
+            out[14] = 0x31u;
+            out[15] = ctx->player;
             return 64;
         default:
             out[13] = 0x80u;

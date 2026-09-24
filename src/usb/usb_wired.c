@@ -115,7 +115,6 @@ void usb_wired_pump(void)
 static uint8_t pend_resp[64];
 static uint8_t pend_resp_id;
 static bool pend_resp_valid;
-static uint8_t usb_player;
 
 /* ホストに再列挙させる。自己切断では tud_umount_cb が来ないため、
  * セッション状態 (hs・保留応答) をここで明示的に落とす。
@@ -321,7 +320,8 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
             probe_line(ul);
         }
         if (sub == 0x30u && req_len >= 12) {
-            usb_player = req[11];
+            /* 格納は usb_hid 側 (host-testable。wired_loop が feed で流す)。 */
+            usb_wired_player_save(req[11]);
         }
         ctx.btn[0] = bcon_btn[0];
         ctx.btn[1] = bcon_btn[1];
@@ -333,7 +333,7 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
         ctx.timer =
             (uint8_t)(to_ms_since_boot(get_absolute_time()) >> 5);
         memcpy(ctx.mac, bcon_mac, 6);
-        ctx.player = usb_player;
+        ctx.player = usb_wired_player_get();
         ctx.role = usb_get_role();
         n = usb_build_21_reply(req, (int)req_len, pend_resp,
                                (int)sizeof(pend_resp), &ctx);
