@@ -883,6 +883,9 @@ static void flush_outbox(void) {
             pi[0] = g_vs.player_sent_lamp;
             pi[1] = g_vs.player_sent_flags;
             uart_tx_frame(T_PLAYER_INFO, pi, 2);
+        } else if (o->act == ACT_SEND_COLOR_INFO) {
+            // RAM読出のみ (Flash書込なし)。13B目は送出対象外。
+            uart_tx_frame(T_COLOR_INFO, spi_color_6050, 12);
         }
     }
     g_vs.ob_n = 0u;

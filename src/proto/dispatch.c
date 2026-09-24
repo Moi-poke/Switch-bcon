@@ -128,6 +128,15 @@ v3_live_t v3_on_frame(v3_session_t *s, uint8_t type,
             s->fx_arg = v;
             return V3_IGNORE;
         }
+        case T_COLOR_GET:
+            // 色読出要求: LEN0のみ受理。実送出はflush時 (main.c) がRAM
+            // spi_color_6050先頭12Bを写す (13B目は対象外・Flash書込なし)。
+            if (len != 0) { s->errcode = ERR_BAD_LEN; return V3_IGNORE; }
+            ob_push(s, ACT_SEND_COLOR_INFO, 0);
+            return V3_IGNORE;
+        case T_COLOR_INFO:
+            // Pico->PC送出型のためPC->Pico方向では無視 (STATUS/PONG同形)。
+            return V3_IGNORE;
         default:
             return V3_IGNORE;
     }

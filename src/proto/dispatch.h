@@ -11,7 +11,7 @@
 #include "protocol.h"
 
 #define FW_MAJOR 0u
-#define FW_MINOR 2u
+#define FW_MINOR 3u
 
 // Pico->PC 送信箱の動作 (main.cがflush時に新鮮なHW状態で実行する)。
 typedef enum {
@@ -21,6 +21,7 @@ typedef enum {
     ACT_SEND_HELLO_ACK, // sessionの採用版・RESULTで作る
     ACT_SEND_PLAYER_INFO, // lamp+flags (変化時・STATUS_REQ付随)
     ACT_SEND_RUMBLE, // L/R amp (変化時のみ。末尾追加・挿入禁止)
+    ACT_SEND_COLOR_INFO, // COLOR_GET応答・T_COLOR_INFO 12B (末尾追加)
 } v3_act_t;
 
 typedef struct {
