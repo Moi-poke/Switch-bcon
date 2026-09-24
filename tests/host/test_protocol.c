@@ -99,6 +99,34 @@ int main(void) {
     { uint8_t out[64]; uint8_t big[33] = {0};
       CHECK(frame_build(out, T_STATE, big, 33, 0) == 0, "len>32 rejected"); }
 
+    printf("[9] F2: in-seq good frame clears ERR_SEQ_GAP (err_drop latch)\n");
+    { link_stats_t st3; memset(&st3, 0, sizeof(st3));
+      parser_init(&p, cb, NULL, &st3);
+      uint8_t f0[64], f1[64], f2[64];
+      size_t n0 = frame_build(f0, T_NEUTRAL, NULL, 0, 0xFF);
+      size_t n1b = frame_build(f1, T_NEUTRAL, NULL, 0, 0x01);
+      size_t n2b = frame_build(f2, T_NEUTRAL, NULL, 0, 0x02);
+      hits = 0;
+      parser_feed_buf(&p, f0, n0); parser_feed_buf(&p, f1, n1b);
+      CHECK(st3.err_drop == 1 && st3.errcode == ERR_SEQ_GAP, "gap latched 0xFF->0x01");
+      parser_feed_buf(&p, f2, n2b);
+      /* 正常SEQでerrcode復帰することを要求 (現状は0x03に固着してFAIL) */
+      CHECK(st3.errcode == ERR_OK, "in-seq 0x02 clears ERR_SEQ_GAP");
+      /* ドロップ数はラッチ維持 */
+      CHECK(st3.err_drop == 1, "err_drop stays latched at 1"); }
+
+    printf("[9b] negative lock: BAD_CRC stays latched after good frame\n");
+    { link_stats_t st4; memset(&st4, 0, sizeof(st4));
+      parser_init(&p, cb, NULL, &st4);
+      uint8_t bad[64], good[64];
+      size_t nbad = frame_build(bad, T_NEUTRAL, NULL, 0, 0x10); bad[nbad-1] ^= 0xFF;
+      size_t ngood = frame_build(good, T_NEUTRAL, NULL, 0, 0x11);
+      hits = 0;
+      parser_feed_buf(&p, bad, nbad);
+      parser_feed_buf(&p, good, ngood);
+      /* BAD_CRCは正常フレーム後もラッチ維持 (対照ロック) */
+      CHECK(st4.errcode == ERR_BAD_CRC, "BAD_CRC stays latched"); }
+
     printf("\nRESULT: %s (%d failures)\n", fails == 0 ? "ALL PASS" : "HAS FAILURES", fails);
     return fails;
 }

@@ -119,6 +119,8 @@ static void parser_run(parser_t *p) {
                 if (seq != expect) {
                     sat_inc16(&p->stats->err_drop);
                     p->stats->errcode = ERR_SEQ_GAP;
+                } else if (p->stats->errcode == ERR_SEQ_GAP) {
+                    p->stats->errcode = ERR_OK;
                 }
             }
             p->stats->last_seq = seq;
