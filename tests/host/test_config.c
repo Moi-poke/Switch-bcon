@@ -317,7 +317,7 @@ int main(void) {
                s.errcode == 0x18 && s.fx == FX_EMULATE_MODE && s.fx_arg == 2, "EMULATE=3 rejected (0x18, fx preserved)");
         CHECK(v3_on_frame(&s, T_EMULATE_MODE, procon, 0, 5) == V3_IGNORE &&
               s.errcode == ERR_BAD_LEN, "LEN=0 rejected (BAD_LEN)");
-        CHECK(FW_MINOR == 2, "FW_MINOR==2");
+        CHECK(FW_MINOR == 3, "FW_MINOR==3 (COLOR_GET/INFO)");
     }
 
     printf("[23] EMULATE intent is reboot-applied (role latch proof)\n");

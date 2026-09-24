@@ -35,6 +35,7 @@
 // usb_kick81_due, usb_role_pack_btn3, joy_pack_btn3, joy_use_left_stick,
 // ctrl_pack_btn3, pack_stick_12bit. Spec SSOT: spec/protocol_v3.md PROTO_VER=4
 // v4.1 EMULATE_MODE 0x38 (0=ProCon/1=JoyL/2=JoyR) FW_MINOR=2.
+// v4.3 COLOR_GET 0x39 / COLOR_INFO 0x3A FW_MINOR=3.
 #include <stdio.h>
 #include <string.h>
 #include "protocol.h"
@@ -245,8 +246,12 @@ int main(void) {
         CHECK(EMUL_ROLE_PROCON == 0 && EMUL_ROLE_JOY_L == 1 &&
               EMUL_ROLE_JOY_R == 2,
               "T-REBOOT roles 0/1/2");
-        CHECK(proto_expected_len(0x39) == -1,
-              "T-REBOOT no new TYPE next to 0x38 (0x39 unknown)");
+        CHECK(T_COLOR_GET == 0x39u && proto_expected_len(T_COLOR_GET) == 0,
+              "T-REBOOT next TYPE 0x39=COLOR_GET LEN0 (append-only)");
+        CHECK(T_COLOR_INFO == 0x3Au && proto_expected_len(T_COLOR_INFO) == 12,
+              "T-REBOOT 0x3A=COLOR_INFO LEN12 (Pico->PC)");
+        CHECK(proto_expected_len(0x3B) == -1,
+              "T-REBOOT no further TYPE next to 0x3A (0x3B unknown)");
     }
 
     printf("[T-PROCON-GATE] role0 regression gate (passthrough)\n");
