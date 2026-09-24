@@ -124,6 +124,14 @@ add_executable(test_player_capsaved
 )
 target_include_directories(test_player_capsaved PRIVATE ../../src/proto)
 
+add_executable(test_color_getinfo
+  test_color_getinfo.c
+  ../../src/proto/protocol.c
+  ../../src/proto/dispatch.c
+  ../../src/proto/spi.c
+)
+target_include_directories(test_color_getinfo PRIVATE ../../src/proto)
+
 enable_testing()
 add_test(NAME protocol COMMAND test_protocol)
 add_test(NAME usb COMMAND test_usb)
@@ -136,3 +144,4 @@ add_test(NAME joy_scopeA COMMAND test_joy_scopeA)
 add_test(NAME joy_scopeB COMMAND test_joy_scopeB)
 add_test(NAME wired_player COMMAND test_wired_player)
 add_test(NAME player_capsaved COMMAND test_player_capsaved)
+add_test(NAME color_getinfo COMMAND test_color_getinfo)
