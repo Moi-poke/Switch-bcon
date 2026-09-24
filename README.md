@@ -37,7 +37,7 @@ USB 接続/Classic Bluetooth 接続に対応し、PC から UART 経由で入力
 | Poke-Controller ASCII 行モード | ✅ | ❌ |
 | NFC | ❌ | — |
 | ジャイロ入力 | ❌ | — |
-| Joy-Con L/R | ✅ | 有線対応 |
+| Joy-Con L/R | ✅ | ✅ |
 
 有線Joy-Con L/R に対応。
 Switch実機で認識および操作を確認済み。
