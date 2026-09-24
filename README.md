@@ -82,6 +82,14 @@ PC ──UART──▶ Raspberry Pi Pico 2 W ──┬── USB HID ───�
 - LEN8: u8 x4
 - LEN12: u16LE x4（12bit 拡張）
 
+### 補足
+
+- 有線プレイヤーランプ: SUB `0x30` 受信値を保存し、`0x31` で読戻し（`B0+id`）、`PLAYER_INFO` へ反映します。
+- `PLAYER_INFO` flags bit2=`cap_saved`: 取込済み wake の保存有無を示します。詳細は `spec/protocol_v3.md` §5.8 を参照。
+- 同一 drain 内の `STATUS_REQ` 等は `FX` 要求を消去しません。
+- `SEQ_GAP` は次の正常 SEQ 受信で解除されます（ドロップ数は保持）。
+- 開発用 `BOOTSEL`: TYPE `0x37` / magic `0x5A`、約 500ms 後に USB BOOTSEL 再起動。Flash 書込みなし。
+
 ### UART
 
 Log 系と data 系の 2 系統です。
