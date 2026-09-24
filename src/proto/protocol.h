@@ -35,6 +35,8 @@ enum {
     T_BAUD_SET      = 0x36, // PC->Pico LEN=1 rate index (B §3)
     T_BOOTSEL       = 0x37, // PC->Pico LEN=1 magic 0x5A -> USB BOOTSEL (dev only)
     T_EMULATE_MODE  = 0x38, // PC->Pico LEN=1 role 0=ProCon/1=JoyL/2=JoyR
+    T_COLOR_GET     = 0x39, // PC->Pico LEN=0 色読出要求 (RAM先頭12BをINFOで返送)
+    T_COLOR_INFO    = 0x3A, // Pico->PC LEN=12 RGBx4 (spi_color_6050先頭12B写し)
 };
 
 enum {

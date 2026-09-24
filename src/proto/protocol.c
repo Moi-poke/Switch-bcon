@@ -48,6 +48,8 @@ int proto_expected_len(uint8_t type) {
         case T_BAUD_SET:      return 1;
         case T_BOOTSEL:       return 1;
         case T_EMULATE_MODE:  return 1;
+        case T_COLOR_GET:      return 0;
+        case T_COLOR_INFO:     return 12;
         default:              return -1;
     }
 }
