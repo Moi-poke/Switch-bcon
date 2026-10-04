@@ -21,7 +21,7 @@ cmake -S tests/host -B build-host
 cmake --build build-host --config Debug
 ctest --test-dir build-host -C Debug -V
 ```
-Single test: `ctest --test-dir build-host -C Debug -R <protocol|usb|config|baud|pokecon|rumble|personality|joy_scopeA|joy_scopeB> -V`. MSVC needs `/utf-8` (Japanese comments, C4819) — already set in `tests/host/CMakeLists.txt`, don't remove.
+Single test: `ctest --test-dir build-host -C Debug -R <protocol|usb|config|baud|pokecon|rumble|personality|joy_scopeA|joy_scopeB|wired_player|player_capsaved|color_getinfo|reconnect_policy> -V`. The authoritative list is the `add_test` set in `tests/host/CMakeLists.txt` (13 entries) — keep this line in sync when adding one. MSVC needs `/utf-8` (Japanese comments, C4819) — already set in `tests/host/CMakeLists.txt`, don't remove.
 Targets: `switch-bcon` is the integrated FW; `poc_dualcore` is the PoC-only predecessor (don't extend it).
 
 ## Architecture

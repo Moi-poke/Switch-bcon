@@ -79,7 +79,7 @@ int main(void) {
     {
         CHECK(proto_expected_len(T_PLAYER_INFO) == 2, "PLAYER_INFO LEN=2");
         CHECK(PROTO_VER == 4, "PROTO_VER=4");
-        CHECK(FW_MINOR == 3u, "FW_MINOR==3 (COLOR new frames)");
+        CHECK(FW_MINOR == 4u, "FW_MINOR==4 (T_RECONNECT added)");
     }
 
     printf("\nRESULT: %s (%d failures)\n", fails == 0 ? "ALL PASS" : "HAS FAILURES", fails);

@@ -132,6 +132,13 @@ add_executable(test_color_getinfo
 )
 target_include_directories(test_color_getinfo PRIVATE ../../src/proto)
 
+add_executable(test_reconnect_policy
+  test_reconnect_policy.c
+  ../../src/bt/reconnect_policy.c
+)
+target_include_directories(test_reconnect_policy PRIVATE ../../src/bt)
+
+
 enable_testing()
 add_test(NAME protocol COMMAND test_protocol)
 add_test(NAME usb COMMAND test_usb)
@@ -145,3 +152,4 @@ add_test(NAME joy_scopeB COMMAND test_joy_scopeB)
 add_test(NAME wired_player COMMAND test_wired_player)
 add_test(NAME player_capsaved COMMAND test_player_capsaved)
 add_test(NAME color_getinfo COMMAND test_color_getinfo)
+add_test(NAME reconnect_policy COMMAND test_reconnect_policy)

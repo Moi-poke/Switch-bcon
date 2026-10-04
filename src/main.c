@@ -793,6 +793,13 @@ static void exec_fx(uint32_t now_ms) {
             }
             store_host_forget();
             probe_line("keys deleted (classic + host tag)");
+            probe_line("keys deleted (classic + host tag)");
+            break;
+        case FX_RECONNECT:
+            // 待機状態 (page予算切れ) の明示解除。無線起動時のみ意味を持つ。
+            if (s_bt_init) {
+                link_rearm_reconnect();
+            }
             break;
         case FX_WIRED_MODE: {
             bool w = g_vs.fx_arg != 0u;
@@ -1117,7 +1124,7 @@ static void stats_print(void) {
     mutex_exit(&g_m);
     usb_wired_get_stats(&ws);
     snprintf(line, sizeof(line),
-             "BCON t=%lus hs=%d mnt=%d cid=%u wired=%d "
+             "BCON t=%lus hs=%d mnt=%d cfg=%d cid=%u wired=%d "
              "cap=%d/%d/%d res=%d err=%02x rum=%lu+%lu "
               "ibdrop=%lu obdrop=%u frames=%lu crc=%lu drop=%lu ovr=%lu "
                "rx80=%lu tx81=%lu tx21=%lu in30=%lu iters=%lu pm=%lu "
@@ -1378,6 +1385,14 @@ static void packet_handler(uint8_t packet_type, uint16_t channel,
                 /* Stale key: forget it so the next attempt re-pairs cleanly. */
                 gap_delete_all_link_keys();
                 probe_line("auth fail: keys dropped, re-pair");
+            } else {
+                /* 認証成功直後の鍵DB件数。0 のままなら BTstack が
+                 * LINK_KEY_NOTIFICATION を保存しなかったということ
+                 * (接続参照失敗 / bonding フラグ / security level の
+                 * いずれかなのを切り分ける唯一の観測点)。鍵そのものは出さない。 */
+                snprintf(msg, sizeof(msg), "auth ok. link keys=%d",
+                         link_key_count());
+                probe_line(msg);
             }
             break;
         }
@@ -1570,7 +1585,9 @@ int main(void) {
     // roleはCore0 pack/outputのみに効く (cross-core handoffなし)。
     probe_role = s_emulate;
 
-    gap_discoverable_control(1);
+    /* discoverable はペアリング状態に従う (未ペアだけ 1)。常時 1 にすると
+     * 本体側の候補に追加され続け、接続確認が出る。判断は link 層。 */
+    link_apply_discoverable();
     gap_connectable_control(1);
     gap_set_class_of_device(personality->cod); // ProCon行=0x2508で現行値と同一
     gap_set_local_name(personality->gap_name); // ProCon行="Pro Controller"で同一

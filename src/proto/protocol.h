@@ -37,6 +37,7 @@ enum {
     T_EMULATE_MODE  = 0x38, // PC->Pico LEN=1 role 0=ProCon/1=JoyL/2=JoyR
     T_COLOR_GET     = 0x39, // PC->Pico LEN=0 色読出要求 (RAM先頭12BをINFOで返送)
     T_COLOR_INFO    = 0x3A, // Pico->PC LEN=12 RGBx4 (spi_color_6050先頭12B写し)
+    T_RECONNECT     = 0x3B, // PC->Pico LEN=0 待機状態から再武装 (明示的な起こし)
 };
 
 enum {
