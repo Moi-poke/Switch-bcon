@@ -15,6 +15,7 @@
 | 4.2 | 2026-09-24 | PLAYER_INFO flags bit2=cap_saved追加（probe_cap_valid写し）・PROTO_VER=4・LEN=2・FW_MINOR据置（2のまま。新規フレームなし・意味拡張のみのため版上げ不要） |
 | 4.3 | 2026-09-24 | COLOR_GET新設（0x39・PC→Pico・LEN0）・COLOR_INFO新設（0x3A・Pico→PC・LEN12）・PROTO_VER=4維持・FW_MINOR=3 |
 | 4.4 | 2026-10-01 | T_RECONNECT新設（0x3B・PC→Pico・LEN0）。Switchが拒否して待機状態に入ったPicoを明示的に起こす（実コントローラーのボタン押下相当）。PROTO_VER=4維持・FW_MINOR=4 |
+| 4.5 | 2026-10-05 | PC→Pico SEQ欠番の再同期を新設（無通信1000msでセッション境界とみなし基準を捨てる・起動時selftestの合成SEQも捨てる）。PC再接続のたびに出ていた偽 `ERRCODE=0x03` を解消。フレーム・フィールド不変・意味の明確化のみのため PROTO_VER=4維持・FW_MINOR据置（4.2前例） |
 
 > フィールド追加・意味変更時は必ず本表と `PROTO_VER` を更新する。
 
@@ -55,6 +56,8 @@ Offset  Field    Size  説明
 * SYNCはペイロード中にも出現し得る。最終判定は必ずCRC。
 * 既知型のLEN不一致は破棄＋先頭1B前進。未知型は32B上限で可変スキップ（前方互換）。
 * SEQ欠番はmod256で検出。`expect=(last+1)&0xFF`。不一致は欠落イベントとして1加算（欠落数ではない）。初回フレームは計数しない。
+* PC→Pico方向の「初回」はセッション単位。PCは接続ごとにSEQを0から振り直すため、Picoは有効frameの無受信が `SEQ_RESYNC_IDLE_MS`（1000ms、`src/main.c`）続いたら基準を捨て（`link_stats_seq_resync()`、`src/proto/protocol.c`）、次の有効frameを新しい初回として扱う。起動時selftestの合成SEQ（0x10-0x12）も同様に捨てる。`ERR_DROP` 累計は保持し、残っていた `ERRCODE=0x03` だけを0へ戻す。
+* 代償: 1000ms以上の無通信直後の1フレームが欠けても欠番として数えない（直前の基準が無いため）。セッション中の200ms級の途切れでは検出は残る。
 
 ## 4. フレーム種別
 

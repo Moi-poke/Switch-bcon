@@ -135,6 +135,14 @@ static void parser_run(parser_t *p) {
     }
 }
 
+void link_stats_seq_resync(link_stats_t *s) {
+    if (s == NULL) return;
+    // PCは接続ごとにSEQを0から振り直すため、前セッションの基準と比べると
+    // 必ず1件の偽欠番になる。基準だけ捨て、累計(err_drop)は診断用に残す。
+    s->have_seq = false;
+    if (s->errcode == ERR_SEQ_GAP) s->errcode = ERR_OK;
+}
+
 void parser_feed(parser_t *p, uint8_t byte) {
     if (p->len >= PROTO_ACC_SIZE) {
         note_err(p, ERR_OVERFLOW);

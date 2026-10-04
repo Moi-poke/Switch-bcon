@@ -139,6 +139,11 @@ void parser_init(parser_t *p, frame_cb_t cb, void *user, link_stats_t *stats);
 void parser_feed(parser_t *p, uint8_t byte);
 void parser_feed_buf(parser_t *p, const uint8_t *data, size_t n);
 
+// Session boundary: forget the SEQ baseline so the next valid frame is not
+// counted as a gap (spec §3 SEQ). err_drop is kept; a stale ERR_SEQ_GAP is
+// cleared. NULL-safe.
+void link_stats_seq_resync(link_stats_t *s);
+
 // Writes a full frame into out (must be >= (size_t)len+5, len<=32).
 // Returns total length, or 0 if len exceeds PROTO_MAX_PAYLOAD.
 size_t frame_build(uint8_t *out, uint8_t type, const uint8_t *payload,

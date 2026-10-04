@@ -264,9 +264,19 @@ typedef struct {
 } baudx_t;
 static baudx_t s_baudx;
 
+// ---- SEQ再同期 (spec §3)。Core1専用・無錠 ----
+// PCは接続ごとにSEQを0から振り直す。無通信がこの時間続いたら次の接続とみなし、
+// 欠番判定の基準を捨てる (起動時の偽ERR_SEQ_GAP対策)。200msの中立解放より
+// 長く取り、セッション内の短い途切れでは欠番検出を残す。
+#define SEQ_RESYNC_IDLE_MS 1000u
+static uint32_t s_rx_last_ms; // 直近の有効frame受理時刻
+static bool s_rx_seen;        // 前回の再同期以降に有効frameを受理したか
+
 static void bcon_frame_cb(uint8_t type, const uint8_t *p, uint8_t len,
                           uint8_t seq, void *user) {
     (void)user;
+    s_rx_last_ms = to_ms_since_boot(get_absolute_time());
+    s_rx_seen = true;
     mutex_enter_blocking(&g_m);
     if (!g_s.baud_locked && s_hunt.armed) {
         // hunt中 (B-0): 有効frame 2連続で確定。確定前のinboxは未確定baudの
@@ -534,6 +544,9 @@ static void core1_entry(void) {
 #endif
 
     uint32_t st = core1_selftest();
+    // selftestの合成SEQ(0x12)を基準に残すと、PCの初回frameが必ず欠番になる。
+    link_stats_seq_resync(&s_pst);
+    s_rx_seen = false;
     mutex_enter_blocking(&g_m);
     g_s.boot_code = (st == 0) ? 1u : 2u;
     g_s.boot_detail = st;
@@ -624,6 +637,11 @@ static void core1_entry(void) {
                        (int32_t)BREAK_LOW_MS) {
                 s_hunt.brk_fired = true;
                 hunt_on_break(now);
+            }
+            if (s_rx_seen && (int32_t)(now - s_rx_last_ms) >=
+                             (int32_t)SEQ_RESYNC_IDLE_MS) {
+                link_stats_seq_resync(&s_pst);
+                s_rx_seen = false;
             }
             if (!s_hunt.locked) {
                 if ((int32_t)(now - s_hunt.dwell_until) >= 0) {
