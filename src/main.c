@@ -1039,8 +1039,10 @@ static void poll_tick(uint32_t now) {
         // STATE/NEUTRALのlive適用はCore1高速路が担う (UNSUPPORTED下の
         // STATE拒否を含む)。ここではCONFIG等のfx/obのみ扱う。
         (void)v3_on_frame(&g_vs, cur.type, cur.payload, cur.len, cur.seq);
+        // fxは1枠のため frameごとに実行する。drain後に1回だけだと、同じtickに
+        // CONFIGが2つ届いたとき先のfxが後のfxで上書きされ黙って消える。
+        exec_fx(now);
     }
-    exec_fx(now);
     }
     flush_outbox();
 
