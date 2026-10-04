@@ -1476,7 +1476,10 @@ int main(void) {
     // UDF疎通確認はrevert済み (動作確認OK)。
 
     // WDT復帰の記録 (STATUS bit3)。enable前の値を読む。
-    s_wdt_recovered = watchdog_caused_reboot();
+    // watchdog_caused_reboot()はwatchdog_reboot() (WIRED/EMULATE切替) でも真に
+    // なる。STATUS bit3は「WDTタイムアウトで落ちた」ことだけを示したいので
+    // watchdog_enable()のtimeoutに限る版を使う (SDK watchdog.h:115-126)。
+    s_wdt_recovered = watchdog_enable_caused_reboot();
 
     // 自MAC: OUI 7C:BB:8A＋unique末尾 (wakecon link_initと同一)。
     link_init();
