@@ -489,10 +489,10 @@ static void baud_hw_switch(uint32_t bps) {
     uart_get_hw(DATA_UART)->rsr = 0xFF;
     (void)uart_set_baudrate(DATA_UART, bps);
     parser_init(&s_parser, bcon_frame_cb, NULL, &s_pst); // acc捨て・stats保持
-    {
-        uint32_t wa = dma_hw->ch[g_dma_ch].write_addr;
-        g_rd = (wa - (uint32_t)dma_ring) & (RING_SIZE - 1); // 旧baud残渣捨て
-    }
+    // DMAはring先頭から書き直すので読み位置も先頭へ。旧write位置に合わせると
+    // 次の読みが ring[旧位置..末尾] の過去frame (正CRC) を再生し、hunt が
+    // 誰も使っていない slot で偽lock→BCBR保存→ホストから無応答になる。
+    g_rd = 0u;
     dma_channel_set_write_addr(g_dma_ch, dma_ring, true);
 }
 
