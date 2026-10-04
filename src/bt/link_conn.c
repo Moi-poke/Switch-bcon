@@ -170,6 +170,15 @@ static bool bt_powered;
 /* BTstack 報告の実動作状態。電源要求 (bt_powered) とは別。
  * 起動完了前の偽装・広告投入を避けるために beacon 開始判定で使う。 */
 static bool bt_working;
+/* BTstack (hci_stack) が確保済みか。有線起動では cyw43_arch_init を通らず
+ * hci_stack が NULL のままなので、gap_* を呼ぶと NULL 参照で落ちる。
+ * KEY_DELETE 経由の store_host_forget は有線でも走るため、ここで止める。 */
+static bool s_hci_ready;
+
+void link_note_hci_ready(void)
+{
+    s_hci_ready = true;
+}
 
 void link_note_bt_working(bool working)
 {
@@ -187,6 +196,9 @@ void link_apply_discoverable(void)
      * connectable が立っていれば Switch から page される。
      * 常時 1 のままだと本体側の候補に追加され続け、接続確認が出る。 */
     bool quiet = link_wired && !probe_scanning && !probe_beacon;
+    if (!s_hci_ready) {
+        return;
+    }
     gap_discoverable_control(
         reconnect_should_be_discoverable(probe_host_known, quiet) ? 1u : 0u);
 }

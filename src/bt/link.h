@@ -47,6 +47,9 @@ void link_rearm_reconnect(void);
 /* inquiry 応答状態をペアリング状態へ追従させる。ホストタグの保存・消失と
  * 起動時に呼ぶ (判断は reconnect_policy の純関数に集約)。 */
 void link_apply_discoverable(void);
+/* cyw43_arch_init 成功後 (BTstack 確保済み) に main が 1 回呼ぶ。
+ * これより前・有線起動では link_apply_discoverable は何もしない。 */
+void link_note_hci_ready(void);
 /* BTstack の動作状態を link 層へ伝える。main の BTSTACK_EVENT_STATE で呼ぶ。
  * beacon の広告開始は WORKING まで遅らせるために使う。 */
 void link_note_bt_working(bool working);

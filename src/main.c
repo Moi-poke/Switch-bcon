@@ -811,7 +811,6 @@ static void exec_fx(uint32_t now_ms) {
             }
             store_host_forget();
             probe_line("keys deleted (classic + host tag)");
-            probe_line("keys deleted (classic + host tag)");
             break;
         case FX_RECONNECT:
             // 待機状態 (page予算切れ) の明示解除。無線起動時のみ意味を持つ。
@@ -1582,6 +1581,7 @@ int main(void) {
         while (1) tight_loop_contents();
     }
     printf("cyw43 ok\n");
+    link_note_hci_ready(); // ここからgap_*可 (有線起動はここへ来ない)
     usb_wired_pump();
     link_init();
     // link_initはMAC再生成のためbcon_macを掛け直す。
