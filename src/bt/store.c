@@ -125,6 +125,8 @@ void store_host(bd_addr_t addr)
     }
     memcpy(probe_host_addr, addr, 6);
     probe_host_known = true;
+    /* ペアリングが成立したので inquiry 応答は下げる。 */
+    link_apply_discoverable();
     s_host_save_count++;
     {
         char msg[48];
@@ -149,6 +151,8 @@ void store_host_forget(void)
     tag_delete_fn(&op); /* 直接呼出し (tag_store_safe NOTE: 外側flash_safe_execute禁止) */
     store_irq_guard(pm0);
     probe_host_known = false;
+    /* ホストを忘れた = 未ペア状態。登録画面から見つけてもらうために戻す。 */
+    link_apply_discoverable();
 }
 
 bool store_host_load(void)

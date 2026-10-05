@@ -137,6 +137,14 @@ v3_live_t v3_on_frame(v3_session_t *s, uint8_t type,
         case T_COLOR_INFO:
             // Pico->PC送出型のためPC->Pico方向では無視 (STATUS/PONG同形)。
             return V3_IGNORE;
+        case T_RECONNECT:
+            // 待機状態の解除要求: LEN0のみ。実行は main.c の exec_fx
+            // (BTコールバック内では行わない)。旧rateのままACK相当。
+            if (len != 0) { s->errcode = ERR_BAD_LEN; return V3_IGNORE; }
+            s->fx = FX_RECONNECT;
+            s->fx_arg = 0u;
+            ob_push(s, ACT_SEND_STATUS, 0);
+            return V3_IGNORE;
         default:
             return V3_IGNORE;
     }

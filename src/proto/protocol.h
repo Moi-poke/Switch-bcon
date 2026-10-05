@@ -37,6 +37,7 @@ enum {
     T_EMULATE_MODE  = 0x38, // PC->Pico LEN=1 role 0=ProCon/1=JoyL/2=JoyR
     T_COLOR_GET     = 0x39, // PC->Pico LEN=0 色読出要求 (RAM先頭12BをINFOで返送)
     T_COLOR_INFO    = 0x3A, // Pico->PC LEN=12 RGBx4 (spi_color_6050先頭12B写し)
+    T_RECONNECT     = 0x3B, // PC->Pico LEN=0 待機状態から再武装 (明示的な起こし)
 };
 
 enum {
@@ -137,6 +138,11 @@ typedef struct {
 void parser_init(parser_t *p, frame_cb_t cb, void *user, link_stats_t *stats);
 void parser_feed(parser_t *p, uint8_t byte);
 void parser_feed_buf(parser_t *p, const uint8_t *data, size_t n);
+
+// Session boundary: forget the SEQ baseline so the next valid frame is not
+// counted as a gap (spec §3 SEQ). err_drop is kept; a stale ERR_SEQ_GAP is
+// cleared. NULL-safe.
+void link_stats_seq_resync(link_stats_t *s);
 
 // Writes a full frame into out (must be >= (size_t)len+5, len<=32).
 // Returns total length, or 0 if len exceeds PROTO_MAX_PAYLOAD.

@@ -33,7 +33,7 @@ ctest --test-dir build-host -C Debug -V
 
 上記は `AGENTS.md:18-23` の正準手順である。`ctest.exe` は cmake と同じディレクトリのものをフルパスで呼ぶ。単体実行は `ctest --test-dir build-host -C Debug -R <protocol|usb|config> -V` である。MSVC には `/utf-8` が要る（日本語コメント、C4819 対策）。`tests/host/CMakeLists.txt` に設定済みであり、外さないこと (`AGENTS.md:24`)。
 
-試験は次の6本立てである。
+試験は次の13本立てである。
 
 - `protocol`（CRC・parser・`frame_build`）
 - `usb`（pack・SPI 等）
@@ -41,8 +41,14 @@ ctest --test-dir build-host -C Debug -V
 - `baud`（レート表・sweep・lock）
 - `pokecon`（PokeCon 行写像・quirk・不正行棄却）
 - `rumble`（復号・dispatch）
+- `personality` / `joy_scopeA` / `joy_scopeB`（Joy-Con 擬態・identity・kick81）
+- `wired_player` / `player_capsaved`（有線プレイヤー・ランプ）
+- `color_getinfo`（COLOR_GET→COLOR_INFO）
+- `reconnect_policy`（能動再接続の page 予算・discoverable 判定）
 
-現行 6/6 ALL PASS が全 sub-project の gate である (`docs/superpowers/specs/2026-09-15-uart-features-design.md:31,58-59`)。
+現行 13/13 ALL PASS が全 sub-project の gate である。
+
+> 注: 本ページは総数を過去に「6本」と記していたが、実体は 13 本である。`AGENTS.md` 側にも古い件数が残っている。**正は `tests/host/CMakeLists.txt` の `add_test` 一覧**であり、増減するときはここではなく CMake を直したうえで本表を同期すること。
 
 ## UF2 / log の運用規約
 

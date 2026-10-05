@@ -14,6 +14,8 @@
 | 4.1 | 2026-09-19 | EMULATE_MODE新設（0x38）・Joy mapping・FW_MINOR=2・PROTO_VER=4維持 |
 | 4.2 | 2026-09-24 | PLAYER_INFO flags bit2=cap_saved追加（probe_cap_valid写し）・PROTO_VER=4・LEN=2・FW_MINOR据置（2のまま。新規フレームなし・意味拡張のみのため版上げ不要） |
 | 4.3 | 2026-09-24 | COLOR_GET新設（0x39・PC→Pico・LEN0）・COLOR_INFO新設（0x3A・Pico→PC・LEN12）・PROTO_VER=4維持・FW_MINOR=3 |
+| 4.4 | 2026-10-01 | T_RECONNECT新設（0x3B・PC→Pico・LEN0）。Switchが拒否して待機状態に入ったPicoを明示的に起こす（実コントローラーのボタン押下相当）。PROTO_VER=4維持・FW_MINOR=4 |
+| 4.5 | 2026-10-05 | PC→Pico SEQ欠番の再同期を新設（無通信1000msでセッション境界とみなし基準を捨てる・起動時selftestの合成SEQも捨てる）。PC再接続のたびに出ていた偽 `ERRCODE=0x03` を解消。フレーム・フィールド不変・意味の明確化のみのため PROTO_VER=4維持・FW_MINOR据置（4.2前例） |
 
 > フィールド追加・意味変更時は必ず本表と `PROTO_VER` を更新する。
 
@@ -54,6 +56,8 @@ Offset  Field    Size  説明
 * SYNCはペイロード中にも出現し得る。最終判定は必ずCRC。
 * 既知型のLEN不一致は破棄＋先頭1B前進。未知型は32B上限で可変スキップ（前方互換）。
 * SEQ欠番はmod256で検出。`expect=(last+1)&0xFF`。不一致は欠落イベントとして1加算（欠落数ではない）。初回フレームは計数しない。
+* PC→Pico方向の「初回」はセッション単位。PCは接続ごとにSEQを0から振り直すため、Picoは有効frameの無受信が `SEQ_RESYNC_IDLE_MS`（1000ms、`src/main.c`）続いたら基準を捨て（`link_stats_seq_resync()`、`src/proto/protocol.c`）、次の有効frameを新しい初回として扱う。起動時selftestの合成SEQ（0x10-0x12）も同様に捨てる。`ERR_DROP` 累計は保持し、残っていた `ERRCODE=0x03` だけを0へ戻す。
+* 代償: 1000ms以上の無通信直後の1フレームが欠けても欠番として数えない（直前の基準が無いため）。セッション中の200ms級の途切れでは検出は残る。
 
 ## 4. フレーム種別
 
@@ -79,6 +83,7 @@ Offset  Field    Size  説明
 | 0x38 | EMULATE_MODE | PC→Pico | 1 | role選択（0=ProCon・1=JoyL・2=JoyR、Flash保存） |
 | 0x39 | COLOR_GET | PC→Pico | 0 | 色読出要求（RAM先頭12BをCOLOR_INFOで返送） |
 | 0x3A | COLOR_INFO | Pico→PC | 12 | 色応答（RGB×4。本体・ボタン・左・右） |
+| 0x3B | RECONNECT | PC→Pico | 0 | 待機状態の明示解除（能動再接続を再開させる） |
 
 ## 5. ペイロード定義
 
@@ -219,6 +224,49 @@ RAM読出のみでFlash書込なし。`COLOR_INFO` はPico→PC送出型のた�
 PC→Pico方向ではdispatch対象外（無視・STATUS/PONG/RUMBLE/PLAYER_INFO同形）。
 新規フレーム追加のためPROTO_VERは4のまま（版交渉は不変・EMULATE_MODE前例）。
 FW_MINORは2→3に上げる（HELLO_ACK `[2]` が3を返す）。
+
+### 5.10 RECONNECT (LEN=0)
+
+`RECONNECT`：LEN0。Pico の**待機状態を明示的に解除**して能動再接続を再開させる。
+
+背景（2026-10-01 実測）。Switch がコントローラを受け付けない状態（1台制限の
+ゲームなど）では、Pico は `page → hid open → reason 0x13` を約10秒周期で
+反復する。これは本体側の邪魔になる。修正で拒否3回 page を打ち切り
+受動待機へ移行させたが、時間では自動では復帰しない。
+
+- 復帰手段は2つ: (1) 本フレーム (2) Switch からの着信 page（既に budget を見ない経路）
+- 時間減衰による自動再試行は**しない**。周期的に本体をノックしないことがこの修正の目的
+- 動作: `FX_RECONNECT` として `exec_fx` が `link_rearm_reconnect()` を呼ぶ。
+  拒否カウンタと page 予算を全量復帰させ、予算ぶんの再接続を試す
+- 旧レートのまま `STATUS` を即時返送する（`BAUD_SET`/`BOOTSEL` と同形）。
+  baud切替・`_tx_hold` 操作・再起動側の処理は行わない
+- 応答が返ったことは「Picoが再接続を試みた」ことまでで、**Switchが受け入れた
+  ことは含まない**。接続可否は UART0 ログの `hid open` で確認する
+- 有線起動時は BT を上げないため無意味（`exec_fx` が `s_bt_init` でガード）
+
+LEN≠0 は `ERR_BAD_LEN` で拒否し、待機状態は変化しない。
+新規フレーム追加のため PROTO_VER は 4 のまま。FW_MINOR は 3→4 に上げる
+（HELLO_ACK `[2]` が 4 を返す）。
+
+### 5.11 ホスト側の義務: CONFIG系は1発では送らないこと
+
+Pico は baud hunt 中（`baud_locked=0`）、**有効frame 2連続**で baud を確定し、
+確定した瞬間に inbox を捨てる（`src/main.c:274-281`）。そのため:
+
+- 1発送っても lock 消費に使われ、**命令は実行されない**
+- 確定した1発も inbox purge で消えるので、実行にはさらに1発が要る
+- hunt は `HUNT_DWELL_MS`(150ms) x 4スロット = **600ms 周期**
+
+したがってホストは CONFIG系を **ACK が返るまで繰り返し送出**すること。
+PokeCon 側は `BconTransport._send_until_status` が担う（80ms 間隔）。
+これは host 側の怠りではなく、firmware の lock 方式が要求する手続きである。
+
+**Idle 時の症状**: ホストが無通信だと Pico は永久に lock しない。BCON 行の
+`baud=<idx>L` が `L` なら lock 済み、`H` なら hunt 中。`L` なら単発でも通る。
+
+FW 側は「確定した frame も実行する」方向へ変えることもできる（purge をやめる）が、
+purge には「未確定baudの産物を捨てる」という根拠があるため **PROTO_VER を上げる
+変更**として扱う。現状は host 側で手続きを履行する方針。
 
 ## 6. CRC8
 

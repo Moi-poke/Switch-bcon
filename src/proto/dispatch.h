@@ -11,7 +11,7 @@
 #include "protocol.h"
 
 #define FW_MAJOR 0u
-#define FW_MINOR 3u
+#define FW_MINOR 4u
 
 // Pico->PC 送信箱の動作 (main.cがflush時に新鮮なHW状態で実行する)。
 typedef enum {
@@ -43,6 +43,7 @@ typedef enum {
     FX_BAUD_SET,      // arg = rate index (B §3)
     FX_BOOTSEL,       // arg = magic (dev only: USB BOOTSEL reboot)
     FX_EMULATE_MODE,  // arg = role 0=ProCon/1=JoyL/2=JoyR
+    FX_RECONNECT,     // arg 未使用 (末尾追加・挿入禁止)
 } v3_fx_t;
 
 // parser通過フレームに対する live-state (STATE/NEUTRAL) の扱い。

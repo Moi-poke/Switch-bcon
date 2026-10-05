@@ -317,7 +317,7 @@ int main(void) {
                s.errcode == 0x18 && s.fx == FX_EMULATE_MODE && s.fx_arg == 2, "EMULATE=3 rejected (0x18, fx preserved)");
         CHECK(v3_on_frame(&s, T_EMULATE_MODE, procon, 0, 5) == V3_IGNORE &&
               s.errcode == ERR_BAD_LEN, "LEN=0 rejected (BAD_LEN)");
-        CHECK(FW_MINOR == 3, "FW_MINOR==3 (COLOR_GET/INFO)");
+        CHECK(FW_MINOR == 4, "FW_MINOR==4 (T_RECONNECT added)");
     }
 
     printf("[23] EMULATE intent is reboot-applied (role latch proof)\n");
@@ -334,7 +334,31 @@ int main(void) {
               "EMULATE=1 -> FX_EMULATE_MODE reboot-path intent");
     }
 
-    printf("[24] same-drain CAPTURE+STATUS_REQ preserves fx\n");
+    printf("[24] T_RECONNECT LEN0 -> FX_RECONNECT + STATUS ACK\n");
+    v3_session_init(&s);
+    {
+        const uint8_t junk[2] = { 0x00, 0x00 };
+        CHECK(proto_expected_len(T_RECONNECT) == 0,
+              "RECONNECT expected len 0");
+        CHECK(T_RECONNECT == 0x3B, "RECONNECT TYPE=0x3B");
+        CHECK(v3_on_frame(&s, T_RECONNECT, NULL, 0, 1) == V3_IGNORE &&
+              s.fx == FX_RECONNECT && s.fx_arg == 0,
+              "RECONNECT LEN0 -> FX_RECONNECT intent");
+        CHECK(s.ob_n >= 1 && s.ob[s.ob_n - 1].act == ACT_SEND_STATUS,
+              "RECONNECT queues STATUS (rate unchanged)");
+        /* LEN!=0 は拒否。待機状態は動かない。 */
+        v3_session_init(&s);
+        CHECK(v3_on_frame(&s, T_RECONNECT, junk, 2, 2) == V3_IGNORE &&
+              s.errcode == ERR_BAD_LEN && s.fx == FX_NONE,
+              "RECONNECT LEN2 rejected (BAD_LEN, no FX)");
+        /* 未知 opcode として退化していないこと。 */
+        v3_session_init(&s);
+        CHECK(v3_on_frame(&s, 0x3C, NULL, 0, 3) == V3_IGNORE &&
+              s.errcode == 0 && s.fx == FX_NONE,
+              "0x3C still unknown (no over-registration)");
+    }
+
+    printf("[25] same-drain CAPTURE+STATUS_REQ preserves fx\n");
     v3_session_init(&s);
     {
         const uint8_t cap[] = { 30 };

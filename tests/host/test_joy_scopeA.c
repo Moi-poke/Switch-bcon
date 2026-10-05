@@ -250,8 +250,13 @@ int main(void) {
               "T-REBOOT next TYPE 0x39=COLOR_GET LEN0 (append-only)");
         CHECK(T_COLOR_INFO == 0x3Au && proto_expected_len(T_COLOR_INFO) == 12,
               "T-REBOOT 0x3A=COLOR_INFO LEN12 (Pico->PC)");
-        CHECK(proto_expected_len(0x3B) == -1,
-              "T-REBOOT no further TYPE next to 0x3A (0x3B unknown)");
+        /* 「0x3B は未定義」というpinは 0x3A 追加当時の状態陳述であり、
+         * 0x3B=T_RECONNECT で無効になった。保持する価値のある不変条件は
+         * 「opcode を足したら版も上げる」ことなので、その契約として読む。 */
+        CHECK(T_RECONNECT == 0x3Bu && proto_expected_len(T_RECONNECT) == 0,
+              "T-REBOOT 0x3B=T_RECONNECT LEN0 (append-only)");
+        CHECK(FW_MAJOR == 0u && FW_MINOR == 4u,
+              "T-REBOOT FW bumped to 0.4 with the new TYPE");
     }
 
     printf("[T-PROCON-GATE] role0 regression gate (passthrough)\n");

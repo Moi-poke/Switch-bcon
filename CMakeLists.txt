@@ -100,6 +100,7 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
     src/bt/personality.c
     src/bt/link.c
     src/bt/link_conn.c
+    src/bt/reconnect_policy.c
     src/bt/link_cap.c
     src/bt/link_beacon.c
     src/bt/cap.c

@@ -127,6 +127,39 @@ int main(void) {
       /* BAD_CRCは正常フレーム後もラッチ維持 (対照ロック) */
       CHECK(st4.errcode == ERR_BAD_CRC, "BAD_CRC stays latched"); }
 
+    printf("[10] session resync: PC再接続(SEQ=0再開)は欠番に数えない\n");
+    { link_stats_t st5; memset(&st5, 0, sizeof(st5));
+      parser_init(&p, cb, NULL, &st5);
+      uint8_t f[64];
+      size_t n;
+      n = frame_build(f, T_PING, NULL, 0, 0x40); parser_feed_buf(&p, f, n);
+      n = frame_build(f, T_PING, NULL, 0, 0x41); parser_feed_buf(&p, f, n);
+      /* 対照: 再同期なしでSEQ=0が来れば欠番1件 (ガードが落ち得ることの証明) */
+      link_stats_t ctl = st5;
+      parser_t pc; parser_init(&pc, cb, NULL, &ctl);
+      n = frame_build(f, T_STATUS_REQ, NULL, 0, 0x00); parser_feed_buf(&pc, f, n);
+      CHECK(ctl.err_drop == 1 && ctl.errcode == ERR_SEQ_GAP, "control: no resync -> gap");
+      /* 本題: 無通信でセッション境界とみなし再同期した後のSEQ=0は数えない */
+      link_stats_seq_resync(&st5);
+      n = frame_build(f, T_STATUS_REQ, NULL, 0, 0x00); parser_feed_buf(&p, f, n);
+      CHECK(st5.err_drop == 0 && st5.errcode == ERR_OK, "resync -> SEQ=0 not a gap");
+      CHECK(st5.have_seq && st5.last_seq == 0x00, "resync -> new baseline 0x00");
+      /* 再同期後も欠番検出は生きている */
+      n = frame_build(f, T_PING, NULL, 0, 0x05); parser_feed_buf(&p, f, n);
+      CHECK(st5.err_drop == 1 && st5.errcode == ERR_SEQ_GAP, "gap after resync still counted"); }
+
+    printf("[10b] resync clears stale ERR_SEQ_GAP, keeps other errcodes\n");
+    { link_stats_t st6; memset(&st6, 0, sizeof(st6));
+      st6.have_seq = true; st6.last_seq = 0x10; st6.errcode = ERR_SEQ_GAP; st6.err_drop = 3;
+      link_stats_seq_resync(&st6);
+      /* 前セッションのSEQ欠番は新セッションのSTATUSへ持ち越さない (累計は保持) */
+      CHECK(!st6.have_seq && st6.errcode == ERR_OK && st6.err_drop == 3, "stale SEQ_GAP cleared");
+      st6.have_seq = true; st6.errcode = ERR_BAD_CRC;
+      link_stats_seq_resync(&st6);
+      CHECK(!st6.have_seq && st6.errcode == ERR_BAD_CRC, "BAD_CRC kept across resync");
+      link_stats_seq_resync(NULL); /* NULLで落ちない */
+      CHECK(1, "resync(NULL) safe"); }
+
     printf("\nRESULT: %s (%d failures)\n", fails == 0 ? "ALL PASS" : "HAS FAILURES", fails);
     return fails;
 }

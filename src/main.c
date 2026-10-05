@@ -264,9 +264,19 @@ typedef struct {
 } baudx_t;
 static baudx_t s_baudx;
 
+// ---- SEQ再同期 (spec §3)。Core1専用・無錠 ----
+// PCは接続ごとにSEQを0から振り直す。無通信がこの時間続いたら次の接続とみなし、
+// 欠番判定の基準を捨てる (起動時の偽ERR_SEQ_GAP対策)。200msの中立解放より
+// 長く取り、セッション内の短い途切れでは欠番検出を残す。
+#define SEQ_RESYNC_IDLE_MS 1000u
+static uint32_t s_rx_last_ms; // 直近の有効frame受理時刻
+static bool s_rx_seen;        // 前回の再同期以降に有効frameを受理したか
+
 static void bcon_frame_cb(uint8_t type, const uint8_t *p, uint8_t len,
                           uint8_t seq, void *user) {
     (void)user;
+    s_rx_last_ms = to_ms_since_boot(get_absolute_time());
+    s_rx_seen = true;
     mutex_enter_blocking(&g_m);
     if (!g_s.baud_locked && s_hunt.armed) {
         // hunt中 (B-0): 有効frame 2連続で確定。確定前のinboxは未確定baudの
@@ -479,10 +489,10 @@ static void baud_hw_switch(uint32_t bps) {
     uart_get_hw(DATA_UART)->rsr = 0xFF;
     (void)uart_set_baudrate(DATA_UART, bps);
     parser_init(&s_parser, bcon_frame_cb, NULL, &s_pst); // acc捨て・stats保持
-    {
-        uint32_t wa = dma_hw->ch[g_dma_ch].write_addr;
-        g_rd = (wa - (uint32_t)dma_ring) & (RING_SIZE - 1); // 旧baud残渣捨て
-    }
+    // DMAはring先頭から書き直すので読み位置も先頭へ。旧write位置に合わせると
+    // 次の読みが ring[旧位置..末尾] の過去frame (正CRC) を再生し、hunt が
+    // 誰も使っていない slot で偽lock→BCBR保存→ホストから無応答になる。
+    g_rd = 0u;
     dma_channel_set_write_addr(g_dma_ch, dma_ring, true);
 }
 
@@ -534,6 +544,9 @@ static void core1_entry(void) {
 #endif
 
     uint32_t st = core1_selftest();
+    // selftestの合成SEQ(0x12)を基準に残すと、PCの初回frameが必ず欠番になる。
+    link_stats_seq_resync(&s_pst);
+    s_rx_seen = false;
     mutex_enter_blocking(&g_m);
     g_s.boot_code = (st == 0) ? 1u : 2u;
     g_s.boot_detail = st;
@@ -624,6 +637,11 @@ static void core1_entry(void) {
                        (int32_t)BREAK_LOW_MS) {
                 s_hunt.brk_fired = true;
                 hunt_on_break(now);
+            }
+            if (s_rx_seen && (int32_t)(now - s_rx_last_ms) >=
+                             (int32_t)SEQ_RESYNC_IDLE_MS) {
+                link_stats_seq_resync(&s_pst);
+                s_rx_seen = false;
             }
             if (!s_hunt.locked) {
                 if ((int32_t)(now - s_hunt.dwell_until) >= 0) {
@@ -793,6 +811,12 @@ static void exec_fx(uint32_t now_ms) {
             }
             store_host_forget();
             probe_line("keys deleted (classic + host tag)");
+            break;
+        case FX_RECONNECT:
+            // 待機状態 (page予算切れ) の明示解除。無線起動時のみ意味を持つ。
+            if (s_bt_init) {
+                link_rearm_reconnect();
+            }
             break;
         case FX_WIRED_MODE: {
             bool w = g_vs.fx_arg != 0u;
@@ -1014,8 +1038,10 @@ static void poll_tick(uint32_t now) {
         // STATE/NEUTRALのlive適用はCore1高速路が担う (UNSUPPORTED下の
         // STATE拒否を含む)。ここではCONFIG等のfx/obのみ扱う。
         (void)v3_on_frame(&g_vs, cur.type, cur.payload, cur.len, cur.seq);
+        // fxは1枠のため frameごとに実行する。drain後に1回だけだと、同じtickに
+        // CONFIGが2つ届いたとき先のfxが後のfxで上書きされ黙って消える。
+        exec_fx(now);
     }
-    exec_fx(now);
     }
     flush_outbox();
 
@@ -1117,7 +1143,7 @@ static void stats_print(void) {
     mutex_exit(&g_m);
     usb_wired_get_stats(&ws);
     snprintf(line, sizeof(line),
-             "BCON t=%lus hs=%d mnt=%d cid=%u wired=%d "
+             "BCON t=%lus hs=%d mnt=%d cfg=%d cid=%u wired=%d "
              "cap=%d/%d/%d res=%d err=%02x rum=%lu+%lu "
               "ibdrop=%lu obdrop=%u frames=%lu crc=%lu drop=%lu ovr=%lu "
                "rx80=%lu tx81=%lu tx21=%lu in30=%lu iters=%lu pm=%lu "
@@ -1378,6 +1404,14 @@ static void packet_handler(uint8_t packet_type, uint16_t channel,
                 /* Stale key: forget it so the next attempt re-pairs cleanly. */
                 gap_delete_all_link_keys();
                 probe_line("auth fail: keys dropped, re-pair");
+            } else {
+                /* 認証成功直後の鍵DB件数。0 のままなら BTstack が
+                 * LINK_KEY_NOTIFICATION を保存しなかったということ
+                 * (接続参照失敗 / bonding フラグ / security level の
+                 * いずれかなのを切り分ける唯一の観測点)。鍵そのものは出さない。 */
+                snprintf(msg, sizeof(msg), "auth ok. link keys=%d",
+                         link_key_count());
+                probe_line(msg);
             }
             break;
         }
@@ -1441,7 +1475,10 @@ int main(void) {
     // UDF疎通確認はrevert済み (動作確認OK)。
 
     // WDT復帰の記録 (STATUS bit3)。enable前の値を読む。
-    s_wdt_recovered = watchdog_caused_reboot();
+    // watchdog_caused_reboot()はwatchdog_reboot() (WIRED/EMULATE切替) でも真に
+    // なる。STATUS bit3は「WDTタイムアウトで落ちた」ことだけを示したいので
+    // watchdog_enable()のtimeoutに限る版を使う (SDK watchdog.h:115-126)。
+    s_wdt_recovered = watchdog_enable_caused_reboot();
 
     // 自MAC: OUI 7C:BB:8A＋unique末尾 (wakecon link_initと同一)。
     link_init();
@@ -1544,6 +1581,7 @@ int main(void) {
         while (1) tight_loop_contents();
     }
     printf("cyw43 ok\n");
+    link_note_hci_ready(); // ここからgap_*可 (有線起動はここへ来ない)
     usb_wired_pump();
     link_init();
     // link_initはMAC再生成のためbcon_macを掛け直す。
@@ -1570,7 +1608,9 @@ int main(void) {
     // roleはCore0 pack/outputのみに効く (cross-core handoffなし)。
     probe_role = s_emulate;
 
-    gap_discoverable_control(1);
+    /* discoverable はペアリング状態に従う (未ペアだけ 1)。常時 1 にすると
+     * 本体側の候補に追加され続け、接続確認が出る。判断は link 層。 */
+    link_apply_discoverable();
     gap_connectable_control(1);
     gap_set_class_of_device(personality->cod); // ProCon行=0x2508で現行値と同一
     gap_set_local_name(personality->gap_name); // ProCon行="Pro Controller"で同一
