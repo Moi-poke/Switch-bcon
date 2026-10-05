@@ -16,6 +16,7 @@
 | 4.3 | 2026-09-24 | COLOR_GET新設（0x39・PC→Pico・LEN0）・COLOR_INFO新設（0x3A・Pico→PC・LEN12）・PROTO_VER=4維持・FW_MINOR=3 |
 | 4.4 | 2026-10-01 | T_RECONNECT新設（0x3B・PC→Pico・LEN0）。Switchが拒否して待機状態に入ったPicoを明示的に起こす（実コントローラーのボタン押下相当）。PROTO_VER=4維持・FW_MINOR=4 |
 | 4.5 | 2026-10-05 | PC→Pico SEQ欠番の再同期を新設（無通信1000msでセッション境界とみなし基準を捨てる・起動時selftestの合成SEQも捨てる）。PC再接続のたびに出ていた偽 `ERRCODE=0x03` を解消。フレーム・フィールド不変・意味の明確化のみのため PROTO_VER=4維持・FW_MINOR据置（4.2前例） |
+| 4.6 | 2026-10-05 | timeout-neutral の延長条件を明記（適用したSTATE/NEUTRALのみ。従来実装はPING等でも延長していた＝実装を本文に合わせる修正）。PROTO_VER=4維持・FW_MINOR据置 |
 
 > フィールド追加・意味変更時は必ず本表と `PROTO_VER` を更新する。
 
@@ -283,7 +284,7 @@ CRC-8/SMBUS（poly 0x07、init 0x00、 refin/refoutなし、xorout 0x00）。検
 |------|------|
 | STATE送信 | 変化時即送＋定期リフレッシュ（既定60Hz、上限1kHz） |
 | USBポーリング | bInterval 8（実機写し）。低遅延は到着即report更新で確保 |
-| timeout-neutral | 直近STATEから200ms無受信で全解放 |
+| timeout-neutral | 直近STATE（適用されたSTATE/NEUTRAL）から200ms無受信で全解放。PING・STATUS_REQ等の他frameでは延長しない |
 | WDT | 2s。timeout-neutralとは別機構（前者=入力安全、後者=生存性） |
 | USB監視 | unmount/suspendで即中立、再mountで復帰 |
 | コア | dual-core可否はPoCで判定。不合格時はsingle-core＋1ms poll |

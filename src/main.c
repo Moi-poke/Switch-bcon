@@ -81,6 +81,10 @@ typedef struct {
     uint8_t  last_type;
     uint8_t  perrcode;    // parser errcode mirror (STATUS用)
     uint32_t frames;
+    // 適用したSTATE/NEUTRALの数。timeout-neutral (spec §8) の判定専用。
+    // framesはPING/STATUS_REQ等も数えるため、それで延長すると入力源が
+    // 止まってもボタンが押されたまま残る。
+    uint32_t state_frames;
     uint32_t crc_err;
     uint32_t drop_ev;
     uint32_t iters;
@@ -131,6 +135,7 @@ static uint32_t s_boot_baud; // 起動baud (ready表示用。BCBR/sweep解決済
 static bool s_neutral_hold; // timeout-neutral中 (STATUS bit2)
 static uint32_t s_last_state_ms;
 static uint32_t s_last_frames;
+static uint32_t s_last_state_frames;
 static uint32_t s_rumble_reported; // 前回STATUS時のrumble合計
 static bool s_wdt_recovered;
 static bool s_bt_init; // BTstack初期化済み (無線起動時のみtrue)
@@ -302,6 +307,7 @@ static void bcon_frame_cb(uint8_t type, const uint8_t *p, uint8_t len,
     }
     if (type == T_STATE && proto_state_len_ok(len)) {
         if (trusted && g_s.state_accept) {
+            g_s.state_frames++;
             g_s.state.buttons =
                 (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
                 ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
@@ -321,6 +327,7 @@ static void bcon_frame_cb(uint8_t type, const uint8_t *p, uint8_t len,
         // 安全停止はUNSUPPORTED下でも適用する (dispatchと同義)。
         // ただしhunt確定前は未確定baudのため適用しない。
         if (trusted) {
+            g_s.state_frames++;
             g_s.state.buttons = 0u;
             g_s.state.lx = g_s.state.ly = 0x800u;
             g_s.state.rx = g_s.state.ry = 0x800u;
@@ -370,10 +377,12 @@ static void pokecon_drain_byte(uint8_t b) {
     if (rc == POKE_OK) {
         if (g_s.baud_locked && g_s.state_accept) {
             g_s.state = ns;
+            g_s.state_frames++;
         }
     } else if (rc == POKE_END) {
         if (g_s.baud_locked) {
             g_s.state = ns;
+            g_s.state_frames++;
         }
     } else {
         if (g_s.crc_err < 0xFFFFu) {
@@ -1066,16 +1075,20 @@ static void poll_tick(uint32_t now) {
     probe_procon_u32 = cp.state.buttons;
 
     // STATE到着追跡＋timeout-neutral (200ms。spec §8)。
-    advanced = (cp.frames != s_last_frames);
-    if (advanced) {
+    // 正常受信でCONFIG拒否コードを戻す (spec §5.5)。種別を問わない。
+    if (cp.frames != s_last_frames) {
         s_last_frames = cp.frames;
+        if (g_vs.errcode != 0u && cp.frames > 0u) {
+            g_vs.errcode = 0u;
+        }
+    }
+    // 中立維持の延長は適用したSTATE/NEUTRALだけで行う (spec §8)。
+    advanced = (cp.state_frames != s_last_state_frames);
+    if (advanced) {
+        s_last_state_frames = cp.state_frames;
         s_last_state_ms = now;
         if (s_neutral_hold) {
             s_neutral_hold = false;
-        }
-        // 正常受信でCONFIG拒否コードを戻す (spec §5.5)。
-        if (g_vs.errcode != 0u && cp.frames > 0u) {
-            g_vs.errcode = 0u;
         }
     } else if (!s_neutral_hold &&
                (int32_t)(now - s_last_state_ms) >= (int32_t)TIMEOUT_NEUTRAL_MS) {
