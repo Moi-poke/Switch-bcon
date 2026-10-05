@@ -766,21 +766,27 @@ static void uart_tx_frame(uint8_t type, const uint8_t *payload, uint8_t len) {
 }
 
 // ---------------- Core0: STATUS組立 (新鮮なHW状態で作る) ----------------
+// Core0のスタックは2KB。stats_print (自動STATUS) から呼ばれるため、共有状態の
+// 丸ごと複写 (inbox込み) は避け、要る項目だけ写す。丸ごと複写していた版は
+// stats_print 1248B＋本関数 520B で溢れ、MSPLIM Fault→2秒後WDTになっていた。
 static void send_status(void) {
     uint8_t flags = 0u;
     uint8_t payload[7];
-    bcon_shared_t cp;
-    usb_wired_stats_t ws;
+    uint8_t last_seq, perrcode;
+    uint32_t crc_err, drop_ev, overruns;
     uint32_t rumble_total;
     mutex_enter_blocking(&g_m);
-    cp = g_s;
+    last_seq = g_s.last_seq;
+    crc_err = g_s.crc_err;
+    drop_ev = g_s.drop_ev;
+    overruns = g_s.overruns;
+    perrcode = g_s.perrcode;
     mutex_exit(&g_m);
-    usb_wired_get_stats(&ws);
     if (usb_wired_is_configured()) flags |= ST_USB_MOUNTED;
     if (probe_hid_cid != 0u || usb_wired_handshake_done()) flags |= ST_SWITCH_READY;
     if (s_neutral_hold) flags |= ST_TIMEOUT_NEUTRAL;
     if (s_wdt_recovered) flags |= ST_WDT_RECOVERED;
-    if (cp.overruns > 0u) flags |= ST_UART_OVERRUN;
+    if (overruns > 0u) flags |= ST_UART_OVERRUN;
     if (s_wired) flags |= ST_WIRED_MODE;
     if (probe_hid_cid != 0u) flags |= ST_BT_CONNECTED;
     rumble_total = bcon_usb_rumble_n + bcon_bt_rumble_n;
@@ -788,8 +794,8 @@ static void send_status(void) {
         flags |= ST_RUMBLE_SEEN;
         s_rumble_reported = rumble_total;
     }
-    v3_pack_status(flags, cp.last_seq, cp.crc_err, cp.drop_ev,
-                   (g_vs.errcode != 0u) ? g_vs.errcode : cp.perrcode, payload);
+    v3_pack_status(flags, last_seq, (uint16_t)crc_err, (uint16_t)drop_ev,
+                   (g_vs.errcode != 0u) ? g_vs.errcode : perrcode, payload);
     uart_tx_frame(T_STATUS, payload, 7);
 }
 
@@ -1147,15 +1153,18 @@ static uint32_t pm_rd(void)
     return r;
 }
 
+// 行バッファは静的に置く (Core0専用・非再入。2KBスタック節約、send_status参照)。
+static char s_stats_line[384];
+static char s_stats_uline[256];
 static void stats_print(void) {
-    char line[384];
+    char *line = s_stats_line;
     usb_wired_stats_t ws;
     bcon_shared_t cp;
     mutex_enter_blocking(&g_m);
     cp = g_s;
     mutex_exit(&g_m);
     usb_wired_get_stats(&ws);
-    snprintf(line, sizeof(line),
+    snprintf(line, sizeof(s_stats_line),
              "BCON t=%lus hs=%d mnt=%d cfg=%d cid=%u wired=%d "
              "cap=%d/%d/%d res=%d err=%02x rum=%lu+%lu "
               "ibdrop=%lu obdrop=%u frames=%lu crc=%lu drop=%lu ovr=%lu "
@@ -1182,8 +1191,8 @@ static void stats_print(void) {
     /* USB dock観測用 (一時計装・Joy PIDの初期化列捕捉)。
      * 振る舞いは変えない (表示のみ)。 */
     {
-        char uline[256];
-        snprintf(uline, sizeof(uline),
+        char *uline = s_stats_uline;
+        snprintf(uline, sizeof(s_stats_uline),
                  "UHB mnt=%lu unm=%lu rx80=%lu last80=%02x "
                  "h80=%02x%02x%02x%02x h01=%02x%02x%02x%02x "
                  "f8n=%u f8=%02x%02x%02x%02x unk=%02x/%u "
