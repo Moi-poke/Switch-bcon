@@ -21,12 +21,12 @@ param(
     [int]$Mode = 1,        # IMU_DUMMY_MODE 0=SINE 1=STEP
     [int]$Force = 0,       # IMU_DUMMY_FORCE 0/1
     [int]$Diag = 0,        # IMU_DUMMY_DIAG (§1: 0/1)
-    [string]$Commit = "",  # ビルド元コミット (空=既定 §1COMMIT)
+    [string]$Commit = "",  # ビルド元コミット (空=既定 bbed34a)
     [Parameter(Mandatory = $true)][string]$Name  # 出力名 (英数・-・_ のみ)
 )
 $ErrorActionPreference = "Stop"
 
-if ($Commit -eq "") { $Commit = "§1COMMIT" }
+if ($Commit -eq "") { $Commit = "bbed34a" }
 if ($Name -notmatch '^[A-Za-z0-9_-]+$') { throw "Name must be [A-Za-z0-9_-]+: $Name" }
 if ($Axis -lt 0 -or $Axis -gt 2) { throw "Axis must be 0..2" }
 if ($GRaw -lt -32768 -or $GRaw -gt 32767) { throw "GRaw must fit int16" }
