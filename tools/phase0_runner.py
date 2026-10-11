@@ -518,7 +518,7 @@ class Runner:
                 self.ui.red("110〜140/sの範囲外です。配線・周期を確認してください。")
                 if not self.ui.confirm("続行しますか"):
                     return
-            self._record_run({"run": spec.name, "build": str(b2),
+            self._record_run({"run": spec.name, "build": str(b),
                               "rate": {"avg": st.avg, "min": st.min, "max": st.max, "n": st.n}})
             self.state.set("s1_done", True)
             self.state.set("prev_interval", 8)
