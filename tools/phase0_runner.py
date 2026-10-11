@@ -342,6 +342,12 @@ class Runner:
         if bad:
             self.ui.red(f"構成が一致しません: {', '.join(bad)}")
             self.ui.red(f"受信: {b}")
+            # gitのみの不一致なら、期待hashの切替えを提案する
+            # (§0の旧UF2とdiag UF2の混在用)。
+            if len(bad) == 1 and bad[0].startswith("git("):
+                if self.ui.confirm(f"期待hashを {b.git} に切り替えますか"):
+                    self.state.set("fw_commit", b.git)
+                    return self._flash(spec, prev_interval)
             return None
         self.ui.green("構成一致。")
         print("Switchドックに挿し替えてください。挿し替え後の再起動を待ちます...")
