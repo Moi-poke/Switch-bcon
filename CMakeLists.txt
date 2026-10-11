@@ -38,6 +38,23 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
   # POKECON_INPUT: Core1の入力方言 (0=v3バイナリ既定・1=PokeCon Modified行)。
   # 自動判別なし。PokeCon側は115200のため -DPOC_DATA_BAUD=115200 と組で使う。
   set(POKECON_INPUT 0 CACHE STRING "Core1 input dialect (0=v3 binary, 1=pokecon lines)")
+  # IMU_DUMMY: Phase 0 実験ビルド (0=現行既定・1=ダミーIMU)。
+  # ON時のみ実験パラメータをcompile definitionへ渡し、imu_dummy.cをlinkする。
+  set(IMU_DUMMY 0 CACHE STRING "Phase 0 dummy IMU experiment (0=off, 1=on)")
+  set(IMU_DUMMY_INTERVAL_MS 8 CACHE STRING "Dummy USB report interval ms (ON only)")
+  set(IMU_DUMMY_MODE 1 CACHE STRING "Dummy mode (ON only: 0=SINE, 1=STEP)")
+  set(IMU_DUMMY_GYRO_AXIS 2 CACHE STRING "Dummy gyro axis 0..2 (ON only)")
+  set(IMU_DUMMY_G_RAW 5899 CACHE STRING "Dummy STEP raw int16 (ON only)")
+  set(IMU_DUMMY_T_MS 4000 CACHE STRING "Dummy STEP duration ms (ON only)")
+  set(IMU_DUMMY_SINE_AMP_RAW 1475 CACHE STRING "Dummy SINE amplitude raw (ON only)")
+  set(IMU_DUMMY_SINE_PERIOD_MS 2000 CACHE STRING "Dummy SINE period ms (ON only)")
+  set(IMU_DUMMY_FILL_MASK 7 CACHE STRING "Dummy fill mask bit0=slot0 (ON only)")
+  set(IMU_DUMMY_ACC_X 0 CACHE STRING "Dummy static accel X int16 (ON only)")
+  set(IMU_DUMMY_ACC_Y 0 CACHE STRING "Dummy static accel Y int16 (ON only)")
+  set(IMU_DUMMY_ACC_Z 16384 CACHE STRING "Dummy static accel Z int16 (ON only)")
+  set(IMU_DUMMY_FORCE 0 CACHE STRING "Dummy force-active (ON only: 0/1)")
+  set(IMU_DUMMY_STEP_AUTOREPEAT_MS 0 CACHE STRING "Dummy STEP autorepeat ms, 0=manual (ON only)")
+  # usb_cdc.c は常時リンク (HID profile時はconnected=falseで不応答)。
   add_executable(poc_dualcore
     src/poc_dualcore/main.c
     src/poc_dualcore/poc_usb.c
@@ -144,7 +161,48 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
     POC_DATA_BAUD=${POC_DATA_BAUD}
     WIRED_DEFAULT=${WIRED_DEFAULT}
     POKECON_INPUT=${POKECON_INPUT}
+    IMU_DUMMY=${IMU_DUMMY}
   )
+
+  # Phase 0: ON時のみ実験パラメータとimu_dummy.cを足す。libmはSINE用。
+  if(IMU_DUMMY)
+    # 由来追跡: IMUD build行へ短縮hashとdirty flagを載せる (ON時のみ)。
+    execute_process(COMMAND git rev-parse --short HEAD
+      WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+      OUTPUT_VARIABLE IMU_DUMMY_GIT_HASH_V OUTPUT_STRIP_TRAILING_WHITESPACE
+      ERROR_QUIET)
+    execute_process(COMMAND git status --porcelain
+      WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+      OUTPUT_VARIABLE IMU_DUMMY_GIT_STATUS_V OUTPUT_STRIP_TRAILING_WHITESPACE
+      ERROR_QUIET)
+    if(IMU_DUMMY_GIT_HASH_V STREQUAL "")
+      set(IMU_DUMMY_GIT_HASH_V "unknown")
+    endif()
+    if(IMU_DUMMY_GIT_STATUS_V STREQUAL "")
+      set(IMU_DUMMY_GIT_DIRTY_V "0")
+    else()
+      set(IMU_DUMMY_GIT_DIRTY_V "1")
+    endif()
+    target_sources(switch-bcon PRIVATE src/usb/imu_dummy.c)
+    target_compile_definitions(switch-bcon PRIVATE
+      IMU_DUMMY_INTERVAL_MS=${IMU_DUMMY_INTERVAL_MS}
+      IMU_DUMMY_MODE=${IMU_DUMMY_MODE}
+      IMU_DUMMY_GYRO_AXIS=${IMU_DUMMY_GYRO_AXIS}
+      IMU_DUMMY_G_RAW=${IMU_DUMMY_G_RAW}
+      IMU_DUMMY_T_MS=${IMU_DUMMY_T_MS}
+      IMU_DUMMY_SINE_AMP_RAW=${IMU_DUMMY_SINE_AMP_RAW}
+      IMU_DUMMY_SINE_PERIOD_MS=${IMU_DUMMY_SINE_PERIOD_MS}
+      IMU_DUMMY_FILL_MASK=${IMU_DUMMY_FILL_MASK}
+      IMU_DUMMY_ACC_X=${IMU_DUMMY_ACC_X}
+      IMU_DUMMY_ACC_Y=${IMU_DUMMY_ACC_Y}
+      IMU_DUMMY_ACC_Z=${IMU_DUMMY_ACC_Z}
+      IMU_DUMMY_FORCE=${IMU_DUMMY_FORCE}
+      IMU_DUMMY_STEP_AUTOREPEAT_MS=${IMU_DUMMY_STEP_AUTOREPEAT_MS}
+      IMU_DUMMY_GIT_HASH="${IMU_DUMMY_GIT_HASH_V}"
+      IMU_DUMMY_GIT_DIRTY="${IMU_DUMMY_GIT_DIRTY_V}"
+    )
+    target_link_libraries(switch-bcon m)
+  endif()
 
   pico_add_extra_outputs(switch-bcon)
 else()

@@ -139,6 +139,66 @@ add_executable(test_reconnect_policy
 target_include_directories(test_reconnect_policy PRIVATE ../../src/bt)
 
 
+# Phase 0: IMU_DUMMY=ON構成のときだけ定義する。既存15件には触れない。
+# 構成マトリクスは -DIMU_DUMMY_*= で切る (既定=A: MODE1/MASK7/FORCE0)。
+option(IMU_DUMMY "Phase 0 dummy IMU host test" OFF)
+set(IMU_DUMMY_MODE 1 CACHE STRING "Dummy mode (0=SINE, 1=STEP)")
+set(IMU_DUMMY_GYRO_AXIS 2 CACHE STRING "Dummy gyro axis 0..2")
+set(IMU_DUMMY_G_RAW 5899 CACHE STRING "Dummy STEP raw int16")
+set(IMU_DUMMY_T_MS 4000 CACHE STRING "Dummy STEP duration ms")
+set(IMU_DUMMY_SINE_AMP_RAW 1475 CACHE STRING "Dummy SINE amplitude raw")
+set(IMU_DUMMY_SINE_PERIOD_MS 2000 CACHE STRING "Dummy SINE period ms")
+set(IMU_DUMMY_FILL_MASK 7 CACHE STRING "Dummy fill mask bit0=slot0")
+set(IMU_DUMMY_ACC_X 0 CACHE STRING "Dummy static accel X int16")
+set(IMU_DUMMY_ACC_Y 0 CACHE STRING "Dummy static accel Y int16")
+set(IMU_DUMMY_ACC_Z 16384 CACHE STRING "Dummy static accel Z int16")
+set(IMU_DUMMY_FORCE 0 CACHE STRING "Dummy force-active 0/1")
+set(IMU_DUMMY_STEP_AUTOREPEAT_MS 0 CACHE STRING "Dummy STEP autorepeat ms")
+set(IMU_DUMMY_INTERVAL_MS 8 CACHE STRING "Dummy USB interval ms")
+if(IMU_DUMMY)
+  execute_process(COMMAND git rev-parse --short HEAD
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/../..
+    OUTPUT_VARIABLE IMU_DUMMY_GIT_HASH_V OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET)
+  execute_process(COMMAND git status --porcelain
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/../..
+    OUTPUT_VARIABLE IMU_DUMMY_GIT_STATUS_V OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET)
+  if(IMU_DUMMY_GIT_HASH_V STREQUAL "")
+    set(IMU_DUMMY_GIT_HASH_V "unknown")
+  endif()
+  if(IMU_DUMMY_GIT_STATUS_V STREQUAL "")
+    set(IMU_DUMMY_GIT_DIRTY_V "0")
+  else()
+    set(IMU_DUMMY_GIT_DIRTY_V "1")
+  endif()
+  add_executable(test_imu_dummy
+    test_imu_dummy.c
+    ../../src/usb/imu_dummy.c
+  )
+  target_include_directories(test_imu_dummy PRIVATE ../../src/usb)
+  target_compile_definitions(test_imu_dummy PRIVATE
+    IMU_DUMMY=1
+    IMU_DUMMY_MODE=${IMU_DUMMY_MODE}
+    IMU_DUMMY_GYRO_AXIS=${IMU_DUMMY_GYRO_AXIS}
+    IMU_DUMMY_G_RAW=${IMU_DUMMY_G_RAW}
+    IMU_DUMMY_T_MS=${IMU_DUMMY_T_MS}
+    IMU_DUMMY_SINE_AMP_RAW=${IMU_DUMMY_SINE_AMP_RAW}
+    IMU_DUMMY_SINE_PERIOD_MS=${IMU_DUMMY_SINE_PERIOD_MS}
+    IMU_DUMMY_FILL_MASK=${IMU_DUMMY_FILL_MASK}
+    IMU_DUMMY_ACC_X=${IMU_DUMMY_ACC_X}
+    IMU_DUMMY_ACC_Y=${IMU_DUMMY_ACC_Y}
+    IMU_DUMMY_ACC_Z=${IMU_DUMMY_ACC_Z}
+    IMU_DUMMY_FORCE=${IMU_DUMMY_FORCE}
+    IMU_DUMMY_STEP_AUTOREPEAT_MS=${IMU_DUMMY_STEP_AUTOREPEAT_MS}
+    IMU_DUMMY_INTERVAL_MS=${IMU_DUMMY_INTERVAL_MS}
+    IMU_DUMMY_GIT_HASH="${IMU_DUMMY_GIT_HASH_V}"
+    IMU_DUMMY_GIT_DIRTY="${IMU_DUMMY_GIT_DIRTY_V}"
+  )
+  if(NOT MSVC)
+    target_link_libraries(test_imu_dummy m)
+  endif()
+endif()
 enable_testing()
 add_test(NAME protocol COMMAND test_protocol)
 add_test(NAME usb COMMAND test_usb)
@@ -153,3 +213,6 @@ add_test(NAME wired_player COMMAND test_wired_player)
 add_test(NAME player_capsaved COMMAND test_player_capsaved)
 add_test(NAME color_getinfo COMMAND test_color_getinfo)
 add_test(NAME reconnect_policy COMMAND test_reconnect_policy)
+if(IMU_DUMMY)
+  add_test(NAME imu_dummy COMMAND test_imu_dummy)
+endif()

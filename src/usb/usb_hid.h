@@ -26,6 +26,12 @@ typedef struct {
     uint8_t mac[6];
     uint8_t player;
     uint8_t role;
+#if IMU_DUMMY
+    // Phase 0 実験用 (ON時のみ存在)。to_ms_since_boot由来の時刻。
+    // ダミー生成器へ渡す (usb_hid.cはpico非依存のため呼出側が渡す)。
+    // memcmpで比較するな (未設定時は0のまま)。
+    uint32_t now_ms;
+#endif
 } usb_sub_ctx_t;
 
 /* 0x01 xx → 64B の 0x21 応答。02/03/10/30/40/48 と既定 ack。

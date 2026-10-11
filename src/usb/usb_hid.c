@@ -9,6 +9,9 @@
 #include "usb_hid.h"
 #include "spi.h"
 #include "pack.h"
+#if IMU_DUMMY
+#include "imu_dummy.h"
+#endif
 
 /* 有線 0x30 受信値の格納 (無線 probe_player_id/probe_player_seen の鏡像)。
  * usb_wired.c の static dead-end をここへ移し、host test からも触れる
@@ -241,6 +244,14 @@ int usb_build_30_report(const usb_sub_ctx_t *ctx, uint8_t out64[64])
      * 全ゼロ + 0x40 IMU-enable ACK は矛盾するため (host fault 検出の恐れ)。
      * 報告長・形状は不変 (ID + 12B ControllerData + 36B IMU + 15B 埋め)。
      * ProCon のみ (Joy は上記ゼロ)。 */
+#if IMU_DUMMY
+    /* Phase 0 実験: role==0 かつ 0x40/0x03有効のときだけダミー生成器を使う。
+     * IMU_DUMMY=0 では下の静止値ループと同一 (構造は変えない)。 */
+    if (imu_dummy_active()) {
+        imu_dummy_fill(&out64[13], ctx->now_ms);
+        return 64;
+    }
+#endif
     for (k = 0; k < 3; k++) {
         int base = 13 + k * 12;
         out64[base + 0] = 0x00u;

@@ -39,6 +39,9 @@
 #include "spi.h"
 #include "usb_wired.h"
 #include "usb_hid.h" // usb_set_role (dep-free header, no tusb/btstack)
+#if IMU_DUMMY
+#include "usb/imu_dummy.h" // Phase 0 実験のLOG行トリガのみ (ON時のみ)
+#endif
 #include "bt/hid.h"
 #include "bt/link.h"
 #include "bt/store.h"
@@ -957,6 +960,15 @@ static void poll_log_bootsel(uint32_t now) {
                     }
                 }
             }
+#if IMU_DUMMY
+            /* Phase 0: step行でSTEP再トリガ (bootsel判定の後・クリアの前)。
+             * s_loglineはNUL終端なしのためlen付きで渡す。 */
+            if (imu_dummy_is_step_line(s_logline, s_logline_n)) {
+                char imud_line[128];
+                imu_dummy_step_trigger(now, imud_line, sizeof(imud_line));
+                probe_line(imud_line);
+            }
+#endif
             s_logline_n = 0u;
             if (matched && s_bootsel_at == 0u) {
                 s_bootsel_at = now + 500u;

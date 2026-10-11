@@ -14,6 +14,9 @@
 
 #include "usb_wired.h"
 #include "usb_hid.h"
+#if IMU_DUMMY
+#include "imu_dummy.h"
+#endif
 
 void probe_line(const char *s);
 
@@ -27,8 +30,14 @@ extern uint32_t bcon_usb_rumble_n; /* 所有元main.c。USB振動0x10受信累�
 #define USB_WIRED_INPUT_LEN 64u
 #define USB_WIRED_INPUT_PAYLOAD_LEN 63u
 #define USB_WIRED_REPORT_ID_REPLY 0x81u
+#if IMU_DUMMY
+/* Phase 0 実験: ON時のみ送信周期を上書きする (記述子は変えない)。
+ * IMU_DUMMY=0 では 8u固定 (現行と同一)。 */
+#define USB_WIRED_INPUT_INTERVAL_MS ((uint32_t)IMU_DUMMY_INTERVAL_MS)
+#else
 /* 送信周期8ms (bInterval 8写しに合わせる。到着即更新はCore0のpull側)。 */
 #define USB_WIRED_INPUT_INTERVAL_MS 8u
+#endif
 /* 81 01 応答の機種別 type は起動時 role 由来 (ProCon=0x03)。
  * 2wiCC の kUsbDeviceTypeProController で確認した ProCon 値が既定。 */
 
@@ -41,10 +50,18 @@ static usb_wired_stats_t wired_stats;
 
 void usb_wired_init(void)
 {
+    char imud_line[128];
     wired_enabled = false;
     handshake_done = false;
     kick81_done = false;
     last_input_ms = 0u;
+#if IMU_DUMMY
+    imu_dummy_reset_state();
+    imu_dummy_build_info(imud_line, sizeof(imud_line));
+    probe_line(imud_line);
+#else
+    (void)imud_line;
+#endif
     (void)tud_init(BOARD_TUD_RHPORT);
     /* SOF 計数はバス生存の証拠 (ホストがフレームを回しているか)。
      * 1ms 毎に tud_sof_cb が来る。 */
@@ -57,6 +74,9 @@ void usb_wired_set_enabled(bool en)
     wired_enabled = en;
     if (!en) {
         handshake_done = false;
+#if IMU_DUMMY
+        imu_dummy_reset_state();
+#endif
     }
 }
 
@@ -85,7 +105,7 @@ void usb_wired_get_stats(usb_wired_stats_t *st)
 
 /* 有線 Input 0x30 は実機配置 (2wiCC ControllerData 互換)。
  * 12B 状態 + 36B IMU(無効のため 0) + 15B 埋め。mac/player は使わない。 */
-static void build_input_report(uint8_t out[USB_WIRED_INPUT_LEN])
+static void build_input_report(uint8_t out[USB_WIRED_INPUT_LEN], uint32_t now_ms)
 {
     usb_sub_ctx_t ctx;
     memset(&ctx, 0, sizeof(ctx));
@@ -101,6 +121,10 @@ static void build_input_report(uint8_t out[USB_WIRED_INPUT_LEN])
     /* role は起動時1回だけ決まる (usb_set_role)。入力 pack (ボタン・
      * 親指側選択) と 0x02 機器情報は usb_hid 側が ctx.role で適用する。 */
     ctx.role = usb_get_role();
+#if IMU_DUMMY
+    /* Phase 0: ダミー生成器への時刻供給 (usb_hid.cはpico非依存のため渡す)。 */
+    ctx.now_ms = now_ms;
+#endif
     usb_build_30_report(&ctx, out);
 }
 
@@ -124,6 +148,9 @@ static bool pend_resp_valid;
 void usb_wired_reconnect(void)
 {
     handshake_done = false;
+#if IMU_DUMMY
+    imu_dummy_reset_state();
+#endif
     pend_resp_valid = false;
     kick81_done = false;
     tud_disconnect();
@@ -133,6 +160,9 @@ void usb_wired_reconnect(void)
 
 void usb_wired_disconnect(void)
 {
+#if IMU_DUMMY
+    imu_dummy_reset_state();
+#endif
     tud_disconnect();
 }
 
@@ -140,6 +170,15 @@ void usb_wired_task(uint32_t now_ms)
 {
     uint8_t report[USB_WIRED_INPUT_LEN];
     tud_task();
+#if IMU_DUMMY
+    /* Phase 0: STEP終了の検出はgateより前で行う (hs前のstepを捨てないため)。 */
+    {
+        char imud_line[128];
+        if (imu_dummy_poll(now_ms, imud_line, sizeof(imud_line))) {
+            probe_line(imud_line);
+        }
+    }
+#endif
     /* Joy役の81 01先制通知 (espp式kick-start)。ドックは2006/2007に
      * 80 01を送ってこない実測のため、mount直後にこちらから
      * 81 01 00<type><mac>を出し80 02を誘う。ProConは実績経路のため
@@ -187,11 +226,14 @@ void usb_wired_task(uint32_t now_ms)
     if (!tud_hid_ready()) {
         return;
     }
-    build_input_report(report);
+    build_input_report(report, now_ms);
     if (tud_hid_report(USB_WIRED_REPORT_ID_INPUT, &report[1],
                        USB_WIRED_INPUT_PAYLOAD_LEN)) {
         last_input_ms = now_ms;
         wired_stats.in30++;
+#if IMU_DUMMY
+        imu_dummy_on_report_sent(now_ms);
+#endif
     }
 }
 
@@ -249,6 +291,9 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
             handshake_done = true;
         } else if (wired_enabled && sub == 0x05u) {
             handshake_done = false;
+#if IMU_DUMMY
+            imu_dummy_reset_state();
+#endif
         }
         {
             char ul[32];
@@ -323,6 +368,15 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
             /* 格納は usb_hid 側 (host-testable。wired_loop が feed で流す)。 */
             usb_wired_player_save(req[11]);
         }
+#if IMU_DUMMY
+        /* Phase 0: 0x40/0x03/0x41/0x11の観測 (応答バイトは変えない)。 */
+        {
+            char imud_line[128];
+            if (imu_dummy_note_subcmd(req, req_len, imud_line, sizeof(imud_line))) {
+                probe_line(imud_line);
+            }
+        }
+#endif
         ctx.btn[0] = bcon_btn[0];
         ctx.btn[1] = bcon_btn[1];
         ctx.btn[2] = bcon_btn[2];
@@ -368,6 +422,9 @@ void tud_umount_cb(void)
 {
     wired_stats.unmount++;
     handshake_done = false;
+#if IMU_DUMMY
+    imu_dummy_reset_state();
+#endif
     kick81_done = false;
     probe_line("UUMOUNT");
 }
