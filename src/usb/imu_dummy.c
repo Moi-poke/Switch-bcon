@@ -31,6 +31,29 @@ void imu_dummy_reset_state(void)
 }
 
 
+bool imu_dummy_is_enabled(void)
+{
+    return s_imud_enabled;
+}
+
+
+uint8_t imu_dummy_input_mode(void)
+{
+    return s_imud_mode;
+}
+
+
+void imu_dummy_reset_state_why(char *log, size_t log_size, const char *why)
+{
+    imu_dummy_reset_state();
+    if (log == NULL || log_size == 0u) {
+        return;
+    }
+    snprintf(log, log_size, "IMUD reset why=%s",
+             (why != NULL) ? why : "?");
+}
+
+
 static uint8_t u8_at(const uint8_t *req, size_t len, size_t i)
 {
     return (req != NULL && i < len) ? req[i] : 0u;

@@ -54,6 +54,7 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
   set(IMU_DUMMY_ACC_Z 16384 CACHE STRING "Dummy static accel Z int16 (ON only)")
   set(IMU_DUMMY_FORCE 0 CACHE STRING "Dummy force-active (ON only: 0/1)")
   set(IMU_DUMMY_STEP_AUTOREPEAT_MS 0 CACHE STRING "Dummy STEP autorepeat ms, 0=manual (ON only)")
+  set(IMU_DUMMY_DIAG 0 CACHE STRING "Dummy diag logs (§1, ON only: 0/1)")
   # usb_cdc.c は常時リンク (HID profile時はconnected=falseで不応答)。
   add_executable(poc_dualcore
     src/poc_dualcore/main.c
@@ -198,6 +199,7 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
       IMU_DUMMY_ACC_Z=${IMU_DUMMY_ACC_Z}
       IMU_DUMMY_FORCE=${IMU_DUMMY_FORCE}
       IMU_DUMMY_STEP_AUTOREPEAT_MS=${IMU_DUMMY_STEP_AUTOREPEAT_MS}
+      IMU_DUMMY_DIAG=${IMU_DUMMY_DIAG}
       IMU_DUMMY_GIT_HASH="${IMU_DUMMY_GIT_HASH_V}"
       IMU_DUMMY_GIT_DIRTY="${IMU_DUMMY_GIT_DIRTY_V}"
     )

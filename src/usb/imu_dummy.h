@@ -128,6 +128,14 @@ void imu_dummy_write_i16le(uint8_t dst[2], int32_t value);
 // 起動時の構成1行をlogへ書く (usb_wired_initで1回)。
 void imu_dummy_build_info(char *log, size_t log_size);
 
+// §1診断用: 0x40有効flagと0x03 modeの読出し (diag行用)。
+bool imu_dummy_is_enabled(void);
+uint8_t imu_dummy_input_mode(void);
+
+// §1診断用: reset_stateと同義だが、呼出し元whyをlogへ1行書く。
+// 旧imu_dummy_reset_state()は残す (T5は変更しない)。
+void imu_dummy_reset_state_why(char *log, size_t log_size, const char *why);
+
 #ifdef __cplusplus
 }
 #endif

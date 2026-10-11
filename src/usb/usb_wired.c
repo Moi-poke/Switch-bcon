@@ -17,6 +17,9 @@
 #if IMU_DUMMY
 #include "imu_dummy.h"
 #endif
+#if IMU_DUMMY_DIAG
+#include "spi.h" // §1診断: sub10のhit判定用 (pico-free、副作用なし)
+#endif
 
 void probe_line(const char *s);
 
@@ -47,6 +50,13 @@ static bool wired_inited;
 static bool kick81_done; /* mount毎1回: Joy役の81 01先制通知済み */
 static uint32_t last_input_ms;
 static usb_wired_stats_t wired_stats;
+#if IMU_DUMMY_DIAG
+/* §1診断: 最後に送信成功した0x30のtimerとIMU先頭12Bの写し。 */
+static uint8_t s_diag_b13[12];
+static uint8_t s_diag_timer;
+static bool s_diag_has;
+static uint32_t s_diag_last_ms;
+#endif
 
 void usb_wired_init(void)
 {
@@ -55,8 +65,13 @@ void usb_wired_init(void)
     handshake_done = false;
     kick81_done = false;
     last_input_ms = 0u;
-#if IMU_DUMMY
+#if IMU_DUMMY_DIAG
+    imu_dummy_reset_state_why(imud_line, sizeof(imud_line), "init");
+    probe_line(imud_line);
+#elif IMU_DUMMY
     imu_dummy_reset_state();
+#endif
+#if IMU_DUMMY
     imu_dummy_build_info(imud_line, sizeof(imud_line));
     probe_line(imud_line);
 #else
@@ -74,7 +89,13 @@ void usb_wired_set_enabled(bool en)
     wired_enabled = en;
     if (!en) {
         handshake_done = false;
-#if IMU_DUMMY
+#if IMU_DUMMY_DIAG
+        {
+            char imud_line[128];
+            imu_dummy_reset_state_why(imud_line, sizeof(imud_line), "disable");
+            probe_line(imud_line);
+        }
+#elif IMU_DUMMY
         imu_dummy_reset_state();
 #endif
     }
@@ -148,7 +169,13 @@ static bool pend_resp_valid;
 void usb_wired_reconnect(void)
 {
     handshake_done = false;
-#if IMU_DUMMY
+#if IMU_DUMMY_DIAG
+    {
+        char imud_line[128];
+        imu_dummy_reset_state_why(imud_line, sizeof(imud_line), "reconnect");
+        probe_line(imud_line);
+    }
+#elif IMU_DUMMY
     imu_dummy_reset_state();
 #endif
     pend_resp_valid = false;
@@ -160,7 +187,13 @@ void usb_wired_reconnect(void)
 
 void usb_wired_disconnect(void)
 {
-#if IMU_DUMMY
+#if IMU_DUMMY_DIAG
+    {
+        char imud_line[128];
+        imu_dummy_reset_state_why(imud_line, sizeof(imud_line), "disconnect");
+        probe_line(imud_line);
+    }
+#elif IMU_DUMMY
     imu_dummy_reset_state();
 #endif
     tud_disconnect();
@@ -177,6 +210,27 @@ void usb_wired_task(uint32_t now_ms)
         if (imu_dummy_poll(now_ms, imud_line, sizeof(imud_line))) {
             probe_line(imud_line);
         }
+    }
+#endif
+#if IMU_DUMMY_DIAG
+    /* §1診断: 1秒に1回、送信成功した0x30の写しを出す。 */
+    if (s_diag_has && (uint32_t)(now_ms - s_diag_last_ms) >= 1000u) {
+        char imud_line[128];
+        s_diag_last_ms = now_ms;
+        snprintf(imud_line, sizeof(imud_line),
+                 "IMUD diag act=%u en=%u mode=%02X role=%u t=%02X b13=%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X",
+                 imu_dummy_active() ? 1u : 0u,
+                 imu_dummy_is_enabled() ? 1u : 0u,
+                 (unsigned)imu_dummy_input_mode(),
+                 (unsigned)usb_get_role(),
+                 (unsigned)s_diag_timer,
+                 (unsigned)s_diag_b13[0], (unsigned)s_diag_b13[1],
+                 (unsigned)s_diag_b13[2], (unsigned)s_diag_b13[3],
+                 (unsigned)s_diag_b13[4], (unsigned)s_diag_b13[5],
+                 (unsigned)s_diag_b13[6], (unsigned)s_diag_b13[7],
+                 (unsigned)s_diag_b13[8], (unsigned)s_diag_b13[9],
+                 (unsigned)s_diag_b13[10], (unsigned)s_diag_b13[11]);
+        probe_line(imud_line);
     }
 #endif
     /* Joy役の81 01先制通知 (espp式kick-start)。ドックは2006/2007に
@@ -234,6 +288,12 @@ void usb_wired_task(uint32_t now_ms)
 #if IMU_DUMMY
         imu_dummy_on_report_sent(now_ms);
 #endif
+#if IMU_DUMMY_DIAG
+        /* §1診断: 実際に渡したバッファから写す (生成し直さない)。 */
+        memcpy(s_diag_b13, &report[13], sizeof(s_diag_b13));
+        s_diag_timer = report[1];
+        s_diag_has = true;
+#endif
     }
 }
 
@@ -287,11 +347,25 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
         wired_stats.hist[1] = wired_stats.hist[2];
         wired_stats.hist[2] = wired_stats.hist[3];
         wired_stats.hist[3] = sub;
+#if IMU_DUMMY_DIAG
+        {
+            char imud_line[128];
+            snprintf(imud_line, sizeof(imud_line), "IMUD r80 cmd=%02X",
+                     (unsigned)sub);
+            probe_line(imud_line);
+        }
+#endif
         if (wired_enabled && sub == 0x04u) {
             handshake_done = true;
         } else if (wired_enabled && sub == 0x05u) {
             handshake_done = false;
-#if IMU_DUMMY
+#if IMU_DUMMY_DIAG
+            {
+                char imud_line[128];
+                imu_dummy_reset_state_why(imud_line, sizeof(imud_line), "sub05");
+                probe_line(imud_line);
+            }
+#elif IMU_DUMMY
             imu_dummy_reset_state();
 #endif
         }
@@ -391,6 +465,40 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
         ctx.role = usb_get_role();
         n = usb_build_21_reply(req, (int)req_len, pend_resp,
                                (int)sizeof(pend_resp), &ctx);
+#if IMU_DUMMY_DIAG
+        /* §1診断: 0x10のaddr(4B LEそのまま)・size・表hit・応答有無。
+         * hitはspi_find直接呼出し (副作用なし)。FW内部addrはu16のため
+         * 下位2Bで検索する。上位非0はそれ自体が手がかり。 */
+        if (sub == 0x10u) {
+            char imud_line[128];
+            uint32_t a32 = 0u;
+            uint8_t want = 0u;
+            int hit = 0;
+            if (req_len >= 12u) {
+                a32 |= (uint32_t)req[11];
+            }
+            if (req_len >= 13u) {
+                a32 |= (uint32_t)req[12] << 8;
+            }
+            if (req_len >= 14u) {
+                a32 |= (uint32_t)req[13] << 16;
+            }
+            if (req_len >= 15u) {
+                a32 |= (uint32_t)req[14] << 24;
+            }
+            if (req_len >= 16u) {
+                want = req[15];
+            }
+            if (spi_find((uint16_t)(a32 & 0xFFFFu)) != NULL) {
+                hit = 1;
+            }
+            snprintf(imud_line, sizeof(imud_line),
+                     "IMUD sub10 addr=%08lX size=%02X hit=%u reply=%u",
+                     (unsigned long)a32, (unsigned)want, (unsigned)hit,
+                     (n > 0) ? 1u : 0u);
+            probe_line(imud_line);
+        }
+#endif
         if (n <= 0) {
             return;
         }
@@ -422,7 +530,13 @@ void tud_umount_cb(void)
 {
     wired_stats.unmount++;
     handshake_done = false;
-#if IMU_DUMMY
+#if IMU_DUMMY_DIAG
+    {
+        char imud_line[128];
+        imu_dummy_reset_state_why(imud_line, sizeof(imud_line), "umount");
+        probe_line(imud_line);
+    }
+#elif IMU_DUMMY
     imu_dummy_reset_state();
 #endif
     kick81_done = false;

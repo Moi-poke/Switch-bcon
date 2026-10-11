@@ -312,6 +312,22 @@ int main(void)
         CHECK(strlen(log) < 128u, "T14 fits 128B buffer");
     }
 
+    printf("[T15] reset with why logs caller and clears state\n");
+    {
+        uint8_t req[16];
+        mk_req(req, sizeof(req), 0x40u);
+        req[11] = 0x01u;
+        imu_dummy_note_subcmd(req, sizeof(req), log, sizeof(log));
+        imu_dummy_reset_state_why(log, sizeof(log), "umount");
+        CHECK(strstr(log, "IMUD reset why=umount") != NULL, "T15 why line");
+#if IMU_DUMMY_FORCE == 0
+        CHECK(imu_dummy_active() == false, "T15 state cleared");
+#endif
+        CHECK(imu_dummy_is_enabled() == false, "T15 enabled cleared");
+        CHECK(imu_dummy_input_mode() == 0u, "T15 mode cleared");
+        imu_dummy_reset_state_why(NULL, 0u, NULL);
+        CHECK(imu_dummy_is_enabled() == false, "T15 NULL-safe");
+    }
     if (fails == 0) {
         printf("imu_dummy: ALL PASS\n");
         return 0;
