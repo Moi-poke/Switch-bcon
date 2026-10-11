@@ -451,7 +451,7 @@ class Runner:
             g = self.state.get("game", {})
             print(f"設定済み: {g}")
             if not self.state.get("fw_commit"):
-                fw = self.ui.ask("FWコミット(short hash)", "bbed34a")
+                fw = self.ui.ask("FWコミット(short hash)", "f05ecee")
                 self.state.set("fw_commit", fw)
             return
         print("=== S0 準備 ===")
@@ -459,7 +459,7 @@ class Runner:
         game = self.ui.ask("ゲーム名")
         ver = self.ui.ask("バージョン")
         sens = self.ui.ask("ジャイロ感度")
-        fw = self.ui.ask("FWコミット(short hash)", "bbed34a")
+        fw = self.ui.ask("FWコミット(short hash)", "f05ecee")
         self.state.set("game", {"name": game, "version": ver, "sens": sens})
         self.state.set("fw_commit", fw)
         self.state.set("setup_done", True)
@@ -1010,7 +1010,7 @@ def main() -> int:
     if sim:
         # 全ステップを通す回答列。
         ui.answers = [
-            "TestGame", "1.0", "中", "bbed34a",  # S0
+            "TestGame", "1.0", "中", "f05ecee",  # S0
             "1",  # S2 E1 反応あり
             # S3 E4 6run (軸2がyaw: p=右パン/m=左パン)
             "3", "4",  # ax0: 上/下
