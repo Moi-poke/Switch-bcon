@@ -187,6 +187,9 @@ void usb_wired_reconnect(void)
 
 void usb_wired_disconnect(void)
 {
+    /* M7: 切断時はセッション状態を落とす (reconnect と同一初期化)。
+     * tud_disconnect では umount が来ないため幽霊 handshake が残る。 */
+    handshake_done = false;
 #if IMU_DUMMY_DIAG
     {
         char imud_line[128];
@@ -196,6 +199,8 @@ void usb_wired_disconnect(void)
 #elif IMU_DUMMY
     imu_dummy_reset_state();
 #endif
+    pend_resp_valid = false;
+    kick81_done = false;
     tud_disconnect();
 }
 
@@ -467,8 +472,10 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
                                (int)sizeof(pend_resp), &ctx);
 #if IMU_DUMMY_DIAG
         /* §1診断: 0x10のaddr(4B LEそのまま)・size・表hit・応答有無。
-         * hitはspi_find直接呼出し (副作用なし)。FW内部addrはu16のため
-         * 下位2Bで検索する。上位非0はそれ自体が手がかり。 */
+         * hitはspi_find(u16)直接呼出し (副作用なし)。FW内部addrはu16のため
+         * 下位2Bで検索する。hitはFW内部検索結果であり、上位非0(upper_nonzero)
+         * の場合は要求全体に一致と判定しないこと。
+         * replyは応答生成の有無 (tud_hid_report成功ではない)。 */
         if (sub == 0x10u) {
             char imud_line[128];
             uint32_t a32 = 0u;
@@ -493,9 +500,9 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
                 hit = 1;
             }
             snprintf(imud_line, sizeof(imud_line),
-                     "IMUD sub10 addr=%08lX size=%02X hit=%u reply=%u",
+                     "IMUD sub10 addr=%08lX size=%02X hit=%u reply=%u upper_nonzero=%u",
                      (unsigned long)a32, (unsigned)want, (unsigned)hit,
-                     (n > 0) ? 1u : 0u);
+                     (n > 0) ? 1u : 0u, (a32 >> 16) != 0u ? 1u : 0u);
             probe_line(imud_line);
         }
 #endif
