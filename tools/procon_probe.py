@@ -79,16 +79,29 @@ class Probe:
                     out.append(b)
         return out
 
-    def handshake_80(self) -> dict[str, str | None]:
-        """0x80系ハンドシェイク (Switch実測順 05→01→02→04)。応答を記録。"""
+    # 0x80ハンドシェイクのプロファイル。
+    # switch: Switch2接続時の実測順 (UHB h80=05010204)。
+    # doc: 資料準拠 (USB-HID-Notes.md の01→02→03→04。02→03→02の往復は含めない)。
+    PROFILES: dict[str, tuple[int, ...]] = {
+        "switch": (0x05, 0x01, 0x02, 0x04),
+        "doc": (0x01, 0x02, 0x03, 0x04),
+    }
+
+    def handshake_80(self, profile: str = "switch") -> dict[str, str | None]:
+        """0x80系ハンドシェイク。応答を記録。無応答もNoneで記録し継続する。
+
+        80 04は実機沈黙quirkがありうるため、無応答でも初期化失敗にしない。
+        後続の0x21/0x30受信で状態を判定すること。
+        """
         out: dict[str, str | None] = {}
-        for sub in (0x05, 0x01, 0x02, 0x04):
+        for sub in self.PROFILES[profile]:
             self._write(0x80, bytes((sub,)))
             time.sleep(0.3)
             reps = self._read_reports(0.5)
             # 0x81応答を探す。
             hit = next((r for r in reps if len(r) >= 2 and r[0] == 0x81 and r[1] == sub), None)
             out[f"80_{sub:02X}"] = _hex(hit) if hit else None
+        out["profile"] = profile
         return out
 
     def subcmd(self, sub: int, args: bytes = b"", reply_wait: float = 0.5) -> bytes | None:
@@ -108,14 +121,19 @@ class Probe:
                 return r
         return reps[-1] if reps else None
 
-    def spi_read(self, addr: int, size: int) -> tuple[bytes | None, bytes]:
-        """0x10 SPI読出し。戻値は(0x21応答全体, data部)。"""
+    def spi_read(self, addr: int, size: int) -> tuple[bytes | None, bytes, bool]:
+        """0x10 SPI読出し。戻値は(0x21応答全体, data部, echo一致)。
+
+        echo一致 = 応答[15..19]が要求addr(4B LE)+sizeと一致。
+        無応答・短い応答は待機せず即時復帰する(reply_waitで有限)。
+        """
         req = bytes((addr & 0xFF, (addr >> 8) & 0xFF, (addr >> 16) & 0xFF,
                      (addr >> 24) & 0xFF, size & 0xFF))
         rep = self.subcmd(0x10, req)
         if rep is None or len(rep) < 20 + size:
-            return rep, b""
-        return rep, rep[20:20 + size]
+            return rep, b"", False
+        echo_ok = rep[15:20] == req
+        return rep, rep[20:20 + size], echo_ok
 
 
 def collect_030_stats(dev: Probe, n: int = 500, timeout: float = 30.0) -> dict:
@@ -163,12 +181,13 @@ def collect_imu_csv(dev: Probe, n: int = 100, timeout: float = 15.0) -> list[lis
 
 
 def scan_spi(dev: Probe, addrs: list[int], size: int = 0x1D) -> dict[str, dict]:
-    """指定アドレスを0x10で読む。戻値は {hex: {data, reply}}。"""
+    """指定アドレスを0x10で読む。戻値は {hex: {data, reply, echo_ok}}。"""
     out: dict[str, dict] = {}
     for a in addrs:
-        rep, data = dev.spi_read(a, size)
+        rep, data, echo_ok = dev.spi_read(a, size)
         out[f"{a:08X}"] = {"size": size, "data": _hex(data),
-                           "reply": _hex(rep) if rep else None}
+                           "reply": _hex(rep) if rep else None,
+                           "echo_ok": echo_ok}
         time.sleep(0.05)
     return out
 
@@ -180,7 +199,7 @@ def cmd_probe(args: argparse.Namespace) -> int:
         result: dict = {"device": {"vid": f"{args.vid:04X}", "pid": f"{args.pid:04X}"},
                         "at": dt.datetime.now().isoformat(timespec="seconds")}
         print("0x80ハンドシェイク...")
-        result["handshake80"] = dev.handshake_80()
+        result["handshake80"] = dev.handshake_80(args.profile)
         print("0x40(1)...")
         r40 = dev.subcmd(0x40, b"\x01")
         result["sub40"] = _hex(r40) if r40 else None
@@ -262,6 +281,8 @@ def main() -> int:
     p.add_argument("--out", required=True)
     p.add_argument("--yaw", action="store_true", help="yaw回転中のIMUを取る")
     p.add_argument("--spi", default="", help="読むSPI addrの16進カンマ列")
+    p.add_argument("--profile", default="switch", choices=("switch", "doc"),
+                   help="0x80順序: switch=実測再現05→01→02→04, doc=資料準拠01→02→03→04")
     d = sub.add_parser("diff", help="2つのjsonの差分表")
     d.add_argument("a")
     d.add_argument("b")

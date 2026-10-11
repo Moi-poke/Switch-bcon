@@ -76,6 +76,15 @@ def test_handshake_order() -> None:
     subs = [bytes(w)[1] for w in dev.written]
     assert subs == [0x05, 0x01, 0x02, 0x04]
     assert out["80_04"] is not None
+    assert out["profile"] == "switch"
+
+
+def test_handshake_doc_profile() -> None:
+    pr, dev = _probe()
+    out = pr.handshake_80("doc")
+    subs = [bytes(w)[1] for w in dev.written]
+    assert subs == [0x01, 0x02, 0x03, 0x04]
+    assert out["profile"] == "doc"
 
 
 def test_subcmd_roundtrip() -> None:
@@ -86,9 +95,10 @@ def test_subcmd_roundtrip() -> None:
 
 def test_spi_read() -> None:
     pr, _ = _probe()
-    rep, data = pr.spi_read(0x6020, 0x1D)
+    rep, data, echo_ok = pr.spi_read(0x6020, 0x1D)
     assert rep is not None and rep[13] == 0x90
     assert data == bytes(range(0x1D))
+    assert echo_ok is True
 
 
 def test_collect_stats_shape() -> None:
