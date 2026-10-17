@@ -71,6 +71,29 @@ int main(void) {
         CHECK(!ok, "NULL report rejected");
     }
 
+    printf("[6] HF-only strong: idx>=101 must clamp, not wrap in uint8_t\n");
+    {
+        const uint8_t hf101[8] = { 0x00,0xCA,0x00,0x00, 0x00,0xCA,0x00,0x00 };
+        const uint8_t hf127[8] = { 0x00,0xFE,0x00,0x00, 0x00,0xFE,0x00,0x00 };
+        rumble_decode8(hf101, &l, &r);
+        CHECK(l == 255 && r == 255, "HF idx=101 clamped (255,255)");
+        rumble_decode8(hf127, &l, &r);
+        CHECK(l == 255 && r == 255, "HF idx=127 clamped (255,255)");
+    }
+
+    printf("[7] HF boundary: idx=0 -> 0, idx=99 -> 252, idx=100 -> 255\n");
+    {
+        const uint8_t lo0[8] = { 0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00 };
+        const uint8_t lo99[8] = { 0x00,0xC6,0x00,0x00, 0x00,0xC6,0x00,0x00 };
+        const uint8_t lo100[8] = { 0x00,0xC8,0x00,0x00, 0x00,0xC8,0x00,0x00 };
+        rumble_decode8(lo0, &l, &r);
+        CHECK(l == 0 && r == 0, "HF idx=0 -> 0");
+        rumble_decode8(lo99, &l, &r);
+        CHECK(l == 252 && r == 252, "HF idx=99 -> 252");
+        rumble_decode8(lo100, &l, &r);
+        CHECK(l == 255 && r == 255, "HF idx=100 -> 255");
+    }
+
     printf("\nRESULT: %s (%d failures)\n", fails == 0 ? "ALL PASS" : "HAS FAILURES", fails);
     return fails;
 }
