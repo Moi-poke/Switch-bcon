@@ -21,14 +21,16 @@
 
 static inline uint8_t rumble_motor_amp(const uint8_t m[4]) {
     uint8_t idx, hf, lf;
+    uint16_t hv;
     if (m == NULL) {
         return 0u;
     }
     idx = (uint8_t)((m[1] & 0xFEu) >> 1);
-    hf = (uint8_t)(((uint16_t)idx * 255u + 50u) / 100u);
-    if (hf > 255u) {
-        hf = 255u;
-    }
+    /* idx>=101 makes the raw value exceed 255. Assigning it straight to the
+       uint8_t hf wrapped it (idx=101 -> 2) and made the clamp dead code.
+       Clamp in 16bit first, like the LF side below. */
+    hv = (uint16_t)(((uint16_t)idx * 255u + 50u) / 100u);
+    hf = hv > 255u ? 255u : (uint8_t)hv;
     if (m[3] <= 0x40u) {
         lf = 0u;
     } else {
