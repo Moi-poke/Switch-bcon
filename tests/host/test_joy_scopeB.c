@@ -9,7 +9,7 @@
 // Provisional-value disclaimer: Joy-Con L/R PID/strings/SPI blanks are
 // provisional (real-hardware values pending). The 6020/603D expectations
 // below pin a provisional static-1g-consistent cal (gyro-bias zeros, accel
-// 1g-consistent with Z=0x4000 rest posture like the 0x30 IMU), NOT measured
+// 1g-consistent with Z=0x1000 rest posture like the 0x30 IMU), NOT measured
 // factory bytes. Dev/fw/lamp values are likewise provisional until HW capture.
 //
 // Scenario table (scope B):
@@ -111,7 +111,7 @@ int main(void) {
     printf("[T-SPI-CAL-603D] Joy SPI 0x603D want25 gyro-bias + accel-1g (RED)\n");
     {
         /* S-HAPPY-SPI-CAL: addr 0x603D want25 -> gyro-bias zeros +
-         * accel 1g-consistent with Z=0x4000 rest posture (mirrors the
+         * accel 1g-consistent with Z=0x1000 rest posture (mirrors the
          * 0x30 IMU static-1g contract). Must NOT be all-zeros.
          * RED: current Joy path answers blank zeros, so FAILs. */
         static const uint8_t zeros25[25] = {0};
@@ -136,7 +136,7 @@ int main(void) {
             CHECK(n == 64 && out[15] == 0x3Du && out[16] == 0x60u, msg);
             snprintf(msg, sizeof(msg), "T-SPI-CAL-603D role%d echo==25", role);
             CHECK(n == 64 && out[19] == 25u, msg);
-            snprintf(msg, sizeof(msg), "T-SPI-CAL-603D role%d cal NOT all-zeros (gyro-bias0/accZ=0x4000 posture)", role);
+            snprintf(msg, sizeof(msg), "T-SPI-CAL-603D role%d cal NOT all-zeros (gyro-bias0/accZ=0x1000 posture)", role);
             CHECK(n == 64 && memcmp(&out[20], zeros25, 25) != 0, msg);
             (void)all_zeros;
         }

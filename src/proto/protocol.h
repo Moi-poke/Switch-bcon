@@ -20,6 +20,7 @@ enum {
                              //        or LEN=12 BTN u32 + LX LY RX RY (u16LEx4, center 0x0800)
     T_NEUTRAL       = 0x02, // PC->Pico LEN=0
     T_PING          = 0x03, // PC->Pico LEN=0
+    T_IMU_SAMPLE    = 0x04, // PC->Pico LEN=12 6xint16-LE (ax ay az gx gy gz, Switch出力生値)
     T_HELLO         = 0x10, // PC->Pico LEN=2 ver, flags
     T_HELLO_ACK     = 0x11, // Pico->PC LEN=4 ver, major, minor, result
     T_STATUS        = 0x20, // Pico->PC LEN=7 flags, last, crc16, drop16, err

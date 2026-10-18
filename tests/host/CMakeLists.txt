@@ -138,6 +138,20 @@ add_executable(test_reconnect_policy
 )
 target_include_directories(test_reconnect_policy PRIVATE ../../src/bt)
 
+add_executable(test_usb_cdc
+  test_usb_cdc.c
+  ../../src/proto/protocol.c
+  ../../src/proto/dispatch.c
+  ../../src/proto/baud.c
+)
+target_include_directories(test_usb_cdc PRIVATE ../../src/proto)
+add_executable(test_virt_tick
+  test_virt_tick.c
+  ../../src/proto/protocol.c
+  ../../src/proto/dispatch.c
+  ../../src/proto/baud.c
+)
+target_include_directories(test_virt_tick PRIVATE ../../src/proto)
 
 # Phase 0: IMU_DUMMY=ON構成のときだけ定義する。既存15件には触れない。
 # 構成マトリクスは -DIMU_DUMMY_*= で切る (既定=A: MODE1/MASK7/FORCE0)。
@@ -151,7 +165,7 @@ set(IMU_DUMMY_SINE_PERIOD_MS 2000 CACHE STRING "Dummy SINE period ms")
 set(IMU_DUMMY_FILL_MASK 7 CACHE STRING "Dummy fill mask bit0=slot0")
 set(IMU_DUMMY_ACC_X 0 CACHE STRING "Dummy static accel X int16")
 set(IMU_DUMMY_ACC_Y 0 CACHE STRING "Dummy static accel Y int16")
-set(IMU_DUMMY_ACC_Z 16384 CACHE STRING "Dummy static accel Z int16")
+set(IMU_DUMMY_ACC_Z 4096 CACHE STRING "Dummy static accel Z int16")
 set(IMU_DUMMY_FORCE 0 CACHE STRING "Dummy force-active 0/1")
 set(IMU_DUMMY_STEP_AUTOREPEAT_MS 0 CACHE STRING "Dummy STEP autorepeat ms")
 set(IMU_DUMMY_INTERVAL_MS 8 CACHE STRING "Dummy USB interval ms")
@@ -215,6 +229,8 @@ add_test(NAME wired_player COMMAND test_wired_player)
 add_test(NAME player_capsaved COMMAND test_player_capsaved)
 add_test(NAME color_getinfo COMMAND test_color_getinfo)
 add_test(NAME reconnect_policy COMMAND test_reconnect_policy)
+add_test(NAME usb_cdc COMMAND test_usb_cdc)
+add_test(NAME virt_tick COMMAND test_virt_tick)
 if(IMU_DUMMY)
   add_test(NAME imu_dummy COMMAND test_imu_dummy)
 endif()

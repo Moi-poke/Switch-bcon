@@ -16,7 +16,8 @@
 | 4.3 | 2026-09-24 | COLOR_GET新設（0x39・PC→Pico・LEN0）・COLOR_INFO新設（0x3A・Pico→PC・LEN12）・PROTO_VER=4維持・FW_MINOR=3 |
 | 4.4 | 2026-10-01 | T_RECONNECT新設（0x3B・PC→Pico・LEN0）。Switchが拒否して待機状態に入ったPicoを明示的に起こす（実コントローラーのボタン押下相当）。PROTO_VER=4維持・FW_MINOR=4 |
 | 4.5 | 2026-10-05 | PC→Pico SEQ欠番の再同期を新設（無通信1000msでセッション境界とみなし基準を捨てる・起動時selftestの合成SEQも捨てる）。PC再接続のたびに出ていた偽 `ERRCODE=0x03` を解消。フレーム・フィールド不変・意味の明確化のみのため PROTO_VER=4維持・FW_MINOR据置（4.2前例） |
-| 4.6 | 2026-10-05 | timeout-neutral の延長条件を明記（適用したSTATE/NEUTRALのみ。従来実装はPING等でも延長していた＝実装を本文に合わせる修正）。PROTO_VER=4維持・FW_MINOR据置 |
+| 4.7 | 2026-10-08 | 無線時USB-CDC輸送を追加（§2.1・§5.12。PC→Pico・Pico→PCともv3 frame・UARTと同一形式）。単一UF2で実行時profile選択（有線=HID-only・無線=CDC-only。起動時確定・reboot適用）。無線起動時はPico USBがPC専用CDCになりシリアル変換器なしで制御可。有線起動は従来通りHID-only（Switch接続用）。フレーム・フィールド不変のため PROTO_VER=4維持・FW_MINOR据置（4.2/4.5/4.6前例） |
+| 4.8 | 2026-10-17 | IMU_SAMPLE新設（0x04・PC→Pico・LEN12・§5.13）。PC側生成のIMU生値（6xint16-LE）を200Hzで転送し、USB 0x30のIMU 36Bへ反映する。gyro-mini実機で受理確認（USB 0x30周期15ms・timer 5ms刻み・静止1g=0x1000・§12更新）。PROTO_VER=4維持・FW_MINOR=5 |
 
 > フィールド追加・意味変更時は必ず本表と `PROTO_VER` を更新する。
 
@@ -39,6 +40,30 @@
 | バイトオーダ | リトルエンディアン | u16/u32に適用 |
 
 帯域：STATE=13B（SYNC込）。1kHz送信で約13KB/s（リンク使用率約13%）。
+
+## 2.1 USB-CDC輸送（無線時。単一UF2・実行時profile選択）
+
+無線起動時はPicoのUSBがSwitch用途で空くため、同コネクタをPC→Picoのv3シリアル
+入力に使う（シリアル変換器が不要になる）。frame形式・CRC・SEQ規則はUARTと同一
+（§3-§9をそのまま適用。`parser_feed_buf` が輸送非依存の共有pump）。
+相違点のみここに定義する：
+
+* USB構成はprofile排他：有線=HID-only（§12・41B/203B・Switch接続用）、
+  無線=CDC-only（PC専用）。単一UF2で起動時に選択（tud_init前に確定・
+  切替はWIRED_MODEと同型のreboot適用）。無線USBはSwitchには挿さないこと。
+* baudの概念なし。baud hunt（§5.11の2連続確定・inbox purge）・`BAUD_SET` の
+  rate合意・BREAK再探索はUART路専用。CDC路は接続次第で単発実行する（retryは
+  不要だがhostが繰り返すことは許す）。
+* DTR/RTSは無視する（接続判定はenumerate済みのみ）。バイナリ専用。
+* `BAUD_SET` をCDC経由で受けた場合はUART rateのみ切り替え、ACK（STATUS）は
+  要求元（CDC）へ返す。拒否しない。`store_baud` 保存はUART確定路のみが行う。
+* 調停：単一parser feed原則（同時刻に一輸送だけ投入）。輸送切替時およびCDC路
+  1000ms無通信境界ではCDC路statsへ `link_stats_seq_resync`（UART路不変）。
+  同一frameの二重投入（UART＋CDC）は設計違反としてSEQ欠番1件に数える
+ （STATE payloadは全状態再送のため後勝ちで安全）。
+* 応答輸送：要求の来た輸送にだけ返す（dual送出禁止）。Pico→PC方向SEQは輸送別
+  カウンタ（UART既存・CDC新規）。周期STATUS（`auto_status` 1Hz）はCDC接続中は
+  CDCへ、そうでなくUART確定中はUARTへ送る。
 
 ## 3. フレーム構造
 
@@ -67,6 +92,7 @@ Offset  Field    Size  説明
 | 0x01 | STATE | PC→Pico | 8 | 全状態（ホットパス） |
 | 0x02 | NEUTRAL | PC→Pico | 0 | 全入力解放（安全停止） |
 | 0x03 | PING | PC→Pico | 0 | 生存確認／RTT |
+| 0x04 | IMU_SAMPLE | PC→Pico | 12 | IMU生値6xint16-LE（§5.13） |
 | 0x10 | HELLO | PC→Pico | 2 | 版通知・FLAGS |
 | 0x11 | HELLO_ACK | Pico→PC | 4 | 版応答・RESULT |
 | 0x20 | STATUS | Pico→PC | 7 | 状態・統計・errcode |
@@ -269,6 +295,33 @@ FW 側は「確定した frame も実行する」方向へ変えることもで�
 purge には「未確定baudの産物を捨てる」という根拠があるため **PROTO_VER を上げる
 変更**として扱う。現状は host 側で手続きを履行する方針。
 
+### 5.12 ホスト側の補足: CDC路では単発で通る（§2.1）
+
+CDC路にはbaud huntがないため、§5.11の繰返し手続きは不要（単発実行する。
+繰り返してもよい）。`BAUD_SET` のACKはCDCへ返るがUART rateが切り替わる点に
+注意（§2.1）。応答は要求元輸送にだけ返るため、UARTとCDCを同時接続した場合は
+送った側の応答だけを見ること。
+### 5.13 IMU_SAMPLE (LEN=12)
+
+```
+Off  Field  Size  説明
+ 0   AX      2    int16-LE 加速度X（Switch出力生値）
+ 2   AY      2    int16-LE 加速度Y（同上）
+ 4   AZ      2    int16-LE 加速度Z（同上）
+ 6   GX      2    int16-LE 角速度X（同上）
+ 8   GY      2    int16-LE 角速度Y（同上）
+10   GZ      2    int16-LE 角速度Z（同上）
+```
+
+* PC→Pico方向のみ。200Hz（5ms）送信を想定。STATE（120Hz）と独立した周期で送る。
+* 値はSwitch ProCon出力用の生値そのもの（量子化・軸変換はPC側で完了させる）。
+  Picoは検証（LEN=12のみ受理）して最新1件を保持し、USB 0x30生成時に3スロットへ複製する。
+* 帯域：17B×200Hz=3.4KB/s（1Mbpsの3%未満）。STATEと合わせても余裕がある。
+* timeout：Picoは最終受信から100msでgyro→0、500msで静止値（0,0,0x1000,0,0,0）へ落とす。
+  IMU未受信時・Joy役の0x30 IMUは従来通り（静止1g / ゼロ）。
+* STATEのtimeout-neutral（§8・200ms）とは独立。IMU停止はボタンを解放しない。
+
+
 ## 6. CRC8
 
 CRC-8/SMBUS（poly 0x07、init 0x00、 refin/refoutなし、xorout 0x00）。検査値 `crc8("123456789")=0xF4`。
@@ -408,11 +461,15 @@ ProConは両スティックlive（従来通り）。
   左右同色でも別々に保持する。`0x601B=0x01` (色情報あり) が無いとSwitchは
   デフォルト色を使い `0x6050` を無視する (dekuNukem準拠)。
   注意: Switch側は初回接続時の色をキャッシュするため、色定義を変えた場合は
-  登録解除→再接続で取り直させる。
 - ハンドシェイク: `80 04` 受信で入力開始、`80 05`・unmountで中立＋再待機。
-- 無線OFF要求: CYW43/BT動作中はSwitch 2ドックがUSB列挙しない実測
-  (wakecon知見) のため、有線FWは無線を上げない。最終FWは `WIRED_MODE`
-  (Task 4) で無線停波を管理する。
+- 0x30送信周期: 15ms（gyro-mini実機で受理確認。純正相当: 3試料x5ms。
+  旧8msはbInterval写しだったがIMU受理には15msが必要）。
+- timer刻み: 5ms（`ms/5`。15ms周期でレポート毎+3。純正相当 espp: 4.96ms。
+  旧 `ms>>5` 32ms刻みはSwitchがIMUを無視する）。
+- 静止IMU: 加速度Z=0x1000（4096=1g。純正実測≒4104。旧0x4000=4gは異常値扱い）。
+ - 無線OFF要求: CYW43/BT動作中はSwitch 2ドックがUSB列挙しない実測
+   (wakecon知見) のため、有線FWは無線を上げない。最終FWは `WIRED_MODE`
+   (Task 4) で無線停波を管理する。
 
 ## 12.1 USB role別値 (EMULATE_MODE)
 

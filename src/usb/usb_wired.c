@@ -28,18 +28,27 @@ extern uint8_t bcon_btn[3];
 extern uint16_t bcon_lx, bcon_ly, bcon_rx, bcon_ry;
 extern uint8_t bcon_mac[6]; /* 応答順 (main.cで反転済み) */
 extern uint32_t bcon_usb_rumble_n; /* 所有元main.c。USB振動0x10受信累計 */
+extern int16_t bcon_imu[6]; /* 所有元main.c。PC由来IMU最新値 (§5.13) */
+extern bool bcon_imu_valid; /* 所有元main.c。同有効flag */
 
+/* timer換算 (5ms刻み)。gyro-mini実機で受理確認 (2026-10-17)。
+ * 純正相当 (espp: 4.96ms)。15ms周期でレポート毎 +3。
+ * 旧 ms>>5 (32ms刻み) はSwitchがIMUを無視する。 */
+uint8_t usb_wired_timer_now(void)
+{
+    return (uint8_t)(to_ms_since_boot(get_absolute_time()) / 5u);
+}
 #define USB_WIRED_REPORT_ID_INPUT 0x30u
 #define USB_WIRED_INPUT_LEN 64u
 #define USB_WIRED_INPUT_PAYLOAD_LEN 63u
 #define USB_WIRED_REPORT_ID_REPLY 0x81u
 #if IMU_DUMMY
-/* Phase 0 実験: ON時のみ送信周期を上書きする (記述子は変えない)。
- * IMU_DUMMY=0 では 8u固定 (現行と同一)。 */
+/* Phase 0 実験: ON時のみ送信周期を上書きする (記述子は変えない)。 */
 #define USB_WIRED_INPUT_INTERVAL_MS ((uint32_t)IMU_DUMMY_INTERVAL_MS)
 #else
-/* 送信周期8ms (bInterval 8写しに合わせる。到着即更新はCore0のpull側)。 */
-#define USB_WIRED_INPUT_INTERVAL_MS 8u
+/* 送信周期15ms (gyro-mini実機で受理確認。純正相当: 3試料x5ms)。
+ * 旧8msはbInterval写しだったが、IMU受理には15msが必要。 */
+#define USB_WIRED_INPUT_INTERVAL_MS 15u
 #endif
 /* 81 01 応答の機種別 type は起動時 role 由来 (ProCon=0x03)。
  * 2wiCC の kUsbDeviceTypeProController で確認した ProCon 値が既定。 */
@@ -137,8 +146,16 @@ static void build_input_report(uint8_t out[USB_WIRED_INPUT_LEN], uint32_t now_ms
     ctx.ly = bcon_ly;
     ctx.rx = bcon_rx;
     ctx.ry = bcon_ry;
-    ctx.timer =
-        (uint8_t)(to_ms_since_boot(get_absolute_time()) >> 5);
+    ctx.timer = usb_wired_timer_now();
+    /* PC由来IMU (§5.13): 有効時のみ最新値を写す。memset済みのため
+     * 無効時は imu_valid=false・imu=0 のまま (静止値路へ)。 */
+    if (bcon_imu_valid) {
+        int k;
+        ctx.imu_valid = true;
+        for (k = 0; k < 6; k++) {
+            ctx.imu[k] = bcon_imu[k];
+        }
+    }
     /* role は起動時1回だけ決まる (usb_set_role)。入力 pack (ボタン・
      * 親指側選択) と 0x02 機器情報は usb_hid 側が ctx.role で適用する。 */
     ctx.role = usb_get_role();
@@ -463,8 +480,7 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
         ctx.ly = bcon_ly;
         ctx.rx = bcon_rx;
         ctx.ry = bcon_ry;
-        ctx.timer =
-            (uint8_t)(to_ms_since_boot(get_absolute_time()) >> 5);
+        ctx.timer = usb_wired_timer_now();
         memcpy(ctx.mac, bcon_mac, 6);
         ctx.player = usb_wired_player_get();
         ctx.role = usb_get_role();

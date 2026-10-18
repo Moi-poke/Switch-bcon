@@ -50,7 +50,7 @@ extern "C" {
 #define IMU_DUMMY_ACC_Y 0 // 静止加速度Y (int16)
 #endif
 #ifndef IMU_DUMMY_ACC_Z
-#define IMU_DUMMY_ACC_Z 16384 // 静止加速度Z (int16、現行0x4000維持)
+#define IMU_DUMMY_ACC_Z 4096 // 静止加速度Z (int16、1g。純正実測≒4104)
 #endif
 #ifndef IMU_DUMMY_FORCE
 #define IMU_DUMMY_FORCE 0 // 1なら0x40/0x03有効条件を無視

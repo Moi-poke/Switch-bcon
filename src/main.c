@@ -1,4 +1,3 @@
-// main.c -- switch-bcon 統合FW (USB + Classic BT + BLE wake)。
 // PC →(UART1)→ Pico →(USB-HID / Classic BT)→ Switch 1。BLEはwake取込再生のみ。
 //
 // 構成:
@@ -39,6 +38,7 @@
 #include "spi.h"
 #include "usb_wired.h"
 #include "usb_hid.h" // usb_set_role (dep-free header, no tusb/btstack)
+#include "usb_cdc.h" // CDC poll/write (dep-free header, no tusb/btstack)
 #if IMU_DUMMY
 #include "usb/imu_dummy.h" // Phase 0 実験のLOG行トリガのみ (ON時のみ)
 #endif
@@ -50,6 +50,7 @@
 #include "bt/switch_hid.h"
 #include "bt/bt_compat.h"
 
+// USB profileは実行時選択 (単一UF2。起動時1回・tud_init前に確定・reboot適用)。
 // ---- 前提ピン・速度 (spec §2: 既定 GP4/5・UART1・1Mbps) ----
 #define LOG_UART      uart0
 #define LOG_BAUD      115200
@@ -64,6 +65,8 @@
 #define DATA_RX_PIN   5
 
 #define TIMEOUT_NEUTRAL_MS 200u // spec §8 (直近STATEから200ms無受信で全解放)
+#define IMU_GYRO_ZERO_MS 100u // spec §5.13 (IMU 100ms無受信でgyro→0)
+#define IMU_STATIC_MS 500u // spec §5.13 (IMU 500ms無受信で静止値へ)
 
 // ---- DMA ring: 16KB (PoC確定) ----
 #define RING_BITS 14
@@ -75,11 +78,18 @@ static uint8_t dma_ring[RING_SIZE] __attribute__((aligned(RING_SIZE)));
 typedef struct {
     uint8_t type, len, seq;
     uint8_t payload[PROTO_MAX_PAYLOAD];
+    uint8_t tr; // 投入路タグ (0=UART・1=CDC。rx_transport_tと同値)
 } ib_msg_t;
+typedef enum { TR_UART = 0, TR_CDC = 1 } rx_transport_t; // 要求元輸送タグ
 
 // ---- Core1 -> Core0 共有状態 (mutex保護。Core1はpushのみ) ----
 typedef struct {
     ctrl_state_t state;   // 最新STATE (u32＋sticks)
+    // 最新IMU_SAMPLE (6xint16-LE展開: ax ay az gx gy gz。Switch出力生値)。
+    // Core1高速路がpush、Core0がUSB 0x30生成時に読む。timeout (§5.13) は
+    // Core0が imu_frames の停滞で判定する (STATEのtimeout-neutralとは独立)。
+    int16_t imu[6];
+    uint32_t imu_frames;  // 適用したIMU_SAMPLE数
     uint8_t  last_seq;
     uint8_t  last_type;
     uint8_t  perrcode;    // parser errcode mirror (STATUS用)
@@ -121,6 +131,10 @@ static volatile bool g_core1_booted = false;
 uint8_t bcon_btn[3];
 uint16_t bcon_lx = 0x800u, bcon_ly = 0x800u, bcon_rx = 0x800u, bcon_ry = 0x800u;
 uint8_t bcon_mac[6]; // 応答順 (初期化で反転済み。BT addrと同一機器)
+// 最新IMU (poll_tickが共有imuからtimeout付き転記。USB 0x30生成が読む)。
+// valid=false の間はUSB側が静止値 (§12) を使う。BTは使わない (USB有線のみ)。
+int16_t bcon_imu[6];
+bool bcon_imu_valid;
 
 // ---- RUMBLE受信 (BT 0x10復号amp保持。変化時のみRUMBLE frameでPCへ転送) ----
 uint32_t bcon_usb_rumble_n;
@@ -128,7 +142,15 @@ uint32_t bcon_bt_rumble_n;
 
 // ---- v3セッション (dispatch所有。Core0のみ触る) ----
 static v3_session_t g_vs;
-static uint8_t g_tx_seq; // Pico->PC 方向SEQ (方向独立・mod256)
+static uint8_t g_tx_seq; // Pico->PC 方向SEQ (UART輸送・既存。方向独立・mod256)
+static uint8_t g_tx_seq_cdc; // CDC輸送のPico->PC方向SEQ (方向独立・mod256)
+static rx_transport_t s_last_rx_transport; // 要求元輸送 (応答の送出先。dual送出禁止)
+static link_stats_t s_cst; // CDC parser統計 (UART s_pstと分離。hunt非接触)
+static parser_t s_cparser; // Core0-local CDC parser (Core1 s_parserに触らない)
+static bool s_cdc_armed; // CDC parser初期化済み
+static bool s_cdc_fed; // CDCから1B以上feed済み (輸送切替のresync境界)
+static bool s_cdc_idle_gated; // CDC路のidle resync実施済み (無通信1000ms境界)
+static uint32_t s_cdc_last_ms; // CDC路の直近parser受理時刻 (resync境界用)
 static bool s_wired = true;
 static uint8_t s_emulate; // emulate-role (EMUL_ROLE_* in protocol.h)。
                           // TLV永続・再起動適用。既定0=ProCon (personality row 0)。
@@ -139,6 +161,8 @@ static bool s_neutral_hold; // timeout-neutral中 (STATUS bit2)
 static uint32_t s_last_state_ms;
 static uint32_t s_last_frames;
 static uint32_t s_last_state_frames;
+static uint32_t s_last_imu_ms; // IMU直近受信時刻 (§5.13 timeout用)
+static uint32_t s_last_imu_frames; // IMU適用数の前回値
 static uint32_t s_rumble_reported; // 前回STATUS時のrumble合計
 static bool s_wdt_recovered;
 static bool s_bt_init; // BTstack初期化済み (無線起動時のみtrue)
@@ -290,11 +314,28 @@ static void bcon_frame_cb(uint8_t type, const uint8_t *p, uint8_t len,
         // hunt中 (B-0): 有効frame 2連続で確定。確定前のinboxは未確定baudの
         // 産物のため捨てる (selftest直後のpurgeと同義)。
         if (baud_lock_feed(&s_hunt.lock, true)) {
+            // hunt確定purge: 未確定baudの産物 (UART路) のみ捨て、CDC路は温存。
+            // 共有inboxのため全捨て (ib_r=ib_w) するとCDC要求が黙って消える。
+            // temp退避後に戻す (in-place詰めはwrap時に未読を上書き破壊するため)。
+            ib_msg_t keep[IB_N];
+            uint8_t rr = g_s.ib_r, ww = g_s.ib_w, n = 0u, k;
+            while (rr != ww) {
+                if (g_s.ib[rr].tr == (uint8_t)TR_CDC) {
+                    keep[n] = g_s.ib[rr];
+                    n++;
+                }
+                // UART路は捨てる (ib_drop計数なし。旧purgeと同義・CDCは温存)。
+                rr = (uint8_t)((rr + 1u) % IB_N);
+            }
+            for (k = 0u; k < n; k++) {
+                g_s.ib[k] = keep[k];
+            }
             g_s.baud_locked = true;
             g_s.baud_idx = s_hunt.slots[s_hunt.at];
             g_s.baud_save_req = true;
             g_s.baud_save_idx = g_s.baud_idx;
-            g_s.ib_r = g_s.ib_w;
+            g_s.ib_r = 0u;
+            g_s.ib_w = n;
             s_hunt.locked = true;
         }
     }
@@ -326,6 +367,17 @@ static void bcon_frame_cb(uint8_t type, const uint8_t *p, uint8_t len,
                 g_s.state.ry = (uint16_t)(p[10] | ((uint16_t)p[11] << 8)) & 0x0FFFu;
             }
         }
+    } else if (type == T_IMU_SAMPLE && len == 12) {
+        // IMU生値 (§5.13)。STATEと同trust (確定baud＋state_accept)。
+        // LEN12のみ受理し、6xint16-LEを展開して最新1件を保持する。
+        // inboxへは送らない (200Hzのため。Core0は共有imuを直接読む)。
+        if (trusted && g_s.state_accept && p != NULL) {
+            int k;
+            g_s.imu_frames++;
+            for (k = 0; k < 6; k++) {
+                g_s.imu[k] = (int16_t)(p[k * 2] | ((uint16_t)p[k * 2 + 1] << 8));
+            }
+        }
     } else if (type == T_NEUTRAL && len == 0) {
         // 安全停止はUNSUPPORTED下でも適用する (dispatchと同義)。
         // ただしhunt確定前は未確定baudのため適用しない。
@@ -346,6 +398,7 @@ static void bcon_frame_cb(uint8_t type, const uint8_t *p, uint8_t len,
             m->type = type;
             m->len = (len > PROTO_MAX_PAYLOAD) ? PROTO_MAX_PAYLOAD : len;
             m->seq = seq;
+            m->tr = (uint8_t)TR_UART; // UART路投入
             if (p != NULL && m->len > 0) memcpy(m->payload, p, m->len);
             g_s.ib_w = nw;
         }
@@ -355,6 +408,71 @@ static void bcon_frame_cb(uint8_t type, const uint8_t *p, uint8_t len,
     g_s.frames++;
     g_s.crc_err = s_pst.err_crc;
     g_s.drop_ev = s_pst.err_drop;
+    mutex_exit(&g_m);
+}
+
+// ---------------- Core0: CDC parser callback (Core0-local・mutex pushのみ) ----------------
+// Core1のs_parser/s_pst・DMA路・hunt/BAUD_SETには一切触らない。UART hunt
+// (s_hunt/s_baudx/store_baud) とは無関係で、trusted条件はCDC connectedのみ。
+// Core1 bcon_frame_cbと異なりbaud lock計数・adopt計数は行わない。
+// 呼出はCore0のpoll_tick内parser_feed_bufからのみ。g_m非保持で呼ぶこと
+// (cb内でenterするため。保持したままfeedすると自己deadlock)。
+static void cdc_frame_cb(uint8_t type, const uint8_t *p, uint8_t len,
+                         uint8_t seq, void *user) {
+    (void)user;
+    mutex_enter_blocking(&g_m);
+    if (type == T_STATE && proto_state_len_ok(len)) {
+        if (g_s.state_accept) {
+            g_s.state_frames++;
+            g_s.state.buttons =
+                (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+                ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+            if (len == 8) {
+                g_s.state.lx = (uint16_t)p[4] << 4;
+                g_s.state.ly = (uint16_t)p[5] << 4;
+                g_s.state.rx = (uint16_t)p[6] << 4;
+                g_s.state.ry = (uint16_t)p[7] << 4;
+            } else { /* LEN=12: u16LE pairs, masked to 12 bits */
+                g_s.state.lx = (uint16_t)(p[4] | ((uint16_t)p[5] << 8)) & 0x0FFFu;
+                g_s.state.ly = (uint16_t)(p[6] | ((uint16_t)p[7] << 8)) & 0x0FFFu;
+                g_s.state.rx = (uint16_t)(p[8] | ((uint16_t)p[9] << 8)) & 0x0FFFu;
+                g_s.state.ry = (uint16_t)(p[10] | ((uint16_t)p[11] << 8)) & 0x0FFFu;
+            }
+        }
+    } else if (type == T_IMU_SAMPLE && len == 12) {
+        // IMU生値 (§5.13)。UART路と同形 (CDC路はstate_acceptのみ見る)。
+        if (g_s.state_accept && p != NULL) {
+            int k;
+            g_s.imu_frames++;
+            for (k = 0; k < 6; k++) {
+                g_s.imu[k] = (int16_t)(p[k * 2] | ((uint16_t)p[k * 2 + 1] << 8));
+            }
+        }
+    } else if (type == T_NEUTRAL && len == 0) {
+        g_s.state_frames++;
+        g_s.state.buttons = 0u;
+        g_s.state.lx = g_s.state.ly = 0x800u;
+        g_s.state.rx = g_s.state.ry = 0x800u;
+    } else {
+        // CONFIG/HELLO/PING等は既存inboxへ。溢れはib_drop (UART路と同一)。
+        uint8_t nw = (uint8_t)((g_s.ib_w + 1u) % IB_N);
+        if (nw == g_s.ib_r) {
+            g_s.ib_drop++;
+        } else {
+            ib_msg_t *m = &g_s.ib[g_s.ib_w];
+            m->type = type;
+            m->len = (len > PROTO_MAX_PAYLOAD) ? PROTO_MAX_PAYLOAD : len;
+            m->seq = seq;
+            m->tr = (uint8_t)TR_CDC; // CDC路投入
+            if (p != NULL && m->len > 0) memcpy(m->payload, p, m->len);
+            g_s.ib_w = nw;
+        }
+    }
+    g_s.last_seq = seq;
+    g_s.last_type = type;
+    g_s.frames++;
+    g_s.crc_err = s_cst.err_crc;
+    g_s.drop_ev = s_cst.err_drop;
     mutex_exit(&g_m);
 }
 
@@ -485,7 +603,24 @@ static void hunt_on_break(uint32_t now) {
     g_s.baud_locked = false;
     g_s.baud_idx = order[0];
     g_s.baud_save_req = false; // 旧要求は無効
-    g_s.ib_r = g_s.ib_w;       // 旧rateのinboxは捨てる
+    // BREAK purgeもUART路のみ捨て、CDC路は温存 (hunt確定purgeと同義)。
+    // temp退避後に戻す (in-place詰めはwrap時に未読を上書き破壊するため)。
+    {
+        ib_msg_t keep[IB_N];
+        uint8_t rr = g_s.ib_r, ww = g_s.ib_w, n = 0u, k;
+        while (rr != ww) {
+            if (g_s.ib[rr].tr == (uint8_t)TR_CDC) {
+                keep[n] = g_s.ib[rr];
+                n++;
+            }
+            rr = (uint8_t)((rr + 1u) % IB_N);
+        }
+        for (k = 0u; k < n; k++) {
+            g_s.ib[k] = keep[k];
+        }
+        g_s.ib_r = 0u;
+        g_s.ib_w = n;
+    }
     mutex_exit(&g_m);
 }
 
@@ -755,6 +890,7 @@ static void core1_entry(void) {
 }
 
 // ---------------- Core0: UART1 TX (Pico->PC。RX DMAと方向が独立) ----------------
+// UART専用gate (baud_locked)。CDC TXはcdc_tx_frameの独立gateを使う。
 static void uart_tx_frame(uint8_t type, const uint8_t *payload, uint8_t len) {
     uint8_t out[PROTO_FRAME_MAX];
     size_t n;
@@ -765,6 +901,43 @@ static void uart_tx_frame(uint8_t type, const uint8_t *payload, uint8_t len) {
     g_tx_seq++;
     if (n > 0) {
         uart_write_blocking(DATA_UART, out, n);
+    }
+}
+
+// ---------------- Core0: CDC TX (Pico->PC。UART huntとは無関係) ----------------
+// 独立gate: tud_cdc connected + write_available。s_baud_tx_okは見ない。
+// nonblock: 積めない分は捨てる (次tickの周期STATUSで取り返す。RUMBLE/
+// PLAYER_INFOはsent更新済みのため再queueされない。PONG/HELLO_ACK等の
+// 単発応答は落とす。CDCはhuntなしで単発実行のためretry不要だがhostが
+// 繰返すことは許す)。
+static void cdc_tx_frame(uint8_t type, const uint8_t *payload, uint8_t len) {
+    uint8_t out[PROTO_FRAME_MAX];
+    size_t n;
+    uint32_t avail, put;
+    if (!usb_cdc_connected()) {
+        return;
+    }
+    n = frame_build(out, type, payload, len, g_tx_seq_cdc);
+    if (n == 0) {
+        return;
+    }
+    avail = usb_cdc_write_available();
+    if (avail < n) {
+        return; // 背圧時は捨てる (blockしない。WDT安全)
+    }
+    put = usb_cdc_write_bytes(out, (uint32_t)n);
+    if (put == n) {
+        g_tx_seq_cdc++;
+        usb_cdc_write_flush();
+    }
+}
+
+// 輸送別TX: 要求元輸送へだけ送る (dual送出禁止)。
+static void tx_frame(uint8_t type, const uint8_t *payload, uint8_t len) {
+    if (s_last_rx_transport == TR_CDC) {
+        cdc_tx_frame(type, payload, len);
+    } else {
+        uart_tx_frame(type, payload, len);
     }
 }
 
@@ -799,7 +972,8 @@ static void send_status(void) {
     }
     v3_pack_status(flags, last_seq, (uint16_t)crc_err, (uint16_t)drop_ev,
                    (g_vs.errcode != 0u) ? g_vs.errcode : perrcode, payload);
-    uart_tx_frame(T_STATUS, payload, 7);
+    // 要求元輸送へだけ送る (dual送出禁止)。周期分は後段の呼出側が輸送を決める。
+    tx_frame(T_STATUS, payload, 7);
 }
 
 // ---------------- Core0: FX実行 (dispatch受理の効果) ----------------
@@ -875,7 +1049,8 @@ static void exec_fx(uint32_t now_ms) {
         }
         case FX_BAUD_SET: {
             // B §3: ACK (STATUS) はdispatch時にqueue済みで旧rate送信。
-            // ここではCore1への切替要求のみ (実行・復帰はCore1)。
+            // 要求元がCDCならUART rateだけ切り替え、ACKはCDCへ (拒否しない)。
+            // BREAKはUART専用でCDC路に影響なし。store_baudはUART確定路のみ。
             uint8_t idx = g_vs.fx_arg;
             uint8_t cur;
             mutex_enter_blocking(&g_m);
@@ -907,27 +1082,27 @@ static void flush_outbox(void) {
         if (o->act == ACT_SEND_STATUS) {
             send_status();
         } else if (o->act == ACT_SEND_PONG) {
-            uart_tx_frame(T_PONG, &o->arg, 1);
+            tx_frame(T_PONG, &o->arg, 1);
         } else if (o->act == ACT_SEND_RUMBLE) {
             uint8_t ra[2];
             ra[0] = g_vs.rumble_sent_l;
             ra[1] = g_vs.rumble_sent_r;
-            uart_tx_frame(T_RUMBLE, ra, 2);
+            tx_frame(T_RUMBLE, ra, 2);
         } else if (o->act == ACT_SEND_HELLO_ACK) {
             uint8_t ack[4];
             ack[0] = PROTO_VER;
             ack[1] = FW_MAJOR;
             ack[2] = FW_MINOR;
             ack[3] = g_vs.result;
-            uart_tx_frame(T_HELLO_ACK, ack, 4);
+            tx_frame(T_HELLO_ACK, ack, 4);
         } else if (o->act == ACT_SEND_PLAYER_INFO) {
             uint8_t pi[2];
             pi[0] = g_vs.player_sent_lamp;
             pi[1] = g_vs.player_sent_flags;
-            uart_tx_frame(T_PLAYER_INFO, pi, 2);
+            tx_frame(T_PLAYER_INFO, pi, 2);
         } else if (o->act == ACT_SEND_COLOR_INFO) {
             // RAM読出のみ (Flash書込なし)。13B目は送出対象外。
-            uart_tx_frame(T_COLOR_INFO, spi_color_6050, 12);
+            tx_frame(T_COLOR_INFO, spi_color_6050, 12);
         }
     }
     g_vs.ob_n = 0u;
@@ -982,13 +1157,71 @@ static void poll_log_bootsel(uint32_t now) {
     }
 }
 
+// ---------------- Core0: CDC pump (無線CDC路のbyte列→Core0-local parser) ----------------
+// g_m非保持で呼ぶこと (cdc_frame_cb内でenterするため)。1tick当り最大64B
+// (usb_cdc_task_pollの上限)。trusted条件はCDC connected。
+// UART hunt路 (s_hunt/s_baudx/store_baud) に一切触れない。
+// 輸送切替時 (初回CDC byte) およびCDC路の無通信1000ms境界では自statsへ
+// link_stats_seq_resync (Core1 SEQ_RESYNC_IDLE_MSと同一値・CDC路専用)。
+static void cdc_poll_feed(uint32_t now) {
+    uint8_t buf[64];
+    int n = 0;
+    if (!s_cdc_armed) {
+        memset(&s_cst, 0, sizeof(s_cst));
+        parser_init(&s_cparser, cdc_frame_cb, NULL, &s_cst);
+        s_cdc_armed = true;
+    }
+    if (!usb_cdc_connected()) {
+        return;
+    }
+    if (s_cdc_fed && s_cdc_idle_gated &&
+        (int32_t)(now - s_cdc_last_ms) >= (int32_t)SEQ_RESYNC_IDLE_MS) {
+        link_stats_seq_resync(&s_cst);
+        s_cdc_idle_gated = false;
+    }
+    usb_cdc_task_poll(buf, &n);
+    if (n <= 0) {
+        return;
+    }
+    if (!s_cdc_fed) {
+        // 輸送切替 (UART→CDC初回): 直前のUART基準でCDC初frameが偽欠番に
+        // ならないよう自statsをresync (自statsはCDC路専用のためUART路不変)。
+        link_stats_seq_resync(&s_cst);
+        s_cdc_fed = true;
+    }
+    {
+        uint32_t f0, f1;
+        mutex_enter_blocking(&g_m);
+        f0 = g_s.frames;
+        mutex_exit(&g_m);
+        parser_feed_buf(&s_cparser, buf, (size_t)n);
+        mutex_enter_blocking(&g_m);
+        f1 = g_s.frames;
+        mutex_exit(&g_m);
+        if (f1 != f0) {
+            s_cdc_last_ms = now;
+            s_cdc_idle_gated = true;
+            s_last_rx_transport = TR_CDC; // CDCで受理frameあり→応答はCDCへ
+        }
+    }
+}
+
 // ---------------- Core0: 1ms tick (pull/pack/drain/FX/flush/usb/neutral) ----------------
 static void poll_tick(uint32_t now) {
     bcon_shared_t cp;
     uint8_t pb[3];
     bool advanced;
+    bool cdc_has;
+    // CDC pumpはg_m非保持区間で先に回す (cbがenterするため)。
+    // Core1 UART路・DMA・huntとは無関係。HID profile時は不応答。
+    cdc_poll_feed(now);
     mutex_enter_blocking(&g_m);
     cp = g_s;
+    mutex_exit(&g_m);
+    // m3: dispatchのUNSUPPORTEDをCore1高速路へmirror
+    // (Core0書込・Core1読込。bt_sessionと同型)。
+    mutex_enter_blocking(&g_m);
+    g_s.state_accept = g_vs.state_accept;
     mutex_exit(&g_m);
 
     // inbox drain → dispatch。live indexで空になるまで回す。
@@ -1047,31 +1280,89 @@ static void poll_tick(uint32_t now) {
     }
     s_baud_was_locked = baud_locked;
     s_baud_tx_ok = baud_locked;
-    if (baud_locked) {
-    for (;;) {
-        ib_msg_t cur;
-        bool empty;
-        mutex_enter_blocking(&g_m);
-        empty = (g_s.ib_r == g_s.ib_w);
-        if (!empty) {
-            // payload最大32Bを局所複写 (mutex内でdispatchしない)。
-            cur = g_s.ib[g_s.ib_r];
-            g_s.ib_r = (uint8_t)((g_s.ib_r + 1u) % IB_N);
+    // inbox/FX gate: UART確定路またはCDC路。UART未確定でもCDC接続中は
+    // CDC受理frame (hunt bypass) をdispatchする。応答は当該msgの投入路タグで
+    // 設定 (同一tick混在対応)。UART路msgはTR_UARTへ、CDC路msgはTR_CDCへ。
+    cdc_has = usb_cdc_connected();
+    if (baud_locked || cdc_has) {
+        bool drained = false;
+        for (;;) {
+            ib_msg_t cur;
+            bool empty;
+            mutex_enter_blocking(&g_m);
+            empty = (g_s.ib_r == g_s.ib_w);
+            if (!empty) {
+                // payload最大32Bを局所複写 (mutex内でdispatchしない)。
+                cur = g_s.ib[g_s.ib_r];
+                g_s.ib_r = (uint8_t)((g_s.ib_r + 1u) % IB_N);
+            }
+            mutex_exit(&g_m);
+            if (empty) {
+                break;
+            }
+            drained = true;
+            // 応答輸送は当該msgの投入路タグで設定 (同一tick混在対応。
+            // baud_locked一括TR_UART上書きはCDC応答をUARTへ誤送するため禁止)。
+            s_last_rx_transport = (cur.tr == (uint8_t)TR_CDC) ? TR_CDC : TR_UART;
+            // STATE/NEUTRALのlive適用はCore1高速路 (UART) / cdc_frame_cb (CDC) が
+            // 担う (UNSUPPORTED下のSTATE拒否を含む)。ここではCONFIG等のfx/obのみ扱う。
+            {
+                uint8_t ob_base = g_vs.ob_n; // 当該msg由来のqueue分だけ即flush
+                (void)v3_on_frame(&g_vs, cur.type, cur.payload, cur.len, cur.seq);
+                // fxは1枠のため frameごとに実行する。drain後に1回だけだと、同じtickに
+                // CONFIGが2つ届いたとき先のfxが後のfxで上書きされ黙って消える。
+                exec_fx(now);
+                // 応答は当該msgの投入路へ (同一tick混在でも誤送なし)。
+                // flush_outboxはob全体を送るため、既存queue分(PLAYER_INFO等の
+                // tick queue)より後ろの当該msg分だけ送る。先にflushして既存分を
+                // 当該msg輸送へ誤送しないよう、base以前は残す。
+                while (g_vs.ob_n > ob_base) {
+                    // 先頭1件だけ送って詰める (順序保持・当該msg輸送のまま)。
+                    v3_ob_t o = g_vs.ob[ob_base];
+                    uint8_t k;
+                    for (k = ob_base; k + 1u < g_vs.ob_n; k++) {
+                        g_vs.ob[k] = g_vs.ob[k + 1u];
+                    }
+                    g_vs.ob_n--;
+                    // 送出 (flush_outboxの1件版。ACT追加時は両方に足すこと)。
+                    if (o.act == ACT_SEND_STATUS) {
+                        send_status();
+                    } else if (o.act == ACT_SEND_PONG) {
+                        tx_frame(T_PONG, &o.arg, 1);
+                    } else if (o.act == ACT_SEND_RUMBLE) {
+                        uint8_t ra[2];
+                        ra[0] = g_vs.rumble_sent_l;
+                        ra[1] = g_vs.rumble_sent_r;
+                        tx_frame(T_RUMBLE, ra, 2);
+                    } else if (o.act == ACT_SEND_HELLO_ACK) {
+                        uint8_t ack[4];
+                        ack[0] = PROTO_VER;
+                        ack[1] = FW_MAJOR;
+                        ack[2] = FW_MINOR;
+                        ack[3] = g_vs.result;
+                        tx_frame(T_HELLO_ACK, ack, 4);
+                    } else if (o.act == ACT_SEND_PLAYER_INFO) {
+                        uint8_t pi[2];
+                        pi[0] = g_vs.player_sent_lamp;
+                        pi[1] = g_vs.player_sent_flags;
+                        tx_frame(T_PLAYER_INFO, pi, 2);
+                    } else if (o.act == ACT_SEND_COLOR_INFO) {
+                        tx_frame(T_COLOR_INFO, spi_color_6050, 12);
+                    }
+                }
+            }
         }
-        mutex_exit(&g_m);
-        if (empty) {
-            break;
+        // 周期STATUS等のdrain外応答の既定: drain空tickのみ適用。
+        // CDC connectedならCDC、else UART lockedならUART (要求元輸送の既定)。
+        if (!drained) {
+            if (cdc_has) {
+                s_last_rx_transport = TR_CDC;
+            } else if (baud_locked) {
+                s_last_rx_transport = TR_UART;
+            }
         }
-        // STATE/NEUTRALのlive適用はCore1高速路が担う (UNSUPPORTED下の
-        // STATE拒否を含む)。ここではCONFIG等のfx/obのみ扱う。
-        (void)v3_on_frame(&g_vs, cur.type, cur.payload, cur.len, cur.seq);
-        // fxは1枠のため frameごとに実行する。drain後に1回だけだと、同じtickに
-        // CONFIGが2つ届いたとき先のfxが後のfxで上書きされ黙って消える。
-        exec_fx(now);
-    }
     }
     flush_outbox();
-
     // 共有u32 → pack → bcon_*/probe_* (Core0単独)。
     ctrl_pack_btn3(&cp.state, pb);
     bcon_btn[0] = pb[0];
@@ -1128,6 +1419,32 @@ static void poll_tick(uint32_t now) {
             probe_line("timeout-neutral");
         }
         s_neutral_hold = true;
+    }
+    // IMU転記＋timeout (§5.13)。STATEのtimeout-neutralとは独立。
+    // 新着があれば最新値を写し、100ms停滞でgyro→0、500ms停滞で静止値へ。
+    // validは初回受信でtrue。以降はtimeout時も値で表現しfalseに戻さない
+    // (USB側は値だけ見ればよい。未受信時の静止値はUSB側既定と同一)。
+    if (cp.imu_frames != s_last_imu_frames) {
+        int k;
+        s_last_imu_frames = cp.imu_frames;
+        s_last_imu_ms = now;
+        for (k = 0; k < 6; k++) {
+            bcon_imu[k] = cp.imu[k];
+        }
+        bcon_imu_valid = true;
+    } else if (bcon_imu_valid &&
+               (int32_t)(now - s_last_imu_ms) >= (int32_t)IMU_STATIC_MS) {
+        bcon_imu[0] = 0;
+        bcon_imu[1] = 0;
+        bcon_imu[2] = 0x1000;
+        bcon_imu[3] = 0;
+        bcon_imu[4] = 0;
+        bcon_imu[5] = 0;
+    } else if (bcon_imu_valid &&
+               (int32_t)(now - s_last_imu_ms) >= (int32_t)IMU_GYRO_ZERO_MS) {
+        bcon_imu[3] = 0;
+        bcon_imu[4] = 0;
+        bcon_imu[5] = 0;
     }
 
     usb_wired_task(now);
@@ -1225,6 +1542,9 @@ static void stats_print(void) {
         printf("%s\n", uline);
     }
     if (g_vs.auto_status) {
+        // STATUS周期 (auto_status 1Hz): 要求元輸送へ (drain路の投入路タグ優先)。
+        // ここでは上書きしない (周期tickがdrainなしで走るとCDC既定へ倒れ、
+        // 直後のUART要求応答をCDCへ誤送するため)。
         send_status();
     }
 }
@@ -1601,6 +1921,9 @@ int main(void) {
 
     // 有線起動ではBTより先にUSB (列挙前電流制限にかからないよう)。
     // roleは列挙より先に1回だけ確定 (未設定/範囲外はsetter側でProCon fallback)。
+    // USB profileも起動時1回選択 (単一UF2。tud_init前に確定・reboot適用)。
+    // 有線=s_wired: HID-only (Switch接続用)。無線=!s_wired: CDC-only (PC専用)。
+    usb_cdc_set_profile(s_wired);
     usb_set_role(s_emulate);
     usb_wired_init();
     usb_wired_set_enabled(s_wired);

@@ -79,12 +79,12 @@ int main(void) {
               "first 12B defaults (body/btn/L/R)");
     }
 
-    printf("[6] version: PROTO_VER=4維持・FW_MINORは3->4へ（T_RECONNECT追加・dispatch.h:14）\n");
+    printf("[6] version: PROTO_VER=4維持・FW_MINORは4->5へ（T_IMU_SAMPLE追加・dispatch.h:14）\n");
     {
         /* 新規フレーム追加でも版交渉は不変（EMULATE_MODE前例 spec §5.6）。 */
         CHECK(PROTO_VER == 4, "PROTO_VER=4 (unchanged)");
-        /* 新規フレームのためEMULATE前例（1->2）に倣い2->3。実装時に上げる。 */
-        CHECK(FW_MINOR == 4u, "FW_MINOR==4 (T_RECONNECT added, dispatch.h:14)");
+        /* 新規フレームのためT_RECONNECT前例（3->4）に倣い4->5。実装時に上げる。 */
+        CHECK(FW_MINOR == 5u, "FW_MINOR==5 (T_IMU_SAMPLE added, dispatch.h:14)");
     }
 
     printf("\nRESULT: %s (%d failures)\n", fails == 0 ? "ALL PASS" : "HAS FAILURES", fails);

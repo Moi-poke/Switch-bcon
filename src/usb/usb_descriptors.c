@@ -8,6 +8,9 @@
 #include "tusb.h"
 
 #include "usb_hid.h"
+#include "usb_cdc.h" // profile参照 (dep-free header。tusb/btstack衝突なし)
+
+/* USB profileは実行時選択 (単一UF2。usb_cdc_set_profileで起動時1回確定)。 */
 
 /* Device: USB 2.00, EP0 64B, VID 0x057E / PID は Plan A で全 role 0x2009 固定
  * (USB_PID_BY_ROLE 全要素 0x2009。PERSONALITY_TABLE の BT 側 2006/2007 は
@@ -37,7 +40,18 @@ static tusb_desc_device_t desc_device = {
 uint8_t const *tud_descriptor_device_cb(void)
 {
     /* Plan A: 全 role 0x2009 固定 (usb_pid_for_role は全 role 0x2009 を返す)。 */
+    /* profileでclassのみ切替 (CDC-only時はIAD構成。MISC/COMMON/IAD)。 */
+    /* VID/PID/文字列は同一 (同一物理機器)。tud_init前にprofile確定済み。 */
     desc_device.idProduct = usb_pid_for_role(usb_get_role());
+    if (!usb_cdc_is_wired_profile()) {
+        desc_device.bDeviceClass = TUSB_CLASS_MISC;
+        desc_device.bDeviceSubClass = MISC_SUBCLASS_COMMON;
+        desc_device.bDeviceProtocol = MISC_PROTOCOL_IAD;
+    } else {
+        desc_device.bDeviceClass = 0x00;
+        desc_device.bDeviceSubClass = 0x00;
+        desc_device.bDeviceProtocol = 0x00;
+    }
     return (uint8_t const *)&desc_device;
 }
 
@@ -146,29 +160,52 @@ uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance)
     return desc_hid_report;
 }
 
+/* Configuration 一式はprofileで選択 (実行時)。両配列を保持しcbで返す。
+ * 有線HID-only 41Bはバイト同一 (assert維持)。CDC-onlyは 9+66B。
+ * EP: CDC (notif 0x83 / out 0x02 / in 0x82) はHID (0x81/0x01) と非衝突。 */
+enum {
+    ITF_NUM_CDC,
+    ITF_NUM_CDC_DATA,
+    ITF_NUM_CDC_TOTAL,
+};
+
+#define CDC_CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN)
+
+static uint8_t const desc_configuration_cdc[] = {
+    TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_CDC_TOTAL, 0, CDC_CONFIG_TOTAL_LEN,
+                          TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 500),
+    TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, 0, 0x83, 8, 0x02, 0x82, 64),
+};
+
+/* CDC-only wTotalLength (9 + 66) との一致をビルドで縛る。 */
+_Static_assert(sizeof(desc_configuration_cdc) == (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN),
+               "cdc config must be 9+66B");
 /* Configuration 一式 (wTotalLength 41)。
  * 純正通り: Remote Wakeup、500mA、HID 1IF、IN 0x81 / OUT 0x01 (各64B・間隔8)。 */
 enum {
     ITF_NUM_HID,
-    ITF_NUM_TOTAL,
+    ITF_NUM_HID_TOTAL,
 };
 
 #define WIRED_CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_HID_INOUT_DESC_LEN)
 
-static uint8_t const desc_configuration[] = {
-    TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, WIRED_CONFIG_TOTAL_LEN,
+static uint8_t const desc_configuration_hid[] = {
+    TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_HID_TOTAL, 0, WIRED_CONFIG_TOTAL_LEN,
                           TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 500),
     TUD_HID_INOUT_DESCRIPTOR(ITF_NUM_HID, 0, HID_ITF_PROTOCOL_NONE,
                              sizeof(desc_hid_report), 0x01, 0x80 | 0x01, 64, 8),
 };
 
 /* 純正 wTotalLength 41 との一致をビルドで縛る。 */
-_Static_assert(sizeof(desc_configuration) == 41u, "wired config must be 41B");
+_Static_assert(sizeof(desc_configuration_hid) == 41u, "wired config must be 41B");
 
 uint8_t const *tud_descriptor_configuration_cb(uint8_t index)
 {
     (void)index;
-    return desc_configuration;
+    if (!usb_cdc_is_wired_profile()) {
+        return desc_configuration_cdc;
+    }
+    return desc_configuration_hid;
 }
 
 /* 文字列 (純正の写し。シリアルは純正固定値)。

@@ -37,15 +37,15 @@ class FakeDev:
             # 81 <sub> で返す。
             return [0x81, last[1]] + [0] * 62
         if last[0] == 0x01:
-            # [ID][振動8B][sub][args...] のためsubはindex 9。
-            sub = last[9]
+            # [ID][counter][振動8B][sub][args...] のためsubはindex 10。
+            sub = last[10]
             rep = [0x21] + [0] * 63
             rep[13], rep[14] = 0x80, sub
             if sub == 0x10:
-                addr = last[10] | (last[11] << 8)
-                want = last[14]
+                addr = last[11] | (last[12] << 8)
+                want = last[15]
                 rep[13], rep[14] = 0x90, 0x10
-                rep[15:20] = [last[10], last[11], 0, 0, want]
+                rep[15:20] = [last[11], last[12], 0, 0, want]
                 data = self.spi.get(addr, bytes([0xFF]) * want)
                 rep[20:20 + want] = list(data[:want])
             self.written.clear()
@@ -67,8 +67,8 @@ def _probe() -> tuple[P.Probe, FakeDev]:
     pr._hid = FakeHid(dev)  # type: ignore[attr-defined]
     pr.dev = dev  # type: ignore[assignment]
     pr.vid, pr.pid = 0x057E, 0x2009
+    pr._counter = 0
     return pr, dev
-
 
 def test_handshake_order() -> None:
     pr, dev = _probe()

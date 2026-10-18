@@ -23,7 +23,11 @@ void usb_wired_reconnect(void);
 void usb_wired_disconnect(void);
 void usb_wired_set_enabled(bool en);
 bool usb_wired_is_enabled(void);
+/* 0x30/0x21 の timer バイト換算 (5ms刻み、gyro-mini実機で受理確認)。
+ * 実体は usb_wired.c。 */
+uint8_t usb_wired_timer_now(void);
 bool usb_wired_is_configured(void);
+
 bool usb_wired_handshake_done(void);
 
 /* USB バス側の診断計数。列挙〜応答のどこで止まるかを見る。

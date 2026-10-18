@@ -256,6 +256,50 @@ int main(void) {
         usb_pack_controller_data(out12, &ctx);
         CHECK(out12[1] == 0x91u, "out-of-range role falls back to 0x91");
     }
+    printf("[10] PC IMU (§5.13): valid replicates latest to 3 slots, invalid keeps rest\n");
+    {
+        usb_sub_ctx_t ctx;
+        uint8_t rep[64];
+        int k;
+        memset(&ctx, 0, sizeof(ctx));
+        ctx.lx = ctx.ly = ctx.rx = ctx.ry = 0x800;
+        ctx.imu_valid = true;
+        ctx.imu[0] = 0;
+        ctx.imu[1] = 0;
+        ctx.imu[2] = 4096;
+        ctx.imu[3] = 100;
+        ctx.imu[4] = -100;
+        ctx.imu[5] = 0;
+        CHECK(usb_build_30_report(&ctx, rep) == 64, "IMU valid builds 64B");
+        for (k = 0; k < 3; k++) {
+            int base = 13 + k * 12;
+            CHECK(rep[base + 0] == 0x00u && rep[base + 1] == 0x00u, "ax LE");
+            CHECK(rep[base + 2] == 0x00u && rep[base + 3] == 0x00u, "ay LE");
+            CHECK(rep[base + 4] == 0x00u && rep[base + 5] == 0x10u, "az 4096 LE");
+            CHECK(rep[base + 6] == 0x64u && rep[base + 7] == 0x00u, "gx 100 LE");
+            CHECK(rep[base + 8] == 0x9Cu && rep[base + 9] == 0xFFu, "gy -100 LE");
+            CHECK(rep[base + 10] == 0x00u && rep[base + 11] == 0x00u, "gz LE");
+        }
+        memset(&ctx, 0, sizeof(ctx));
+        ctx.lx = ctx.ly = ctx.rx = ctx.ry = 0x800;
+        CHECK(usb_build_30_report(&ctx, rep) == 64, "IMU invalid builds 64B");
+        for (k = 0; k < 3; k++) {
+            int base = 13 + k * 12;
+            CHECK(rep[base + 4] == 0x00u && rep[base + 5] == 0x10u, "rest az 0x1000");
+            CHECK(rep[base + 6] == 0x00u && rep[base + 10] == 0x00u, "rest gyro 0");
+        }
+        /* Joy役はPC IMUがあってもゼロのまま (scope A契約)。 */
+        memset(&ctx, 0, sizeof(ctx));
+        ctx.role = 1u;
+        ctx.imu_valid = true;
+        ctx.imu[2] = 4096;
+        {
+            static const uint8_t zeros36[36] = {0};
+            CHECK(usb_build_30_report(&ctx, rep) == 64, "Joy builds 64B");
+            CHECK(memcmp(&rep[13], zeros36, 36) == 0, "Joy IMU stays zero with PC IMU");
+        }
+    }
+
 
     printf("\nRESULT: %s (%d failures)\n", fails == 0 ? "ALL PASS" : "HAS FAILURES", fails);
     return fails;

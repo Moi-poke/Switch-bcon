@@ -26,6 +26,11 @@ typedef struct {
     uint8_t mac[6];
     uint8_t player;
     uint8_t role;
+    // PC由来IMU (§5.13)。valid=trueの間だけ0x30のIMU 36Bへ反映する
+    // (3スロットへ同一値を複製)。false時は従来の静止値。
+    // ゼロ初期化ctxはvalid=false→従来動作 (host test互換)。
+    bool imu_valid;
+    int16_t imu[6];
 #if IMU_DUMMY
     // Phase 0 実験用 (ON時のみ存在)。to_ms_since_boot由来の時刻。
     // ダミー生成器へ渡す (usb_hid.cはpico非依存のため呼出側が渡す)。

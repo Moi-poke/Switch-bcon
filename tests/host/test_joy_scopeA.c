@@ -4,7 +4,8 @@
 //
 // Locked IMU decision (scope A + Copilot review A-plan, [PABot-ref]):
 // ProCon 0x30 keeps static-1g rest (2wiCC layout: gyro XYZ=0, accel X/Y=0
-// Z=0x4000, same all 3 samples); Joy roles serve zero IMU (PABot live
+// Z=0x1000 (4096=1g、gyro-mini実機で受理確認。旧0x4000は4gで無視される),
+// same all 3 samples); Joy roles serve zero IMU (PABot live
 // capture shows 36B zeros). No new frame TYPE. The USB 0x30 report keeps
 // ID + 12B ControllerData + 36B IMU + 15B fill. Joy roles MUST NOT add a
 // new T_* frame type or dispatch enum for IMU; no sensor drivers/noise.
@@ -255,8 +256,10 @@ int main(void) {
          * 「opcode を足したら版も上げる」ことなので、その契約として読む。 */
         CHECK(T_RECONNECT == 0x3Bu && proto_expected_len(T_RECONNECT) == 0,
               "T-REBOOT 0x3B=T_RECONNECT LEN0 (append-only)");
-        CHECK(FW_MAJOR == 0u && FW_MINOR == 4u,
-              "T-REBOOT FW bumped to 0.4 with the new TYPE");
+        CHECK(T_IMU_SAMPLE == 0x04u && proto_expected_len(T_IMU_SAMPLE) == 12,
+              "T-REBOOT 0x04=T_IMU_SAMPLE LEN12 (append-only)");
+        CHECK(FW_MAJOR == 0u && FW_MINOR == 5u,
+              "T-REBOOT FW bumped to 0.5 with the new TYPE");
     }
 
     printf("[T-PROCON-GATE] role0 regression gate (passthrough)\n");

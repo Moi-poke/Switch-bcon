@@ -240,7 +240,9 @@ int usb_build_30_report(const usb_sub_ctx_t *ctx, uint8_t out64[64])
         return 64;
     }
     /* IMU 36B は静止時 1g の固定値 (3 試料 x 12B = accXYZ LE16 + gyroXYZ LE16)。
-     * ジャイロ XYZ=0・加速度 X/Y=0・Z=0x4000 (16384 = 1g) を全試料に書く。
+     * ジャイロ XYZ=0・加速度 X/Y=0・Z=0x1000 (4096 = 1g) を全試料に書く。
+     * 純正実測 Z≒4104 (2026-10-17 probe-procon.json)。旧0x4000 (16384=4g)
+     * は異常値としてSwitchに無視される。
      * 全ゼロ + 0x40 IMU-enable ACK は矛盾するため (host fault 検出の恐れ)。
      * 報告長・形状は不変 (ID + 12B ControllerData + 36B IMU + 15B 埋め)。
      * ProCon のみ (Joy は上記ゼロ)。 */
@@ -252,6 +254,20 @@ int usb_build_30_report(const usb_sub_ctx_t *ctx, uint8_t out64[64])
         return 64;
     }
 #endif
+    /* PC由来IMU (§5.13): validの間は最新1件を3スロットへ複製する
+     * (switch-pico実績方式)。無効時は下の静止値。 */
+    if (ctx->imu_valid) {
+        for (k = 0; k < 3; k++) {
+            int base = 13 + k * 12;
+            int j;
+            for (j = 0; j < 6; j++) {
+                uint16_t u = (uint16_t)ctx->imu[j];
+                out64[base + j * 2] = (uint8_t)(u & 0xFFu);
+                out64[base + j * 2 + 1] = (uint8_t)((u >> 8) & 0xFFu);
+            }
+        }
+        return 64;
+    }
     for (k = 0; k < 3; k++) {
         int base = 13 + k * 12;
         out64[base + 0] = 0x00u;
@@ -259,7 +275,7 @@ int usb_build_30_report(const usb_sub_ctx_t *ctx, uint8_t out64[64])
         out64[base + 2] = 0x00u;
         out64[base + 3] = 0x00u;
         out64[base + 4] = 0x00u;
-        out64[base + 5] = 0x40u;
+        out64[base + 5] = 0x10u;
     }
     return 64;
 }

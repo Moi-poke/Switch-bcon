@@ -42,16 +42,24 @@ def _hex(b: bytes) -> str:
 
 
 class Probe:
-    def __init__(self, vid: int, pid: int) -> None:
+    def __init__(self, vid: int, pid: int, path: str = "") -> None:
         import hid  # Cython hidapi
 
         self._hid = hid
         self.dev = hid.device()
-        self.dev.open(vid, pid)
+        if path.startswith("@"):
+            # @N: enumerate順のN番目 (0-based)。
+            devs = hid.enumerate(vid, pid)
+            idx = int(path[1:])
+            self.dev.open_path(devs[idx]["path"])
+        elif path:
+            self.dev.open_path(path.encode("utf-8"))
+        else:
+            self.dev.open(vid, pid)
         self.dev.set_nonblocking(True)
         self.vid = vid
         self.pid = pid
-
+        self._counter = 0
     def close(self) -> None:
         try:
             self.dev.close()
@@ -107,19 +115,21 @@ class Probe:
     def subcmd(self, sub: int, args: bytes = b"", reply_wait: float = 0.5) -> bytes | None:
         """0x01経由でsubcommandを送り、0x21応答を返す。
 
-        出力0x01形式: [01][振動8B=0][sub][args...]。振動は中立で埋める
-        (dekuNukem通り 00 01 40 40 ×2 ではなく0埋めでも受理される。
-        不受理なら中立8Bに切替えること)。
+        出力0x01形式: [01][counter 1B][振動8B][sub][args...] (subはindex 10)。
+        dekuNukem 0x10例 `[01 .. .. .. .. .. .. .. .. .. 10 ...]` と一致。
+        振動は中立 (00 01 40 40 ×2) で埋める。
         """
         out = bytes((sub,)) + bytes(args)
-        self._write(0x01, bytes(8) + out, total=49)
+        vib = bytes((0x00, 0x01, 0x40, 0x40, 0x00, 0x01, 0x40, 0x40))
+        self._write(0x01, bytes((self._counter & 0xFF,)) + vib + out, total=49)
+        self._counter += 1
         time.sleep(0.15)
         reps = self._read_reports(reply_wait, want_id=0x21)
         # sub一致の応答を探す (0x21の[14]=sub)。
         for r in reversed(reps):
             if len(r) >= 15 and r[14] == sub:
                 return r
-        return reps[-1] if reps else None
+        return None
 
     def spi_read(self, addr: int, size: int) -> tuple[bytes | None, bytes, bool]:
         """0x10 SPI読出し。戻値は(0x21応答全体, data部, echo一致)。
@@ -194,7 +204,7 @@ def scan_spi(dev: Probe, addrs: list[int], size: int = 0x1D) -> dict[str, dict]:
 
 def cmd_probe(args: argparse.Namespace) -> int:
     print("注意: Steamを終了してから実行してください (ProConを掴まれます)。")
-    dev = Probe(args.vid, args.pid)
+    dev = Probe(args.vid, args.pid, args.path)
     try:
         result: dict = {"device": {"vid": f"{args.vid:04X}", "pid": f"{args.pid:04X}"},
                         "at": dt.datetime.now().isoformat(timespec="seconds")}
@@ -275,7 +285,7 @@ def cmd_diff(args: argparse.Namespace) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description="ProCon/Pico USB probe (§2)")
     sub = ap.add_subparsers(dest="cmd")
-    p = sub.add_parser("probe", help="デバイスを調べてjsonへ保存 (既定)")
+    p = sub.add_parser("probe", help="デバイスを調べてjsonへ保存")
     p.add_argument("--vid", type=lambda x: int(x, 16), default=NINTENDO_VID)
     p.add_argument("--pid", type=lambda x: int(x, 16), default=PROCON_PID)
     p.add_argument("--out", required=True)
@@ -283,6 +293,7 @@ def main() -> int:
     p.add_argument("--spi", default="", help="読むSPI addrの16進カンマ列")
     p.add_argument("--profile", default="switch", choices=("switch", "doc"),
                    help="0x80順序: switch=実測再現05→01→02→04, doc=資料準拠01→02→03→04")
+    p.add_argument("--path", default="", help="HID pathで指定 (同VID/PID複数台時)")
     d = sub.add_parser("diff", help="2つのjsonの差分表")
     d.add_argument("a")
     d.add_argument("b")

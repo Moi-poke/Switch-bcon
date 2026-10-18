@@ -33,6 +33,7 @@ int proto_expected_len(uint8_t type) {
         case T_STATE:         return 8;
         case T_NEUTRAL:       return 0;
         case T_PING:          return 0;
+        case T_IMU_SAMPLE:    return 12;
         case T_HELLO:         return 2;
         case T_HELLO_ACK:     return 4;
         case T_STATUS:        return 7;
