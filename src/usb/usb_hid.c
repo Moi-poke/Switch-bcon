@@ -234,21 +234,20 @@ int usb_build_30_report(const usb_sub_ctx_t *ctx, uint8_t out64[64])
     memset(out64, 0, 64);
     out64[0] = 0x30u;
     usb_pack_controller_data(&out64[1], ctx);
+    /* Joy 0x30 の vib [12] は 0x00 [PABot-ref] (ProCon は pack 済み 0x09)。
+     * IMU は role共通で下の PC由来 (§5.13) を反映する。報告長・形状は不変。 */
     if (role != 0u) {
-        /* Joy 0x30 は vib [12]=0x00・IMU 36B ゼロ [PABot-ref]。報告長・形状は不変。 */
         out64[12] = 0x00u;
-        return 64;
     }
-    /* IMU 36B は静止時 1g の固定値 (3 試料 x 12B = accXYZ LE16 + gyroXYZ LE16)。
-     * ジャイロ XYZ=0・加速度 X/Y=0・Z=0x1000 (4096 = 1g) を全試料に書く。
-     * 純正実測 Z≒4104 (2026-10-17 probe-procon.json)。旧0x4000 (16384=4g)
-     * は異常値としてSwitchに無視される。
-     * 全ゼロ + 0x40 IMU-enable ACK は矛盾するため (host fault 検出の恐れ)。
-     * 報告長・形状は不変 (ID + 12B ControllerData + 36B IMU + 15B 埋め)。
-     * ProCon のみ (Joy は上記ゼロ)。 */
+    /* IMU 36B (3 試料 x 12B = accXYZ LE16 + gyroXYZ LE16)。
+     * 無効時の既定: ProCon は静止時 1g (X/Y=0・Z=0x1000=4096。
+     * 純正実測 Z≒4104 (2026-10-17 probe-procon.json)。旧0x4000=4g は
+     * 異常値として Switch に無視される。全ゼロ + 0x40 IMU-enable ACK は
+     * 矛盾のため host fault 検出の恐れ)。Joy はゼロ [PABot-ref]。
+     * 報告長・形状は不変 (ID + 12B ControllerData + 36B IMU + 15B 埋め)。 */
 #if IMU_DUMMY
-    /* Phase 0 実験: role==0 かつ 0x40/0x03有効のときだけダミー生成器を使う。
-     * IMU_DUMMY=0 では下の静止値ループと同一 (構造は変えない)。 */
+    /* Phase 0 実験: 0x40/0x03有効のときダミー生成器を使う (role共通)。
+     * IMU_DUMMY=0 では下の既定ループと同一 (構造は変えない)。 */
     if (imu_dummy_active()) {
         imu_dummy_fill(&out64[13], ctx->now_ms);
         return 64;
@@ -266,6 +265,10 @@ int usb_build_30_report(const usb_sub_ctx_t *ctx, uint8_t out64[64])
                 out64[base + j * 2 + 1] = (uint8_t)((u >> 8) & 0xFFu);
             }
         }
+        return 64;
+    }
+    /* 無効時の既定: ProCon=静止1g、Joy=ゼロ。memset済みのため Joy は何もしない。 */
+    if (role != 0u) {
         return 64;
     }
     for (k = 0; k < 3; k++) {

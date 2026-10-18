@@ -318,7 +318,7 @@ Off  Field  Size  説明
   Picoは検証（LEN=12のみ受理）して最新1件を保持し、USB 0x30生成時に3スロットへ複製する。
 * 帯域：17B×200Hz=3.4KB/s（1Mbpsの3%未満）。STATEと合わせても余裕がある。
 * timeout：Picoは最終受信から100msでgyro→0、500msで静止値（0,0,0x1000,0,0,0）へ落とす。
-  IMU未受信時・Joy役の0x30 IMUは従来通り（静止1g / ゼロ）。
+  IMU未受信時の0x30 IMUは従来通り（ProCon=静止1g・Joy役=ゼロ）。有効時はrole共通で反映する。
 * STATEのtimeout-neutral（§8・200ms）とは独立。IMU停止はボタンを解放しない。
 
 
@@ -486,7 +486,7 @@ PID以外は全role同一（VID・bcd・EP・間隔・構成は不変）。
 `0x02` 機器情報応答の種別のみrole依存（ProCon=0x03・L=0x01・R=0x02）。
 fwはProCon=`03 48`（2wiCC実働値。BTの `03 8B` ではない）、Joy=`04 33`（PABotBase2の応答を参考にした値）。
 `81 01` の種別は全role `0x03`（PABotBase2の応答を参考にした値）。
-電池は全role `0x91`、Joy の `0x30` IMU は36Bゼロ（PABotBase2の応答を参考にした値）。
+電池は全role `0x91`、Joy の `0x30` IMU は未受信時36Bゼロ（PABotBase2の応答を参考にした値。有効時は§5.13を反映）。
 role=0は従来バイトと同一。
 
 ## 12.2 BT role別値 (EMULATE_MODE)

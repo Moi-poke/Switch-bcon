@@ -288,15 +288,25 @@ int main(void) {
             CHECK(rep[base + 4] == 0x00u && rep[base + 5] == 0x10u, "rest az 0x1000");
             CHECK(rep[base + 6] == 0x00u && rep[base + 10] == 0x00u, "rest gyro 0");
         }
-        /* Joy役はPC IMUがあってもゼロのまま (scope A契約)。 */
+        /* Joy役もPC IMU (§5.13) を反映する (ProConと同一複製)。無効時はゼロ。 */
         memset(&ctx, 0, sizeof(ctx));
-        ctx.role = 1u;
+        ctx.role = 2u;
         ctx.imu_valid = true;
         ctx.imu[2] = 4096;
+        ctx.imu[3] = 100;
+        CHECK(usb_build_30_report(&ctx, rep) == 64, "JoyR builds 64B");
+        for (k = 0; k < 3; k++) {
+            int base = 13 + k * 12;
+            CHECK(rep[base + 4] == 0x00u && rep[base + 5] == 0x10u, "JoyR az 4096 LE");
+            CHECK(rep[base + 6] == 0x64u && rep[base + 7] == 0x00u, "JoyR gx 100 LE");
+        }
+        CHECK(rep[12] == 0x00u, "JoyR vib stays 0x00");
+        memset(&ctx, 0, sizeof(ctx));
+        ctx.role = 2u;
         {
             static const uint8_t zeros36[36] = {0};
-            CHECK(usb_build_30_report(&ctx, rep) == 64, "Joy builds 64B");
-            CHECK(memcmp(&rep[13], zeros36, 36) == 0, "Joy IMU stays zero with PC IMU");
+            CHECK(usb_build_30_report(&ctx, rep) == 64, "JoyR invalid builds 64B");
+            CHECK(memcmp(&rep[13], zeros36, 36) == 0, "JoyR IMU stays zero when invalid");
         }
     }
 
