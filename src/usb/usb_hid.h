@@ -49,6 +49,14 @@ void usb_pack_controller_data(uint8_t out12[12], const usb_sub_ctx_t *ctx);
 /* 0x30 入力レポート 64B (ID + 12B 状態 + 36B IMU(0) + 15B 埋め)。
  * 成功時 64。IMU 無効時は 0 のまま (2wiCC 通り)。 */
 int usb_build_30_report(const usb_sub_ctx_t *ctx, uint8_t out64[64]);
+/* 0x41 (Set IMU sensitivity) の保持値。usb_build_21_reply が受信時に
+ * usb_imu_set_sensitivity() を呼び、role2 (Joy-R) の 0x30 IMU出力を
+ * 要求レンジへ換算する (±2000dps/±8G 前提の生値)。既定は実機初期値
+ * (gyro=3:±2000dps・accel=0:±8G) のため換算は恒等。 */
+void usb_imu_set_sensitivity(uint8_t gyro_sel, uint8_t accel_sel);
+void usb_imu_get_sensitivity(uint8_t *gyro_sel, uint8_t *accel_sel);
+/* 0x41を実際に受信したか（未受信ならget値は既定 3/0 のまま）。 */
+bool usb_imu_sensitivity_seen(void);
 
 /* エミュレーション role の伝達路 (起動時に1回だけ呼ぶ。USB init/列挙の前)。
  * main.c (T4所有) が store_emulate_load_def() の値をここへ渡す想定。

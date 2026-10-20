@@ -288,19 +288,36 @@ int main(void) {
             CHECK(rep[base + 4] == 0x00u && rep[base + 5] == 0x10u, "rest az 0x1000");
             CHECK(rep[base + 6] == 0x00u && rep[base + 10] == 0x00u, "rest gyro 0");
         }
-        /* Joy役もPC IMU (§5.13) を反映する (ProConと同一複製)。無効時はゼロ。 */
+        /* Joy-RはY/Z反転 (hid-nintendo.c準拠)。Xは不変、無効時はゼロ。 */
         memset(&ctx, 0, sizeof(ctx));
         ctx.role = 2u;
         ctx.imu_valid = true;
+        ctx.imu[0] = 1000;
+        ctx.imu[1] = 2000;
         ctx.imu[2] = 4096;
         ctx.imu[3] = 100;
+        ctx.imu[4] = -100;
+        ctx.imu[5] = 300;
         CHECK(usb_build_30_report(&ctx, rep) == 64, "JoyR builds 64B");
         for (k = 0; k < 3; k++) {
             int base = 13 + k * 12;
-            CHECK(rep[base + 4] == 0x00u && rep[base + 5] == 0x10u, "JoyR az 4096 LE");
+            /* ax=1000 LE不変、ay=2000→-2000 (0xF830)、az=4096→-4096 (0xF000) */
+            CHECK(rep[base + 0] == 0xE8u && rep[base + 1] == 0x03u, "JoyR ax 1000 LE");
+            CHECK(rep[base + 2] == 0x30u && rep[base + 3] == 0xF8u, "JoyR ay negated LE");
+            CHECK(rep[base + 4] == 0x00u && rep[base + 5] == 0xF0u, "JoyR az negated LE");
+            /* gx=100 LE不変、gy=-100→100、gz=300→-300 (0xFED4) */
             CHECK(rep[base + 6] == 0x64u && rep[base + 7] == 0x00u, "JoyR gx 100 LE");
+            CHECK(rep[base + 8] == 0x64u && rep[base + 9] == 0x00u, "JoyR gy negated LE");
+            CHECK(rep[base + 10] == 0xD4u && rep[base + 11] == 0xFEu, "JoyR gz negated LE");
         }
         CHECK(rep[12] == 0x00u, "JoyR vib stays 0x00");
+        /* -32768の反転は32767へ飽和。 */
+        memset(&ctx, 0, sizeof(ctx));
+        ctx.role = 2u;
+        ctx.imu_valid = true;
+        ctx.imu[1] = (int16_t)0x8000;
+        CHECK(usb_build_30_report(&ctx, rep) == 64, "JoyR sat builds 64B");
+        CHECK(rep[13 + 2] == 0xFFu && rep[13 + 3] == 0x7Fu, "JoyR -32768 saturates to 32767");
         memset(&ctx, 0, sizeof(ctx));
         ctx.role = 2u;
         {
@@ -308,6 +325,64 @@ int main(void) {
             CHECK(usb_build_30_report(&ctx, rep) == 64, "JoyR invalid builds 64B");
             CHECK(memcmp(&rep[13], zeros36, 36) == 0, "JoyR IMU stays zero when invalid");
         }
+    }
+
+    printf("[10b] 0x41 IMU sensitivity: Joy-R output rescaled to requested range\n");
+    {
+        usb_sub_ctx_t ctx;
+        uint8_t req[16];
+        uint8_t out[64];
+        uint8_t rep[64];
+        uint8_t g = 0u, a = 0u;
+        int n;
+        usb_imu_set_sensitivity(3u, 0u);
+        usb_imu_get_sensitivity(&g, &a);
+        CHECK(g == 3u && a == 0u, "default sensitivity is 2000dps/8G");
+        /* 既定では恒等 (±2000dps/±8G前提の値をそのまま出す)。 */
+        memset(&ctx, 0, sizeof(ctx));
+        ctx.role = 2u;
+        ctx.imu_valid = true;
+        ctx.imu[3] = 800;
+        ctx.imu[2] = 4096;
+        CHECK(usb_build_30_report(&ctx, rep) == 64, "identity builds 64B");
+        CHECK(rep[13 + 6] == 0x20u && rep[13 + 7] == 0x03u, "identity gx 800 LE");
+        /* 0x41: gyro ±250dps・accel ±2G を要求。 */
+        memset(req, 0, sizeof(req));
+        req[0] = 0x01u; req[10] = 0x41u;
+        req[11] = 0x00u; req[12] = 0x02u;
+        req[13] = 0x01u; req[14] = 0x01u;
+        n = usb_build_21_reply(req, 15, out, 64, &ctx);
+        CHECK(n == 64 && out[13] == 0x80u && out[14] == 0x41u, "41 ack unchanged");
+        usb_imu_get_sensitivity(&g, &a);
+        CHECK(g == 0u && a == 2u, "41 args stored (gyro250/accel2G)");
+        memset(&ctx, 0, sizeof(ctx));
+        ctx.role = 2u;
+        ctx.imu_valid = true;
+        ctx.imu[2] = 4096;
+        ctx.imu[3] = 800;
+        CHECK(usb_build_30_report(&ctx, rep) == 64, "scaled builds 64B");
+        /* gyro 800 * 2000/250 = 6400 (0x1900)、accel 4096 * 8/2 = 16384 →
+         * Joy-R反転で -16384 (0xC000)。 */
+        CHECK(rep[13 + 6] == 0x00u && rep[13 + 7] == 0x19u,
+              "gyro rescaled to 250dps range (x8)");
+        CHECK(rep[13 + 4] == 0x00u && rep[13 + 5] == 0xC0u,
+              "accel rescaled+negated (16384)");
+        /* 換算後の飽和: 10000 * 8 = 80000 → 32767。 */
+        memset(&ctx, 0, sizeof(ctx));
+        ctx.role = 2u;
+        ctx.imu_valid = true;
+        ctx.imu[3] = 10000;
+        CHECK(usb_build_30_report(&ctx, rep) == 64, "sat50 builds 64B");
+        CHECK(rep[13 + 6] == 0xFFu && rep[13 + 7] == 0x7Fu,
+              "rescaled gyro saturates to 32767");
+        /* ProCon (role0) はレンジ要求があっても従来バイト不変。 */
+        memset(&ctx, 0, sizeof(ctx));
+        ctx.role = 0u;
+        ctx.imu_valid = true;
+        ctx.imu[3] = 800;
+        CHECK(usb_build_30_report(&ctx, rep) == 64, "role0 builds 64B");
+        CHECK(rep[13 + 6] == 0x20u && rep[13 + 7] == 0x03u, "role0 unscaled (unchanged)");
+        usb_imu_set_sensitivity(3u, 0u);
     }
 
 

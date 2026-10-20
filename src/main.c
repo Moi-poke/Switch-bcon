@@ -135,6 +135,8 @@ uint8_t bcon_mac[6]; // 応答順 (初期化で反転済み。BT addrと同一�
 // valid=false の間はUSB側が静止値 (§12) を使う。BTは使わない (USB有線のみ)。
 int16_t bcon_imu[6];
 bool bcon_imu_valid;
+// 有線USB側の0x40 IMU有効化受信 (usb_wired.cが設定。PLAYER_INFO bit0へOR)。
+bool bcon_wired_imu;
 
 // ---- RUMBLE受信 (BT 0x10復号amp保持。変化時のみRUMBLE frameでPCへ転送) ----
 uint32_t bcon_usb_rumble_n;
@@ -1229,10 +1231,22 @@ static void poll_tick(uint32_t now) {
     g_vs.cap_valid = probe_cap_valid;
     g_vs.player_lamp = probe_player_id;
     // PLAYER_INFO flags (spec §5.8): bit0 IMU・bit1 vib・bit2 cap_saved。
+    // bit0は無線probe側と有線USB側(0x40受信)のOR。有線のみ運用でも見える。
+    // bit3-4=0x41のgyroレンジ・bit5-6=accelレンジ (Switch要求の可視化。
+    // PC側は未知bitを無視するため後方互換)。
     // bit2は取込済みwakeの保存有無 (BEACON再生可否)。再生自体は成功信号にしない。
-    g_vs.player_flags = (uint8_t)((probe_imu_enabled ? 0x01u : 0u) |
-                                  (probe_vibration_enabled ? 0x02u : 0u) |
-                                  (probe_cap_valid ? 0x04u : 0u));
+    {
+        uint8_t gyro_sel = 0u;
+        uint8_t accel_sel = 0u;
+        usb_imu_get_sensitivity(&gyro_sel, &accel_sel);
+        g_vs.player_flags = (uint8_t)(
+            ((probe_imu_enabled || bcon_wired_imu) ? 0x01u : 0u) |
+            (probe_vibration_enabled ? 0x02u : 0u) |
+            (probe_cap_valid ? 0x04u : 0u) |
+            (uint8_t)((gyro_sel & 3u) << 3) |
+            (uint8_t)((accel_sel & 3u) << 5) |
+            (usb_imu_sensitivity_seen() ? 0x80u : 0u));
+    }
     g_vs.player_valid = probe_player_seen;
     v3_player_tick(&g_vs);
     g_vs.rumble_l = probe_rumble_l;

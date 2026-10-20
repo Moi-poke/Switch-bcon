@@ -41,6 +41,11 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
   # IMU_DUMMY: Phase 0 実験ビルド (0=現行既定・1=ダミーIMU)。
   # ON時のみ実験パラメータをcompile definitionへ渡し、imu_dummy.cをlinkする。
   set(IMU_DUMMY 0 CACHE STRING "Phase 0 dummy IMU experiment (0=off, 1=on)")
+  # JOY_IMU_NEG_MODE: role2 (Joy-Con R) のY/Z反転の組み合わせ（診断用）。
+  #   0=反転なし / 1=加速度+ジャイロ (既定・カーネル準拠) /
+  #   2=ジャイロのみ / 3=加速度のみ
+  # 実機ProConと同一バイトでJoy役を出し、コンソール側の扱いを切り分ける。
+  set(JOY_IMU_NEG_MODE 1 CACHE STRING "role2 IMU Y/Z negation mode (0..3)")
   set(IMU_DUMMY_INTERVAL_MS 8 CACHE STRING "Dummy USB report interval ms (ON only)")
   set(IMU_DUMMY_MODE 1 CACHE STRING "Dummy mode (ON only: 0=SINE, 1=STEP)")
   set(IMU_DUMMY_GYRO_AXIS 2 CACHE STRING "Dummy gyro axis 0..2 (ON only)")
@@ -164,6 +169,7 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
     WIRED_DEFAULT=${WIRED_DEFAULT}
     POKECON_INPUT=${POKECON_INPUT}
     IMU_DUMMY=${IMU_DUMMY}
+    JOY_IMU_NO_NEGATE=${JOY_IMU_NO_NEGATE}
   )
 
   # Phase 0: ON時のみ実験パラメータとimu_dummy.cを足す。libmはSINE用。

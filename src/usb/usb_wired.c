@@ -30,6 +30,7 @@ extern uint8_t bcon_mac[6]; /* 応答順 (main.cで反転済み) */
 extern uint32_t bcon_usb_rumble_n; /* 所有元main.c。USB振動0x10受信累計 */
 extern int16_t bcon_imu[6]; /* 所有元main.c。PC由来IMU最新値 (§5.13) */
 extern bool bcon_imu_valid; /* 所有元main.c。同有効flag */
+extern bool bcon_wired_imu; /* 所有元main.c。有線0x40受信flag (PLAYER_INFO bit0へ) */
 
 /* timer換算 (5ms刻み)。gyro-mini実機で受理確認 (2026-10-17)。
  * 純正相当 (espp: 4.96ms)。15ms周期でレポート毎 +3。
@@ -463,6 +464,10 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
         if (sub == 0x30u && req_len >= 12) {
             /* 格納は usb_hid 側 (host-testable。wired_loop が feed で流す)。 */
             usb_wired_player_save(req[11]);
+        }
+        /* 有線0x40 IMU有効化の観測 (応答は変えない。PLAYER_INFO bit0へ)。 */
+        if (sub == 0x40u && req_len >= 12) {
+            bcon_wired_imu = (req[11] != 0u);
         }
 #if IMU_DUMMY
         /* Phase 0: 0x40/0x03/0x41/0x11の観測 (応答バイトは変えない)。 */

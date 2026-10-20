@@ -9,6 +9,11 @@
 #include "usb_hid.h"
 #include "spi.h"
 #include "pack.h"
+
+/* 診断ビルド用の既定（hostテストは定義しないため）。 */
+#ifndef JOY_IMU_NEG_MODE
+#define JOY_IMU_NEG_MODE 1
+#endif
 #if IMU_DUMMY
 #include "imu_dummy.h"
 #endif
@@ -223,6 +228,59 @@ void usb_pack_controller_data(uint8_t out12[12], const usb_sub_ctx_t *ctx)
     out12[11] = 0x09u;
 }
 
+/* 0x41 (Set IMU sensitivity) の受信値。Switch は IMU 有効化後にレンジを
+ * 指定する。PC側の生値は ±2000dps/±8G 前提のため、異なるレンジ要求時は
+ * 換算しないと振幅が倍/分の1になり「高速なジャイロ入力」として現れる。
+ * 既定は実機 IMU の初期レンジ (gyro 3=±2000dps・accel 0=±8G)。
+ * 適用は role2 (Joy-R) のみ。role0/1 は従来バイト不変。 */
+static uint8_t s_imu_gyro_sel = 3u;
+static uint8_t s_imu_accel_sel = 0u;
+/* 0x41を実際に受信したか。未受信なら既定値 (3/0) のままなので、
+ * PC側の表示と「実際に要求された」を区別するために持つ。 */
+static bool s_imu_sens_seen = false;
+
+void usb_imu_set_sensitivity(uint8_t gyro_sel, uint8_t accel_sel)
+{
+    s_imu_sens_seen = true;
+    s_imu_gyro_sel = (gyro_sel <= 3u) ? gyro_sel : 3u;
+    s_imu_accel_sel = (accel_sel <= 3u) ? accel_sel : 0u;
+}
+
+bool usb_imu_sensitivity_seen(void)
+{
+    return s_imu_sens_seen;
+}
+
+void usb_imu_get_sensitivity(uint8_t *gyro_sel, uint8_t *accel_sel)
+{
+    if (gyro_sel != NULL) {
+        *gyro_sel = s_imu_gyro_sel;
+    }
+    if (accel_sel != NULL) {
+        *accel_sel = s_imu_accel_sel;
+    }
+}
+
+/* レンジ選択 index → 実レンジ (dekuNukem subcommand 0x41)。 */
+static const uint16_t k_gyro_dps[4] = { 250u, 500u, 1000u, 2000u };
+static const uint16_t k_accel_g[4] = { 8u, 4u, 2u, 16u };
+
+/* PC側生値の前提レンジ (±2000dps/±8G) を、要求レンジRの生値へ換算する。
+ * raw_R = raw_base * base / R (レンジが狭いほど1LSBが細かく、同じ角速度で
+ * 生値は大きくなる)。int16へ飽和。 */
+static int16_t imu_scale_value(int32_t v, uint8_t sel, const uint16_t *ranges,
+                               uint16_t base)
+{
+    int32_t scaled = (v * (int32_t)base) / (int32_t)ranges[sel & 3u];
+    if (scaled > 32767) {
+        return 32767;
+    }
+    if (scaled < -32768) {
+        return -32768;
+    }
+    return (int16_t)scaled;
+}
+
 int usb_build_30_report(const usb_sub_ctx_t *ctx, uint8_t out64[64])
 {
     int k;
@@ -254,15 +312,52 @@ int usb_build_30_report(const usb_sub_ctx_t *ctx, uint8_t out64[64])
     }
 #endif
     /* PC由来IMU (§5.13): validの間は最新1件を3スロットへ複製する
-     * (switch-pico実績方式)。無効時は下の静止値。 */
+     * (switch-pico実績方式)。無効時は下の静止値。
+     * Joy-R (role2) はIMU搭載向きの関係でY/Z軸が反転しているため、
+     * 送出時に反転する (hid-nintendo.c joycon_parse_imu_report準拠。
+     * 右はY/Z反転で左・ProConと一致)。-32768は32767へ飽和。
+     * role0/1は不変。 */
     if (ctx->imu_valid) {
         for (k = 0; k < 3; k++) {
             int base = 13 + k * 12;
             int j;
             for (j = 0; j < 6; j++) {
-                uint16_t u = (uint16_t)ctx->imu[j];
-                out64[base + j * 2] = (uint8_t)(u & 0xFFu);
-                out64[base + j * 2 + 1] = (uint8_t)((u >> 8) & 0xFFu);
+                int32_t v = (int32_t)ctx->imu[j];
+                int16_t out_v;
+                if (role == 2u) {
+                    /* Joy-R: IMU搭載向きの差でY/Z反転、続いて0x41の
+                     * 要求レンジへ換算 (±2000dps/±8G前提の生値)。
+                     * JOY_IMU_NEG_MODE は反転の組み合わせを選ぶ診断用:
+                     * 0=なし / 1=加速度+ジャイロ / 2=ジャイロのみ /
+                     * 3=加速度のみ。既定1 (カーネル準拠)。 */
+                    int negate = 0;
+#if JOY_IMU_NEG_MODE == 1
+                    negate = (j == 1 || j == 2 || j == 4 || j == 5);
+#elif JOY_IMU_NEG_MODE == 2
+                    negate = (j == 4 || j == 5);
+#elif JOY_IMU_NEG_MODE == 3
+                    negate = (j == 1 || j == 2);
+#endif
+                    if (negate) {
+                        v = -v;
+                    }
+                    if (j >= 3) {
+                        out_v = imu_scale_value(v, s_imu_gyro_sel, k_gyro_dps, 2000u);
+                    } else {
+                        out_v = imu_scale_value(v, s_imu_accel_sel, k_accel_g, 8u);
+                    }
+                } else if (v > 32767) {
+                    out_v = 32767;
+                } else if (v < -32768) {
+                    out_v = -32768;
+                } else {
+                    out_v = (int16_t)v;
+                }
+                {
+                    uint16_t u = (uint16_t)out_v;
+                    out64[base + j * 2] = (uint8_t)(u & 0xFFu);
+                    out64[base + j * 2 + 1] = (uint8_t)((u >> 8) & 0xFFu);
+                }
             }
         }
         return 64;
@@ -554,6 +649,17 @@ int usb_build_21_reply(const uint8_t *req, int req_len, uint8_t *out,
         case 0x30u:
         case 0x40u:
         case 0x48u:
+            out[13] = 0x80u;
+            out[14] = sub;
+            return 64;
+        case 0x41u:
+            /* IMU感度 (gyro, accel, gyro_perf, accel_filter)。ACK形は
+             * 従来 (default) と同一。先頭2引数だけ保持し、role2の0x30
+             * 出力レンジ換算に使う (role0/1は未使用=従来バイト不変)。 */
+            if (req_len >= 12) {
+                usb_imu_set_sensitivity(req[11],
+                                        (req_len >= 13) ? req[12] : 0u);
+            }
             out[13] = 0x80u;
             out[14] = sub;
             return 64;

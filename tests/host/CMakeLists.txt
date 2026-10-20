@@ -34,6 +34,27 @@ target_include_directories(test_usb PRIVATE
   ../../src/usb
 )
 
+# role2 のIMU反転モードを 1 (既定) と 2 (ジャイロのみ) の両方で検証する。
+# 同じソースを JOY_IMU_NEG_MODE 付きでビルドし、期待値を切り替える。
+foreach(neg_mode 1 2)
+  add_executable(test_joy_imu_neg_m${neg_mode}
+    test_joy_imu_neg.c
+    ../../src/proto/protocol.c
+    ../../src/proto/pack.c
+    ../../src/proto/spi.c
+    ../../src/proto/dispatch.c
+    ../../src/usb/usb_hid.c
+  )
+  target_include_directories(test_joy_imu_neg_m${neg_mode} PRIVATE
+    ../../src/proto
+    ../../src/usb
+  )
+  target_compile_definitions(test_joy_imu_neg_m${neg_mode} PRIVATE
+    JOY_IMU_NEG_MODE=${neg_mode}
+  )
+  add_test(NAME joy_imu_neg_m${neg_mode} COMMAND test_joy_imu_neg_m${neg_mode})
+endforeach()
+
 add_executable(test_config
   test_config.c
   ../../src/proto/protocol.c
