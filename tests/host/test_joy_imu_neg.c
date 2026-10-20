@@ -76,6 +76,39 @@ int main(void) {
     check(le16_eq(&rep[13 + 10], 300), "gz unchanged");
 #endif
 
+    /* 反転時の飽和: -32768 は反転軸なら 32767 へ。 */
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.role = 2u;
+    ctx.imu_valid = true;
+    ctx.imu[4] = (int16_t)0x8000;
+    check(usb_build_30_report(&ctx, rep) == 64, "sat builds 64B");
+#if JOY_IMU_NEG_MODE == 1 || JOY_IMU_NEG_MODE == 2
+    check(le16_eq(&rep[13 + 8], 32767), "gy -32768 saturates when negated");
+#else
+    check(le16_eq(&rep[13 + 8], -32768), "gy -32768 unchanged when not negated");
+#endif
+
+    /* 0x6080 6軸水平オフセット: Joy-Con R は Z=-4081 (0xF00F)。 */
+    {
+        uint8_t req[16];
+        uint8_t out[64];
+        memset(req, 0, sizeof(req));
+        req[0] = 0x01u;
+        req[10] = 0x10u;
+        req[11] = 0x80u;
+        req[12] = 0x60u;
+        req[15] = 6u;
+        memset(&ctx, 0, sizeof(ctx));
+        ctx.role = 2u;
+        check(usb_build_21_reply(req, 16, out, 64, &ctx) == 64, "spi 6080 R builds");
+        check(out[20 + 4] == 0x0Fu && out[20 + 5] == 0xF0u,
+              "R horizontal Z offset -4081");
+        ctx.role = 1u;
+        check(usb_build_21_reply(req, 16, out, 64, &ctx) == 64, "spi 6080 L builds");
+        check(out[20 + 4] == 0xF1u && out[20 + 5] == 0x0Fu,
+              "L horizontal Z offset +4081");
+    }
+
     /* role0はモードに関係なく無変換。 */
     memset(&ctx, 0, sizeof(ctx));
     ctx.role = 0u;

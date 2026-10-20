@@ -288,7 +288,8 @@ int main(void) {
             CHECK(rep[base + 4] == 0x00u && rep[base + 5] == 0x10u, "rest az 0x1000");
             CHECK(rep[base + 6] == 0x00u && rep[base + 10] == 0x00u, "rest gyro 0");
         }
-        /* Joy-RはY/Z反転 (hid-nintendo.c準拠)。Xは不変、無効時はゼロ。 */
+        /* Joy-R: X軸はモードに関係なく不変。反転の組み合わせは
+         * test_joy_imu_neg（モード別ターゲット）で検証する。 */
         memset(&ctx, 0, sizeof(ctx));
         ctx.role = 2u;
         ctx.imu_valid = true;
@@ -301,23 +302,10 @@ int main(void) {
         CHECK(usb_build_30_report(&ctx, rep) == 64, "JoyR builds 64B");
         for (k = 0; k < 3; k++) {
             int base = 13 + k * 12;
-            /* ax=1000 LE不変、ay=2000→-2000 (0xF830)、az=4096→-4096 (0xF000) */
             CHECK(rep[base + 0] == 0xE8u && rep[base + 1] == 0x03u, "JoyR ax 1000 LE");
-            CHECK(rep[base + 2] == 0x30u && rep[base + 3] == 0xF8u, "JoyR ay negated LE");
-            CHECK(rep[base + 4] == 0x00u && rep[base + 5] == 0xF0u, "JoyR az negated LE");
-            /* gx=100 LE不変、gy=-100→100、gz=300→-300 (0xFED4) */
             CHECK(rep[base + 6] == 0x64u && rep[base + 7] == 0x00u, "JoyR gx 100 LE");
-            CHECK(rep[base + 8] == 0x64u && rep[base + 9] == 0x00u, "JoyR gy negated LE");
-            CHECK(rep[base + 10] == 0xD4u && rep[base + 11] == 0xFEu, "JoyR gz negated LE");
         }
         CHECK(rep[12] == 0x00u, "JoyR vib stays 0x00");
-        /* -32768の反転は32767へ飽和。 */
-        memset(&ctx, 0, sizeof(ctx));
-        ctx.role = 2u;
-        ctx.imu_valid = true;
-        ctx.imu[1] = (int16_t)0x8000;
-        CHECK(usb_build_30_report(&ctx, rep) == 64, "JoyR sat builds 64B");
-        CHECK(rep[13 + 2] == 0xFFu && rep[13 + 3] == 0x7Fu, "JoyR -32768 saturates to 32767");
         memset(&ctx, 0, sizeof(ctx));
         ctx.role = 2u;
         {
