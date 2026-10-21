@@ -337,6 +337,9 @@ int usb_build_30_report(const usb_sub_ctx_t *ctx, uint8_t out64[64])
                     negate = (j == 4 || j == 5);
 #elif JOY_IMU_NEG_MODE == 3
                     negate = (j == 1 || j == 2);
+#elif JOY_IMU_NEG_MODE == 4
+                    /* Ry(180°): X,Z反転（加速度・ジャイロ共通） */
+                    negate = (j == 0 || j == 2 || j == 3 || j == 5);
 #endif
                     if (negate) {
                         v = -v;
@@ -499,6 +502,23 @@ static void neg_i16le(uint8_t *p)
     p[1] = (uint8_t)(((uint16_t)w >> 8) & 0xFFu);
 }
 
+/* 3軸ベクトル(3x int16-LE)を role2 の回転Rで回す。
+ *   モード1: Rx(180°) = Y,Z反転
+ *   モード4: Ry(180°) = X,Z反転（S5で鏡像だった場合の代替）
+ * モード2/3は非物理な診断用なので回さない。 */
+static void joy_rotate_vec(uint8_t *p)
+{
+#if JOY_IMU_NEG_MODE == 1
+    neg_i16le(&p[2]);
+    neg_i16le(&p[4]);
+#elif JOY_IMU_NEG_MODE == 4
+    neg_i16le(&p[0]);
+    neg_i16le(&p[4]);
+#else
+    (void)p;
+#endif
+}
+
 static int build_spi_response_procon(uint16_t addr, uint8_t want, uint8_t *out)
 {
     const spi_entry_t *hit;
@@ -594,12 +614,10 @@ static int build_spi_response_joy(uint16_t addr, uint8_t want, uint8_t *out,
     /* 6軸の工場キャリブ: 実測ProCon値を基本に、role2(mode1)はRで回す。 */
     if (addr == 0x6020u && want <= 24u) {
         memcpy(&out[20], SPI_6020_PROCON_MEASURED, want);
-#if JOY_IMU_NEG_MODE == 1
+#if JOY_IMU_NEG_MODE == 1 || JOY_IMU_NEG_MODE == 4
         if (role == 2u) {
-            neg_i16le(&out[20 + 2]);  /* acc origin Y */
-            neg_i16le(&out[20 + 4]);  /* acc origin Z */
-            neg_i16le(&out[20 + 14]); /* gyro origin Y */
-            neg_i16le(&out[20 + 16]); /* gyro origin Z */
+            joy_rotate_vec(&out[20]);      /* acc origin */
+            joy_rotate_vec(&out[20 + 12]); /* gyro origin */
         }
 #endif
         return 64;
@@ -619,10 +637,9 @@ static int build_spi_response_joy(uint16_t addr, uint8_t want, uint8_t *out,
             memset(&out[20], 0, want);
         }
         memcpy(off, SPI_6080_PROCON_MEASURED, 6);
-#if JOY_IMU_NEG_MODE == 1
+#if JOY_IMU_NEG_MODE == 1 || JOY_IMU_NEG_MODE == 4
         if (role == 2u) {
-            neg_i16le(&off[2]); /* Y */
-            neg_i16le(&off[4]); /* Z */
+            joy_rotate_vec(off);
         }
 #endif
         for (i = 0u; i < 6u; i++) {

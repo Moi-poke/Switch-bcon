@@ -46,9 +46,14 @@ int main(void) {
     printf("[joy imu neg] mode=%d\n", JOY_IMU_NEG_MODE);
     check(usb_build_30_report(&ctx, rep) == 64, "builds 64B");
 
-    /* X軸は常に不変。 */
+#if JOY_IMU_NEG_MODE == 4
+    /* Ry(180°) は X も反転する。 */
+    check(le16_eq(&rep[13 + 0], -1000), "ax negated (Ry180)");
+    check(le16_eq(&rep[13 + 6], -100), "gx negated (Ry180)");
+#else
     check(le16_eq(&rep[13 + 0], 1000), "ax unchanged");
     check(le16_eq(&rep[13 + 6], 100), "gx unchanged");
+#endif
 
     /* 3スロットすべて同一。 */
     check(memcmp(&rep[13], &rep[25], 12) == 0, "slot0==slot1");
@@ -69,6 +74,11 @@ int main(void) {
     check(le16_eq(&rep[13 + 4], -4096), "az negated");
     check(le16_eq(&rep[13 + 8], 200), "gy unchanged (accel-only mode)");
     check(le16_eq(&rep[13 + 10], 300), "gz unchanged (accel-only mode)");
+#elif JOY_IMU_NEG_MODE == 4
+    check(le16_eq(&rep[13 + 2], 2000), "ay unchanged (Ry180)");
+    check(le16_eq(&rep[13 + 4], -4096), "az negated (Ry180)");
+    check(le16_eq(&rep[13 + 8], 200), "gy unchanged (Ry180)");
+    check(le16_eq(&rep[13 + 10], -300), "gz negated (Ry180)");
 #else
     check(le16_eq(&rep[13 + 2], 2000), "ay unchanged");
     check(le16_eq(&rep[13 + 4], 4096), "az unchanged");
@@ -105,12 +115,19 @@ int main(void) {
 #if JOY_IMU_NEG_MODE == 1 || JOY_IMU_NEG_MODE == 3
         check(out[20 + 4] == 0x3Au && out[20 + 5] == 0xF0u,
               "R horizontal Z offset -4038 (R frame, measured)");
+        check(out[20 + 0] == 0x50u && out[20 + 1] == 0xFDu,
+              "R horizontal X offset -688 (unchanged by Rx180)");
+#elif JOY_IMU_NEG_MODE == 4
+        check(out[20 + 4] == 0x3Au && out[20 + 5] == 0xF0u,
+              "R horizontal Z offset -4038 (Ry180)");
+        check(out[20 + 0] == 0xB0u && out[20 + 1] == 0x02u,
+              "R horizontal X offset +688 (negated by Ry180)");
 #else
         check(out[20 + 4] == 0xC6u && out[20 + 5] == 0x0Fu,
               "R horizontal Z offset +4038 (ProCon frame, measured)");
-#endif
         check(out[20 + 0] == 0x50u && out[20 + 1] == 0xFDu,
-              "R horizontal X offset -688 (unchanged by Rx180)");
+              "R horizontal X offset -688 (unchanged)");
+#endif
         ctx.role = 1u;
         check(usb_build_21_reply(req, 16, out, 64, &ctx) == 64, "spi 6080 L builds");
         check(out[20 + 4] == 0xC6u && out[20 + 5] == 0x0Fu,
