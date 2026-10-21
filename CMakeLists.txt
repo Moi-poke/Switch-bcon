@@ -46,6 +46,9 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
   #   2=ジャイロのみ / 3=加速度のみ
   # 実機ProConと同一バイトでJoy役を出し、コンソール側の扱いを切り分ける。
   set(JOY_IMU_NEG_MODE 1 CACHE STRING "role2 IMU Y/Z negation mode (0..3)")
+  # JOY_USB_PID_2007: 診断用。role2のUSB PIDを0x2007にしてWebHID等に
+  # Joy-Con R として認識させる（既定は全role 0x2009）。
+  set(JOY_USB_PID_2007 0 CACHE STRING "role2 USB PID 0x2007 for WebHID tests")
   set(IMU_DUMMY_INTERVAL_MS 8 CACHE STRING "Dummy USB report interval ms (ON only)")
   set(IMU_DUMMY_MODE 1 CACHE STRING "Dummy mode (ON only: 0=SINE, 1=STEP)")
   set(IMU_DUMMY_GYRO_AXIS 2 CACHE STRING "Dummy gyro axis 0..2 (ON only)")
@@ -169,7 +172,8 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
     WIRED_DEFAULT=${WIRED_DEFAULT}
     POKECON_INPUT=${POKECON_INPUT}
     IMU_DUMMY=${IMU_DUMMY}
-    JOY_IMU_NO_NEGATE=${JOY_IMU_NO_NEGATE}
+    JOY_IMU_NEG_MODE=${JOY_IMU_NEG_MODE}
+    JOY_USB_PID_2007=${JOY_USB_PID_2007}
   )
 
   # Phase 0: ON時のみ実験パラメータとimu_dummy.cを足す。libmはSINE用。

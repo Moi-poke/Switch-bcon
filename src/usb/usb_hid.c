@@ -59,7 +59,20 @@ static uint8_t s_usb_role = 0u;
  * (2006/2007・Joy-Con 文字列) は無線用プレースホルダとして残し、
  * USB 列挙には使わない。OOB (>2) は従来通り ProCon 値。
  * 関数を呼ばず値だけ写す理由は usb_hid.h の usb_set_role 註記を参照。 */
-static const uint16_t USB_PID_BY_ROLE[3] = { 0x2009u, 0x2009u, 0x2009u };
+/* JOY_USB_PID_2007=1 は診断用: role2 のUSB PIDを本物のJoy-Con Rと同じ
+ * 0x2007 にして、WebHID等の外部実装に Joy-Con R として認識させる。
+ * 既定は従来どおり全role 0x2009（PABotBase2 実測の列挙に合わせる）。 */
+#ifndef JOY_USB_PID_2007
+#define JOY_USB_PID_2007 0
+#endif
+static const uint16_t USB_PID_BY_ROLE[3] = {
+    0x2009u, 0x2009u,
+#if JOY_USB_PID_2007
+    0x2007u
+#else
+    0x2009u
+#endif
+};
 static const char *const USB_PRODUCT_BY_ROLE[3] = {
     "Pro Controller", "Pro Controller", "Pro Controller",
 };
