@@ -258,8 +258,8 @@ int main(void) {
               "T-REBOOT 0x3B=T_RECONNECT LEN0 (append-only)");
         CHECK(T_IMU_SAMPLE == 0x04u && proto_expected_len(T_IMU_SAMPLE) == 12,
               "T-REBOOT 0x04=T_IMU_SAMPLE LEN12 (append-only)");
-        CHECK(FW_MAJOR == 0u && FW_MINOR == 8u,
-              "T-REBOOT FW bumped to 0.8 with the new TYPE");
+        CHECK(FW_MAJOR == 0u && FW_MINOR == 9u,
+              "T-REBOOT FW bumped to 0.9 with the new TYPE");
     }
 
     printf("[T-PROCON-GATE] role0 regression gate (passthrough)\n");
@@ -1038,9 +1038,10 @@ int main(void) {
         req[11] = 0x20u; req[12] = 0x60u;
         req[15] = 24u;
         n = usb_build_21_reply(req, 16, out, 64, &ctx);
+        /* 実測ProCon値（gyro_scale=15335=0x3BE7, origin非零）を返す。 */
         CHECK(n == 64 && out[13] == 0x90u && out[14] == 0x10u &&
-              out[19] == 24u && memcmp(&out[20], SPI_6020_CAL, 24) == 0,
-              "T-SPI-JOY-TABLE 6020 want24 table bytes");
+              out[19] == 24u && out[38] == 0xE7u && out[39] == 0x3Bu,
+              "T-SPI-JOY-TABLE 6020 want24 measured gyro scale");
         /* 0x603D want18 == SPI_603D first 18 bytes. */
         memset(req, 0, sizeof(req));
         req[0] = 0x01u; req[10] = 0x10u;
@@ -1048,8 +1049,8 @@ int main(void) {
         req[15] = 18u;
         n = usb_build_21_reply(req, 16, out, 64, &ctx);
         CHECK(n == 64 && out[13] == 0x90u && out[14] == 0x10u &&
-              out[19] == 18u && memcmp(&out[20], SPI_603D, 18) == 0,
-              "T-SPI-JOY-TABLE 603D want18 table bytes");
+              out[19] == 18u && out[20] == 0xF3u && out[21] == 0x55u,
+              "T-SPI-JOY-TABLE 603D want18 measured stick cal");
         /* 0x6080 want6 == SPI_6080 first 6 bytes. */
         memset(req, 0, sizeof(req));
         req[0] = 0x01u; req[10] = 0x10u;
@@ -1057,8 +1058,9 @@ int main(void) {
         req[15] = 6u;
         n = usb_build_21_reply(req, 16, out, 64, &ctx);
         CHECK(n == 64 && out[13] == 0x90u && out[14] == 0x10u &&
-              out[19] == 6u && memcmp(&out[20], SPI_6080, 6) == 0,
-              "T-SPI-JOY-TABLE 6080 want6 table bytes");
+              out[19] == 6u && out[20] == 0x50u && out[21] == 0xFDu &&
+              out[24] == 0xC6u && out[25] == 0x0Fu,
+              "T-SPI-JOY-TABLE 6080 want6 measured offset (role1)");
     }
 
     printf("[T-SPI-PROCON-GOLDEN] ProCon SPI pinned (must PASS now)\n");

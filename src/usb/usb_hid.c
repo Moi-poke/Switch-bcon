@@ -475,6 +475,29 @@ static const uint8_t SPI_6020_PROCON_MEASURED[24] = {
 static const uint8_t SPI_6080_PROCON_MEASURED[6] = {
     0x50, 0xFD, 0x00, 0x00, 0xC6, 0x0F
 };
+/* スティック工場キャリブ実測 (0x603D, 18B)。PCはProConの生値を送るため、
+ * ProCon役/Joy役ともこの値を返すのが整合的。 */
+static const uint8_t SPI_603D_PROCON_MEASURED[18] = {
+    0xF3, 0x55, 0x63, 0x75, 0x77, 0x7F, 0x5C, 0x55, 0x5C,
+    0xE0, 0xC7, 0x7E, 0xDE, 0x15, 0x61, 0xC0, 0x95, 0x61
+};
+
+/* int16-LE の符号反転（-32768は32767へ飽和）。 */
+static void neg_i16le(uint8_t *p)
+{
+    int32_t v = (int32_t)(int16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
+    int16_t w;
+    v = -v;
+    if (v > 32767) {
+        v = 32767;
+    }
+    if (v < -32768) {
+        v = -32768;
+    }
+    w = (int16_t)v;
+    p[0] = (uint8_t)((uint16_t)w & 0xFFu);
+    p[1] = (uint8_t)(((uint16_t)w >> 8) & 0xFFu);
+}
 
 static int build_spi_response_procon(uint16_t addr, uint8_t want, uint8_t *out)
 {
@@ -537,25 +560,11 @@ static int build_spi_response_procon(uint16_t addr, uint8_t want, uint8_t *out)
 static int build_spi_response_joy(uint16_t addr, uint8_t want, uint8_t *out,
                                   uint8_t role)
 {
-    /* Joy-Con R の6軸水平オフセット Z (0x6084-0x6085) は -4081 (0xF00F)。
-     * L/ProCon は +4081。Rフレームの加速度 (Z=負) に L用の +4081 を引くと
-     * 約2Gずれて姿勢が破綻するため、role2 では要求範囲に含まれるときだけ
-     * 差し替える。 */
-    static const uint8_t k_horiz_z_r[2] = { 0x0Fu, 0xF0u }; /* -4081 LE */
-    uint16_t a;
-
-    /* 要求範囲が 0x6084-0x6085 を含むならZオフセットを上書きする。 */
-    #define JOY_PATCH_HORIZ()                                                     \
-        do {                                                                      \
-            if (role == 2u &&                                                     \
-                (JOY_IMU_NEG_MODE == 1 || JOY_IMU_NEG_MODE == 3)) {               \
-                for (a = 0x6084u; a <= 0x6085u; a++) {                            \
-                    if (a >= addr && a < (uint32_t)addr + (uint32_t)want) {        \
-                        out[20 + (a - addr)] = k_horiz_z_r[a - 0x6084u];          \
-                    }                                                             \
-                }                                                                 \
-            }                                                                     \
-        } while (0)
+    /* PCの生値は実ProConのもの。Joy役でも較正は「ProConの実測値を、
+     * そのroleの変換Rで回したもの」を返すのが整合的。
+     * R = Rx(180°)（Y,Z反転。0x6080の X が L/R で同値、Z だけ反転、
+     * hid-nintendo も右Joy-ConでY,Z反転）。原点・水平オフセットも回す。
+     * 診断用の他モード(0/2/3)は物理的に不整合なので、回転はモード1のみ。 */
 
     if (addr == 0x6050u) {
         uint8_t n = (want > 13u) ? 13u : want;
@@ -581,6 +590,49 @@ static int build_spi_response_joy(uint16_t addr, uint8_t want, uint8_t *out,
         memset(&out[20], 0xFF, want);
         return 64;
     }
+
+    /* 6軸の工場キャリブ: 実測ProCon値を基本に、role2(mode1)はRで回す。 */
+    if (addr == 0x6020u && want <= 24u) {
+        memcpy(&out[20], SPI_6020_PROCON_MEASURED, want);
+#if JOY_IMU_NEG_MODE == 1
+        if (role == 2u) {
+            neg_i16le(&out[20 + 2]);  /* acc origin Y */
+            neg_i16le(&out[20 + 4]);  /* acc origin Z */
+            neg_i16le(&out[20 + 14]); /* gyro origin Y */
+            neg_i16le(&out[20 + 16]); /* gyro origin Z */
+        }
+#endif
+        return 64;
+    }
+    if (addr == 0x603Du && want <= 18u) {
+        memcpy(&out[20], SPI_603D_PROCON_MEASURED, want);
+        return 64;
+    }
+    /* 0x6080 帯: 先頭6B（水平オフセット）を実測で置換し、role2はRで回す。 */
+    if (addr <= 0x6085u && (uint32_t)addr + (uint32_t)want > 0x6080u) {
+        uint8_t off[6];
+        const spi_entry_t *hit2 = spi_find(addr);
+        uint16_t i;
+        if (hit2 != NULL && want <= hit2->size) {
+            memcpy(&out[20], hit2->data, want);
+        } else {
+            memset(&out[20], 0, want);
+        }
+        memcpy(off, SPI_6080_PROCON_MEASURED, 6);
+#if JOY_IMU_NEG_MODE == 1
+        if (role == 2u) {
+            neg_i16le(&off[2]); /* Y */
+            neg_i16le(&off[4]); /* Z */
+        }
+#endif
+        for (i = 0u; i < 6u; i++) {
+            uint32_t a = 0x6080u + i;
+            if (a >= addr && a < (uint32_t)addr + (uint32_t)want) {
+                out[20 + (a - addr)] = off[i];
+            }
+        }
+        return 64;
+    }
     {
         /* Change A: 既知 cal 番地は表値を出す (BT Joy は blank のまま。
          * 上の divergence 註記を参照)。want>size は表の断片を出さず
@@ -588,7 +640,6 @@ static int build_spi_response_joy(uint16_t addr, uint8_t want, uint8_t *out,
         const spi_entry_t *hit = spi_find(addr);
         if (hit != NULL && want <= hit->size) {
             memcpy(&out[20], hit->data, want);
-            JOY_PATCH_HORIZ();
             return 64;
         }
     }
@@ -608,7 +659,6 @@ static int build_spi_response_joy(uint16_t addr, uint8_t want, uint8_t *out,
         if (want > blen) {
             memset(&out[20 + blen], 0, (size_t)(want - blen));
         }
-        JOY_PATCH_HORIZ();
         return 64;
     }
     /* USB transport-default: 0x6000 未満・0x9000 以上・straddle のいずれも

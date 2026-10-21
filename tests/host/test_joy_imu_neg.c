@@ -103,16 +103,18 @@ int main(void) {
         check(usb_build_21_reply(req, 16, out, 64, &ctx) == 64, "spi 6080 R builds");
         /* オフセット符号は加速度フレームに合わせる: 反転モードのみ -4081。 */
 #if JOY_IMU_NEG_MODE == 1 || JOY_IMU_NEG_MODE == 3
-        check(out[20 + 4] == 0x0Fu && out[20 + 5] == 0xF0u,
-              "R horizontal Z offset -4081 (R frame)");
+        check(out[20 + 4] == 0x3Au && out[20 + 5] == 0xF0u,
+              "R horizontal Z offset -4038 (R frame, measured)");
 #else
-        check(out[20 + 4] == 0xF1u && out[20 + 5] == 0x0Fu,
-              "R horizontal Z offset +4081 (ProCon frame)");
+        check(out[20 + 4] == 0xC6u && out[20 + 5] == 0x0Fu,
+              "R horizontal Z offset +4038 (ProCon frame, measured)");
 #endif
+        check(out[20 + 0] == 0x50u && out[20 + 1] == 0xFDu,
+              "R horizontal X offset -688 (unchanged by Rx180)");
         ctx.role = 1u;
         check(usb_build_21_reply(req, 16, out, 64, &ctx) == 64, "spi 6080 L builds");
-        check(out[20 + 4] == 0xF1u && out[20 + 5] == 0x0Fu,
-              "L horizontal Z offset +4081");
+        check(out[20 + 4] == 0xC6u && out[20 + 5] == 0x0Fu,
+              "L horizontal Z offset +4038 (measured)");
     }
 
     /* role0はモードに関係なく無変換。 */
