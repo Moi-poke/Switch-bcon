@@ -79,7 +79,7 @@ int main(void) {
     {
         CHECK(proto_expected_len(T_PLAYER_INFO) == 2, "PLAYER_INFO LEN=2");
         CHECK(PROTO_VER == 4, "PROTO_VER=4");
-        CHECK(FW_MINOR == 7u, "FW_MINOR==7 (T_IMU_SAMPLE added)");
+        CHECK(FW_MINOR == 8u, "FW_MINOR==8 (T_IMU_SAMPLE added)");
     }
 
     printf("\nRESULT: %s (%d failures)\n", fails == 0 ? "ALL PASS" : "HAS FAILURES", fails);

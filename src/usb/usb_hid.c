@@ -461,6 +461,21 @@ static void build_device_info_response(uint8_t *out, uint8_t role,
 /* ProCon SPI 応答 (Golden で pin 留め。バイト同一を保つ)。
  * header framing (out[13..19]) 済みを前提とし、out[20..] を埋める。
  * 成功時 64、miss 時 0。 */
+/* 実ProConの工場キャリブ実測（tools/procon_spi.py、2026-10-21）。
+ * 共有表の 0x6020 は 2wiCC 由来の近似（gyro_scale=13371）で、実機は
+ * 15335・原点も非零だった。PCの生値はこの個体のものであるため、
+ * ProCon役では実測値で答えないとコンソール側の換算がずれる
+ * （gyro は約15%大きく解釈され、原点ぶんのバイアスも残る）。 */
+static const uint8_t SPI_6020_PROCON_MEASURED[24] = {
+    0x44, 0x00, 0x90, 0xFF, 0x82, 0x02, 0x00, 0x40,
+    0x00, 0x40, 0x00, 0x40, 0xEB, 0xFF, 0xF6, 0xFF,
+    0x04, 0x00, 0xE7, 0x3B, 0xE7, 0x3B, 0xE7, 0x3B
+};
+/* 6軸水平オフセット実測 (X=-688, Y=0, Z=4038)。 */
+static const uint8_t SPI_6080_PROCON_MEASURED[6] = {
+    0x50, 0xFD, 0x00, 0x00, 0xC6, 0x0F
+};
+
 static int build_spi_response_procon(uint16_t addr, uint8_t want, uint8_t *out)
 {
     const spi_entry_t *hit;
@@ -471,8 +486,20 @@ static int build_spi_response_procon(uint16_t addr, uint8_t want, uint8_t *out)
          * 2wiCC も serial none (0xFF) で運用している。
          * BT 側の表は変えない (Switch 1 無線は現状で動作中のため)。 */
         memset(&out[20], 0xFF, want);
+    } else if (addr == 0x6020u && want <= 24u) {
+        memcpy(&out[20], SPI_6020_PROCON_MEASURED, want);
     } else if (hit != NULL && want <= hit->size) {
         memcpy(&out[20], hit->data, want);
+        /* 0x6080 は先頭6B（水平オフセット）だけ実測値で差し替える。 */
+        if (addr <= 0x6080u && (uint32_t)addr + want > 0x6080u) {
+            uint32_t i;
+            for (i = 0u; i < 6u; i++) {
+                uint32_t a = 0x6080u + i;
+                if (a >= addr && a < (uint32_t)addr + want) {
+                    out[20 + (a - addr)] = SPI_6080_PROCON_MEASURED[i];
+                }
+            }
+        }
     } else if (addr >= 0x6000u && addr < 0x6100u &&
                (uint32_t)addr + want <= 0x6100u) {
         /* 表にない 0x60xx は 0xFF 埋めで答える (2wiCC 通り)。
