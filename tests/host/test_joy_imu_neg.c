@@ -113,25 +113,25 @@ int main(void) {
         check(usb_build_21_reply(req, 16, out, 64, &ctx) == 64, "spi 6080 R builds");
         /* オフセット符号は加速度フレームに合わせる: 反転モードのみ -4081。 */
 #if JOY_IMU_NEG_MODE == 1 || JOY_IMU_NEG_MODE == 3
-        check(out[20 + 4] == 0x3Au && out[20 + 5] == 0xF0u,
-              "R horizontal Z offset -4038 (R frame, measured)");
-        check(out[20 + 0] == 0x50u && out[20 + 1] == 0xFDu,
-              "R horizontal X offset -688 (unchanged by Rx180)");
+        check(out[20 + 4] == 0x0Fu && out[20 + 5] == 0xF0u,
+              "R horizontal Z offset -4081 (Joy R)");
+        check(out[20 + 0] == 0x5Eu && out[20 + 1] == 0x01u,
+              "R horizontal X offset 350 (unchanged by Rx180)");
 #elif JOY_IMU_NEG_MODE == 4
-        check(out[20 + 4] == 0x3Au && out[20 + 5] == 0xF0u,
-              "R horizontal Z offset -4038 (Ry180)");
-        check(out[20 + 0] == 0xB0u && out[20 + 1] == 0x02u,
-              "R horizontal X offset +688 (negated by Ry180)");
+        check(out[20 + 4] == 0x0Fu && out[20 + 5] == 0xF0u,
+              "R horizontal Z offset -4081 (Ry180)");
+        check(out[20 + 0] == 0xA2u && out[20 + 1] == 0xFEu,
+              "R horizontal X offset -350 (negated by Ry180)");
 #else
-        check(out[20 + 4] == 0xC6u && out[20 + 5] == 0x0Fu,
-              "R horizontal Z offset +4038 (ProCon frame, measured)");
-        check(out[20 + 0] == 0x50u && out[20 + 1] == 0xFDu,
-              "R horizontal X offset -688 (unchanged)");
+        check(out[20 + 4] == 0xF1u && out[20 + 5] == 0x0Fu,
+              "R horizontal Z offset +4081 (L/ProCon frame)");
+        check(out[20 + 0] == 0x5Eu && out[20 + 1] == 0x01u,
+              "R horizontal X offset 350 (unchanged)");
 #endif
         ctx.role = 1u;
         check(usb_build_21_reply(req, 16, out, 64, &ctx) == 64, "spi 6080 L builds");
-        check(out[20 + 4] == 0xC6u && out[20 + 5] == 0x0Fu,
-              "L horizontal Z offset +4038 (measured)");
+        check(out[20 + 4] == 0xF1u && out[20 + 5] == 0x0Fu,
+              "L horizontal Z offset +4081 (Joy L)");
     }
 
     /* role0はモードに関係なく無変換。 */

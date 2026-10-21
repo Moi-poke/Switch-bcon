@@ -478,6 +478,11 @@ static const uint8_t SPI_6020_PROCON_MEASURED[24] = {
 static const uint8_t SPI_6080_PROCON_MEASURED[6] = {
     0x50, 0xFD, 0x00, 0x00, 0xC6, 0x0F
 };
+/* Joy-Conの6軸水平オフセット基準値 (L: X=350, Z=+4081)。
+ * Joy-Con (R) は Z=-4081（原文表）。role2 は下の joy_rotate_vec で回す。 */
+static const uint8_t SPI_6080_JOY_BASE[6] = {
+    0x5E, 0x01, 0x00, 0x00, 0xF1, 0x0F
+};
 /* スティック工場キャリブ実測 (0x603D, 18B)。PCはProConの生値を送るため、
  * ProCon役/Joy役ともこの値を返すのが整合的。 */
 static const uint8_t SPI_603D_PROCON_MEASURED[18] = {
@@ -636,7 +641,10 @@ static int build_spi_response_joy(uint16_t addr, uint8_t want, uint8_t *out,
         } else {
             memset(&out[20], 0, want);
         }
-        memcpy(off, SPI_6080_PROCON_MEASURED, 6);
+        /* Joy役は本物のJoy-Conの値（L基準）を返し、role2はRで回す。
+         * ProConのオフセットを流用すると、コンソールがJoy用SPIとして
+         * 読む値が本物と食い違う。 */
+        memcpy(off, SPI_6080_JOY_BASE, 6);
 #if JOY_IMU_NEG_MODE == 1 || JOY_IMU_NEG_MODE == 4
         if (role == 2u) {
             joy_rotate_vec(off);

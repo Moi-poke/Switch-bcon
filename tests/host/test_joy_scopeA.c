@@ -258,8 +258,8 @@ int main(void) {
               "T-REBOOT 0x3B=T_RECONNECT LEN0 (append-only)");
         CHECK(T_IMU_SAMPLE == 0x04u && proto_expected_len(T_IMU_SAMPLE) == 12,
               "T-REBOOT 0x04=T_IMU_SAMPLE LEN12 (append-only)");
-        CHECK(FW_MAJOR == 0u && FW_MINOR == 10u,
-              "T-REBOOT FW bumped to 0.10 with the new TYPE");
+        CHECK(FW_MAJOR == 0u && FW_MINOR == 11u,
+              "T-REBOOT FW bumped to 0.11 with the new TYPE");
     }
 
     printf("[T-PROCON-GATE] role0 regression gate (passthrough)\n");
@@ -1057,10 +1057,11 @@ int main(void) {
         req[11] = 0x80u; req[12] = 0x60u;
         req[15] = 6u;
         n = usb_build_21_reply(req, 16, out, 64, &ctx);
+        /* Joy-Con L の原文値 (X=350, Z=+4081)。 */
         CHECK(n == 64 && out[13] == 0x90u && out[14] == 0x10u &&
-              out[19] == 6u && out[20] == 0x50u && out[21] == 0xFDu &&
-              out[24] == 0xC6u && out[25] == 0x0Fu,
-              "T-SPI-JOY-TABLE 6080 want6 measured offset (role1)");
+              out[19] == 6u && out[20] == 0x5Eu && out[21] == 0x01u &&
+              out[24] == 0xF1u && out[25] == 0x0Fu,
+              "T-SPI-JOY-TABLE 6080 want6 Joy L offset");
     }
 
     printf("[T-SPI-PROCON-GOLDEN] ProCon SPI pinned (must PASS now)\n");
