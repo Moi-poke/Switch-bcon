@@ -89,6 +89,8 @@ typedef struct {
     // Core1高速路がpush、Core0がUSB 0x30生成時に読む。timeout (§5.13) は
     // Core0が imu_frames の停滞で判定する (STATEのtimeout-neutralとは独立)。
     int16_t imu[6];
+    int16_t imu_hist[3][6]; // 直近3サンプル ([imu_frames%3] が最新)
+    uint8_t imu_hist_n;     // 有効サンプル数 (0..3)
     uint32_t imu_frames;  // 適用したIMU_SAMPLE数
     uint8_t  last_seq;
     uint8_t  last_type;
@@ -134,6 +136,10 @@ uint8_t bcon_mac[6]; // 応答順 (初期化で反転済み。BT addrと同一�
 // 最新IMU (poll_tickが共有imuからtimeout付き転記。USB 0x30生成が読む)。
 // valid=false の間はUSB側が静止値 (§12) を使う。BTは使わない (USB有線のみ)。
 int16_t bcon_imu[6];
+/* 0x30の3スロット用（古い順）。PCの0x30は5ms間隔の3サンプルを持つので、
+ * それを捨てずに3スロットへ順に載せる。 */
+int16_t bcon_imu3[3][6];
+bool bcon_imu3_valid;
 bool bcon_imu_valid;
 // 有線USB側の0x40 IMU有効化受信 (usb_wired.cが設定。PLAYER_INFO bit0へOR)。
 bool bcon_wired_imu;
@@ -386,9 +392,17 @@ static void bcon_frame_cb(uint8_t type, const uint8_t *p, uint8_t len,
         // inboxへは送らない (200Hzのため。Core0は共有imuを直接読む)。
         if (trusted && g_s.state_accept && p != NULL) {
             int k;
-            g_s.imu_frames++;
-            for (k = 0; k < 6; k++) {
-                g_s.imu[k] = (int16_t)(p[k * 2] | ((uint16_t)p[k * 2 + 1] << 8));
+            {
+                uint8_t pos = (uint8_t)(g_s.imu_frames % 3u);
+                for (k = 0; k < 6; k++) {
+                    int16_t v = (int16_t)(p[k * 2] | ((uint16_t)p[k * 2 + 1] << 8));
+                    g_s.imu[k] = v;
+                    g_s.imu_hist[pos][k] = v;
+                }
+                g_s.imu_frames++;
+                if (g_s.imu_hist_n < 3u) {
+                    g_s.imu_hist_n++;
+                }
             }
         }
     } else if (type == T_NEUTRAL && len == 0) {
@@ -456,9 +470,17 @@ static void cdc_frame_cb(uint8_t type, const uint8_t *p, uint8_t len,
         // IMU生値 (§5.13)。UART路と同形 (CDC路はstate_acceptのみ見る)。
         if (g_s.state_accept && p != NULL) {
             int k;
-            g_s.imu_frames++;
-            for (k = 0; k < 6; k++) {
-                g_s.imu[k] = (int16_t)(p[k * 2] | ((uint16_t)p[k * 2 + 1] << 8));
+            {
+                uint8_t pos = (uint8_t)(g_s.imu_frames % 3u);
+                for (k = 0; k < 6; k++) {
+                    int16_t v = (int16_t)(p[k * 2] | ((uint16_t)p[k * 2 + 1] << 8));
+                    g_s.imu[k] = v;
+                    g_s.imu_hist[pos][k] = v;
+                }
+                g_s.imu_frames++;
+                if (g_s.imu_hist_n < 3u) {
+                    g_s.imu_hist_n++;
+                }
             }
         }
     } else if (type == T_NEUTRAL && len == 0) {
@@ -1457,16 +1479,45 @@ static void poll_tick(uint32_t now) {
             bcon_imu[k] = cp.imu[k];
         }
         bcon_imu_valid = true;
+        if (cp.imu_hist_n >= 3u) {
+            uint8_t newest = (uint8_t)((cp.imu_frames - 1u) % 3u);
+            for (k = 0; k < 3; k++) {
+                uint8_t idx = (uint8_t)((newest + 1u + (uint8_t)k) % 3u);
+                memcpy(bcon_imu3[k], cp.imu_hist[idx], sizeof(bcon_imu3[k]));
+            }
+            bcon_imu3_valid = true;
+        } else {
+            /* 履歴不足時は最新値の複製（従来互換）。 */
+            for (k = 0; k < 3; k++) {
+                memcpy(bcon_imu3[k], cp.imu, sizeof(bcon_imu3[k]));
+            }
+            bcon_imu3_valid = true;
+        }
     } else if (bcon_imu_valid &&
                (int32_t)(now - s_last_imu_ms) >= (int32_t)IMU_STATIC_MS) {
+        int k;
         bcon_imu[0] = 0;
         bcon_imu[1] = 0;
         bcon_imu[2] = 0x1000;
         bcon_imu[3] = 0;
         bcon_imu[4] = 0;
         bcon_imu[5] = 0;
+        for (k = 0; k < 3; k++) {
+            bcon_imu3[k][0] = 0;
+            bcon_imu3[k][1] = 0;
+            bcon_imu3[k][2] = 0x1000;
+            bcon_imu3[k][3] = 0;
+            bcon_imu3[k][4] = 0;
+            bcon_imu3[k][5] = 0;
+        }
+        for (k = 0; k < 3; k++) {
+            bcon_imu3[k][3] = 0;
+            bcon_imu3[k][4] = 0;
+            bcon_imu3[k][5] = 0;
+        }
     } else if (bcon_imu_valid &&
                (int32_t)(now - s_last_imu_ms) >= (int32_t)IMU_GYRO_ZERO_MS) {
+        int k;
         bcon_imu[3] = 0;
         bcon_imu[4] = 0;
         bcon_imu[5] = 0;

@@ -98,6 +98,27 @@ int main(void) {
     check(le16_eq(&rep[13 + 8], -32768), "gy -32768 unchanged when not negated");
 #endif
 
+    /* 3サンプル経路: imu3_valid のとき各スロットが別値になる。 */
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.role = 2u;
+    ctx.imu_valid = true;
+    ctx.imu3_valid = true;
+    usb_imu_set_sensitivity(3u, 0u); /* 既定レンジへ戻す（前段の影響を断つ） */
+    for (int k = 0; k < 3; k++) {
+        ctx.imu3[k][0] = (int16_t)(10 + k);
+        ctx.imu3[k][3] = (int16_t)(100 + k);
+    }
+    check(usb_build_30_report(&ctx, rep) == 64, "imu3 builds 64B");
+#if JOY_IMU_NEG_MODE == 4
+    check(le16_eq(&rep[13 + 0], -10), "slot0 uses imu3[0] (ax negated)");
+    check(le16_eq(&rep[25 + 0], -11), "slot1 uses imu3[1] (ax negated)");
+    check(le16_eq(&rep[37 + 0], -12), "slot2 uses imu3[2] (ax negated)");
+#else
+    check(le16_eq(&rep[13 + 0], 10), "slot0 uses imu3[0]");
+    check(le16_eq(&rep[25 + 0], 11), "slot1 uses imu3[1]");
+    check(le16_eq(&rep[37 + 0], 12), "slot2 uses imu3[2]");
+#endif
+
     /* 0x6080 6軸水平オフセット: Joy-Con R は Z=-4081 (0xF00F)。 */
     {
         uint8_t req[16];

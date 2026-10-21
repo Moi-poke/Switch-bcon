@@ -334,8 +334,9 @@ int usb_build_30_report(const usb_sub_ctx_t *ctx, uint8_t out64[64])
         for (k = 0; k < 3; k++) {
             int base = 13 + k * 12;
             int j;
+            const int16_t *src = ctx->imu3_valid ? ctx->imu3[k] : ctx->imu;
             for (j = 0; j < 6; j++) {
-                int32_t v = (int32_t)ctx->imu[j];
+                int32_t v = (int32_t)src[j];
                 int16_t out_v;
                 if (role == 2u) {
                     /* Joy-R: IMU搭載向きの差でY/Z反転、続いて0x41の
@@ -688,6 +689,12 @@ static int build_spi_response_joy(uint16_t addr, uint8_t want, uint8_t *out,
         return 64;
     }
     if (addr >= 0x6000u && addr < 0x9000u && want <= 0x9000u - addr) {
+        /* 0x8010-0x803F はユーザー較正領域。実機の未較正個体は 0xFF で、
+         * ゼロを返すとコンソール側の換算 (S-O) が 0 に近づく恐れがある。 */
+        if (addr >= 0x8010u && addr < 0x8040u) {
+            memset(&out[20], 0xFF, want);
+            return 64;
+        }
         uint8_t blen = 0u;
         const uint8_t *blank = spi_joy_blank(want, &blen);
         if (blank == NULL || blen == 0u) {

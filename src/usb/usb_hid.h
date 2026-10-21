@@ -31,6 +31,10 @@ typedef struct {
     // ゼロ初期化ctxはvalid=false→従来動作 (host test互換)。
     bool imu_valid;
     int16_t imu[6];
+    /* PC0x30の3サンプル（古い順）。trueならimuより優先して3スロットへ
+     * 順に載せる（5ms間隔の階段化を避ける）。falseは従来の複製。 */
+    bool imu3_valid;
+    int16_t imu3[3][6];
 #if IMU_DUMMY
     // Phase 0 実験用 (ON時のみ存在)。to_ms_since_boot由来の時刻。
     // ダミー生成器へ渡す (usb_hid.cはpico非依存のため呼出側が渡す)。

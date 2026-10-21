@@ -29,6 +29,8 @@ extern uint16_t bcon_lx, bcon_ly, bcon_rx, bcon_ry;
 extern uint8_t bcon_mac[6]; /* 応答順 (main.cで反転済み) */
 extern uint32_t bcon_usb_rumble_n; /* 所有元main.c。USB振動0x10受信累計 */
 extern int16_t bcon_imu[6]; /* 所有元main.c。PC由来IMU最新値 (§5.13) */
+extern int16_t bcon_imu3[3][6]; /* 0x30の3スロット用（古い順） */
+extern bool bcon_imu3_valid;
 extern bool bcon_imu_valid; /* 所有元main.c。同有効flag */
 extern bool bcon_wired_imu; /* 所有元main.c。有線0x40受信flag (PLAYER_INFO bit0へ) */
 
@@ -155,6 +157,15 @@ static void build_input_report(uint8_t out[USB_WIRED_INPUT_LEN], uint32_t now_ms
         ctx.imu_valid = true;
         for (k = 0; k < 6; k++) {
             ctx.imu[k] = bcon_imu[k];
+        }
+        if (bcon_imu3_valid) {
+            int slot;
+            ctx.imu3_valid = true;
+            for (slot = 0; slot < 3; slot++) {
+                for (k = 0; k < 6; k++) {
+                    ctx.imu3[slot][k] = bcon_imu3[slot][k];
+                }
+            }
         }
     }
     /* role は起動時1回だけ決まる (usb_set_role)。入力 pack (ボタン・
