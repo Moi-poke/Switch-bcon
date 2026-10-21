@@ -101,8 +101,14 @@ int main(void) {
         memset(&ctx, 0, sizeof(ctx));
         ctx.role = 2u;
         check(usb_build_21_reply(req, 16, out, 64, &ctx) == 64, "spi 6080 R builds");
+        /* オフセット符号は加速度フレームに合わせる: 反転モードのみ -4081。 */
+#if JOY_IMU_NEG_MODE == 1 || JOY_IMU_NEG_MODE == 3
         check(out[20 + 4] == 0x0Fu && out[20 + 5] == 0xF0u,
-              "R horizontal Z offset -4081");
+              "R horizontal Z offset -4081 (R frame)");
+#else
+        check(out[20 + 4] == 0xF1u && out[20 + 5] == 0x0Fu,
+              "R horizontal Z offset +4081 (ProCon frame)");
+#endif
         ctx.role = 1u;
         check(usb_build_21_reply(req, 16, out, 64, &ctx) == 64, "spi 6080 L builds");
         check(out[20 + 4] == 0xF1u && out[20 + 5] == 0x0Fu,

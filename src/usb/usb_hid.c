@@ -520,7 +520,8 @@ static int build_spi_response_joy(uint16_t addr, uint8_t want, uint8_t *out,
     /* 要求範囲が 0x6084-0x6085 を含むならZオフセットを上書きする。 */
     #define JOY_PATCH_HORIZ()                                                     \
         do {                                                                      \
-            if (role == 2u) {                                                     \
+            if (role == 2u &&                                                     \
+                (JOY_IMU_NEG_MODE == 1 || JOY_IMU_NEG_MODE == 3)) {               \
                 for (a = 0x6084u; a <= 0x6085u; a++) {                            \
                     if (a >= addr && a < (uint32_t)addr + (uint32_t)want) {        \
                         out[20 + (a - addr)] = k_horiz_z_r[a - 0x6084u];          \

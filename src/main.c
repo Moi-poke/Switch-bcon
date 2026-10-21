@@ -338,6 +338,17 @@ static void bcon_frame_cb(uint8_t type, const uint8_t *p, uint8_t len,
             g_s.baud_save_idx = g_s.baud_idx;
             g_s.ib_r = 0u;
             g_s.ib_w = n;
+            /* 確定直後にSTATUSを1発返す。PCの接続確認は HELLO直後に
+             * STATUS_REQを投げるが、確定窓の境界で取りこぼすと
+             * 「STATUSが来ません」と誤表示する。周期STATUS(1s)を待たせない。 */
+            if ((uint8_t)((n + 1u) % IB_N) != g_s.ib_r) {
+                ib_msg_t *m = &g_s.ib[n];
+                m->type = T_STATUS_REQ;
+                m->len = 0u;
+                m->seq = 0u;
+                m->tr = (uint8_t)TR_UART;
+                g_s.ib_w = (uint8_t)((n + 1u) % IB_N);
+            }
             s_hunt.locked = true;
         }
     }

@@ -11,7 +11,7 @@
 #include "protocol.h"
 
 #define FW_MAJOR 0u
-#define FW_MINOR 5u
+#define FW_MINOR 7u
 
 // Pico->PC 送信箱の動作 (main.cがflush時に新鮮なHW状態で実行する)。
 typedef enum {

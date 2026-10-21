@@ -258,8 +258,8 @@ int main(void) {
               "T-REBOOT 0x3B=T_RECONNECT LEN0 (append-only)");
         CHECK(T_IMU_SAMPLE == 0x04u && proto_expected_len(T_IMU_SAMPLE) == 12,
               "T-REBOOT 0x04=T_IMU_SAMPLE LEN12 (append-only)");
-        CHECK(FW_MAJOR == 0u && FW_MINOR == 5u,
-              "T-REBOOT FW bumped to 0.5 with the new TYPE");
+        CHECK(FW_MAJOR == 0u && FW_MINOR == 7u,
+              "T-REBOOT FW bumped to 0.7 with the new TYPE");
     }
 
     printf("[T-PROCON-GATE] role0 regression gate (passthrough)\n");
