@@ -7,6 +7,7 @@
  * 文中の [PABot-ref] はこの注記への参照。 */
 #include <string.h>
 #include "usb_hid.h"
+#include "joy_spi_override.h"
 #include "spi.h"
 #include "pack.h"
 
@@ -605,6 +606,21 @@ static int build_spi_response_joy(uint16_t addr, uint8_t want, uint8_t *out,
      * hid-nintendo も右Joy-ConでY,Z反転）。原点・水平オフセットも回す。
      * 診断用の他モード(0/2/3)は物理的に不整合なので、回転はモード1のみ。 */
 
+#if JOY_SPI_HAVE_OVERRIDE
+    /* 実Joy-Con Rの採取値を優先（診断ビルドのみ）。 */
+    if (addr == 0x6020u && want <= 24u) {
+        memcpy(&out[20], JOY_SPI_6020_OVR, want);
+        return 64;
+    }
+    if (addr == 0x6080u && want <= 24u) {
+        memcpy(&out[20], JOY_SPI_6080_OVR, want);
+        return 64;
+    }
+    if (addr == 0x8026u && want <= 26u) {
+        memcpy(&out[20], JOY_SPI_8026_OVR, want);
+        return 64;
+    }
+#endif
     if (addr == 0x6050u) {
         uint8_t n = (want > 13u) ? 13u : want;
         memcpy(&out[20], spi_color_6050, n);
