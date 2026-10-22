@@ -14,8 +14,20 @@
 #include "pack.h"
 #include "personality.h"
 #include "rumble.h"
+#include "hid_pack.h"
+#include "usb_hid.h" /* usb_imu_set_sensitivity (0x41保持値の共有) */
+
+/* PC由来IMU (所有元 main.c)。USB 0x30 と同じ値。 */
+extern int16_t bcon_imu[6];
+extern int16_t bcon_imu3[3][6];
+extern bool bcon_imu_valid;
+extern bool bcon_imu3_valid;
 
 #define HID_REPLY_WANT (2u + 48u)
+
+/* IMU 0x30 の構成ログは接続ごとに各1回だけ出す (0x40再enableで再ログしない)。 */
+static bool s_imu_report_logged;
+static bool s_imu_fallback_logged;
 
 /* ---- 入力状態 ---- */
 uint8_t probe_btn[3];
@@ -119,6 +131,8 @@ void probe_hid_reset(void)
     probe_input_mode = 0x3Fu;
     probe_hci_state_arg = 0xFFu;
     probe_btn_press_count = 0u;
+    s_imu_report_logged = false;
+    s_imu_fallback_logged = false;
     probe_input_reset();
 }
 
@@ -132,7 +146,14 @@ void probe_request_send(void)
 
 uint32_t probe_send_interval_ms(void)
 {
-    return probe_full_mode ? 7u : 100u;
+    return bt_input_interval_ms(probe_full_mode, probe_imu_enabled);
+}
+
+/* 0x30/0x21のtimerは5ms刻み。USB側 usb_wired_timer_now と同値。 */
+static uint8_t probe_timer_now(void)
+{
+    probe_report_timer = (uint8_t)(btstack_run_loop_get_time_ms() / 5u);
+    return probe_report_timer;
 }
 
 /* 応答の共通部 16B を作り、中身の書込位置を返す。
@@ -156,7 +177,7 @@ uint16_t probe_build_reply(uint8_t ack, uint8_t subcmd)
     joy_pack_btn3(probe_procon_u32, probe_role, btn3);
     reply_buf[0] = 0xA1u;
     reply_buf[1] = 0x21u;
-    reply_buf[2] = probe_report_timer++;
+    reply_buf[2] = probe_timer_now();
     reply_buf[3] = 0x80u;
     reply_buf[4] = btn3[0];
     reply_buf[5] = btn3[1];
@@ -168,7 +189,7 @@ uint16_t probe_build_reply(uint8_t ack, uint8_t subcmd)
     return 16u;
 }
 
-/* 送信 3 種の優先度: 応答 > 0x30(14B, IMU 無し) > 空(3B)。 */
+/* 送信 3 種の優先度: 応答 > 0x30(IMU有効=50B/無効=14B) > 空(3B)。 */
 void probe_can_send_now(void)
 {
     if (reply_len > 0u) {
@@ -177,26 +198,33 @@ void probe_can_send_now(void)
         probe_reply_sent++;
         reply_len = 0u;
     } else if (probe_full_mode) {
-        uint8_t f[14];
+        uint8_t f[BT_INPUT30_IMU_LEN];
         uint8_t btn3[3];
+        uint8_t sticks6[6];
+        uint16_t len;
         joy_pack_btn3(probe_procon_u32, probe_role, btn3);
-        f[0] = 0xA1u;
-        f[1] = 0x30u;
-        f[2] = probe_report_timer++;
-        f[3] = 0x80u;
-        f[4] = btn3[0];
-        f[5] = btn3[1];
-        f[6] = btn3[2];
-        pack_role_sticks(&f[7]);
-        f[13] = 0x08u;
-        hid_device_send_interrupt_message(probe_hid_cid, f, sizeof(f));
+        pack_role_sticks(sticks6);
+        len = bt_pack_input30(f, probe_timer_now(), btn3, sticks6,
+                              probe_imu_enabled, probe_role,
+                              bcon_imu_valid, bcon_imu,
+                              bcon_imu3_valid, bcon_imu3);
+        if (probe_imu_enabled && len != BT_INPUT30_IMU_LEN) {
+            if (!s_imu_fallback_logged) {
+                probe_line("IMU 0x30 fallback 14B (builder failed)");
+                s_imu_fallback_logged = true;
+            }
+        } else if (len == BT_INPUT30_IMU_LEN && !s_imu_report_logged) {
+            probe_line("IMU 0x30 50B (3x5ms slots)");
+            s_imu_report_logged = true;
+        }
+        hid_device_send_interrupt_message(probe_hid_cid, f, len);
         probe_state_sent++;
     } else {
         uint8_t f[3];
         /* ペア前は 100ms の空レポートで生かす（資料の手順通り）。 */
         f[0] = 0xA1u;
         f[1] = 0x00u;
-        f[2] = probe_report_timer++;
+        f[2] = probe_timer_now();
         hid_device_send_interrupt_message(probe_hid_cid, f, sizeof(f));
         probe_empty_sent++;
     }
@@ -451,6 +479,18 @@ static void answer_subcmd(uint8_t sub, const uint8_t *report, int report_size)
             reply_buf[p++] = 0x00u;
             reply_len = p;
             break;
+        case 0x41: {
+            uint8_t gyro_sel = 0u;
+            uint8_t accel_sel = 0u;
+            /* IMU感度 (gyro, accel)。USB側と同じ保持値へ書き、role2の
+             * 0x30換算に効かせる。ACK形は従来 (default) と同一。 */
+            if (bt_imu_sensitivity_args(report, report_size,
+                                        &gyro_sel, &accel_sel)) {
+                usb_imu_set_sensitivity(gyro_sel, accel_sel);
+            }
+            reply_len = probe_build_reply(0x80u, 0x41u);
+            break;
+        }
         case 0x43:
             p = probe_build_reply(0xC0u, 0x43u);
             reply_buf[p++] = (report_size > 10) ? report[10] : 0u;
@@ -508,6 +548,12 @@ void probe_report_handler(uint16_t cid, hid_report_type_t report_type,
                      sub, report_size, probe_subcmd_seen_n);
         }
         probe_line(msg);
+        if (sub == 0x41u && report_size > 10) {
+            snprintf(msg, sizeof(msg), "  0x41 gyro=%u accel=%u",
+                     (unsigned)report[10],
+                     (unsigned)((report_size > 11) ? report[11] : 0u));
+            probe_line(msg);
+        }
         answer_subcmd(sub, report, report_size);
         /* A1+ID+本体48=50B へ 0 埋めで揃える。 */
         if (reply_len > 0u) {

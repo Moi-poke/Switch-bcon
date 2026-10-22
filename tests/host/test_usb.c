@@ -288,8 +288,8 @@ int main(void) {
             CHECK(rep[base + 4] == 0x00u && rep[base + 5] == 0x10u, "rest az 0x1000");
             CHECK(rep[base + 6] == 0x00u && rep[base + 10] == 0x00u, "rest gyro 0");
         }
-        /* Joy-R: X軸はモードに関係なく不変。反転の組み合わせは
-         * test_joy_imu_neg（モード別ターゲット）で検証する。 */
+        /* Joy-R: Rx(180°) = Y,Z反転（実機 Joy-Con R の極性）。
+         * 詳細は test_joy_imu_axis。 */
         memset(&ctx, 0, sizeof(ctx));
         ctx.role = 2u;
         ctx.imu_valid = true;
@@ -302,8 +302,20 @@ int main(void) {
         CHECK(usb_build_30_report(&ctx, rep) == 64, "JoyR builds 64B");
         for (k = 0; k < 3; k++) {
             int base = 13 + k * 12;
-            CHECK(rep[base + 0] == 0xE8u && rep[base + 1] == 0x03u, "JoyR ax 1000 LE");
-            CHECK(rep[base + 6] == 0x64u && rep[base + 7] == 0x00u, "JoyR gx 100 LE");
+            /* 生 (ax,ay,az,gx,gy,gz) = (1000,2000,4096,100,-100,300)
+             * → 送出 (1000,-2000,-4096,100,100,-300)。 */
+            CHECK(rep[base + 0] == 0xE8u && rep[base + 1] == 0x03u,
+                  "JoyR out j0 = ax (1000)");
+            CHECK(rep[base + 2] == 0x30u && rep[base + 3] == 0xF8u,
+                  "JoyR out j1 = -ay (-2000)");
+            CHECK(rep[base + 4] == 0x00u && rep[base + 5] == 0xF0u,
+                  "JoyR out j2 = -az (-4096)");
+            CHECK(rep[base + 6] == 0x64u && rep[base + 7] == 0x00u,
+                  "JoyR out j3 = gx (100)");
+            CHECK(rep[base + 8] == 0x64u && rep[base + 9] == 0x00u,
+                  "JoyR out j4 = -gy (100)");
+            CHECK(rep[base + 10] == 0xD4u && rep[base + 11] == 0xFEu,
+                  "JoyR out j5 = -gz (-300)");
         }
         CHECK(rep[12] == 0x00u, "JoyR vib stays 0x00");
         memset(&ctx, 0, sizeof(ctx));
@@ -326,14 +338,16 @@ int main(void) {
         usb_imu_set_sensitivity(3u, 0u);
         usb_imu_get_sensitivity(&g, &a);
         CHECK(g == 3u && a == 0u, "default sensitivity is 2000dps/8G");
-        /* 既定では恒等 (±2000dps/±8G前提の値をそのまま出す)。 */
+        /* 既定では換算恒等。role2 は Y,Z反転 (Rx180) だけが入る。 */
         memset(&ctx, 0, sizeof(ctx));
         ctx.role = 2u;
         ctx.imu_valid = true;
         ctx.imu[3] = 800;
         ctx.imu[2] = 4096;
         CHECK(usb_build_30_report(&ctx, rep) == 64, "identity builds 64B");
-        CHECK(rep[13 + 6] == 0x20u && rep[13 + 7] == 0x03u, "identity gx 800 LE");
+        CHECK(rep[13 + 6] == 0x20u && rep[13 + 7] == 0x03u, "JoyR gx 800 LE");
+        CHECK(rep[13 + 4] == 0x00u && rep[13 + 5] == 0xF0u,
+              "JoyR az negated (0xF000)");
         /* 0x41: gyro ±250dps・accel ±2G を要求。 */
         memset(req, 0, sizeof(req));
         req[0] = 0x01u; req[10] = 0x41u;
@@ -349,12 +363,12 @@ int main(void) {
         ctx.imu[2] = 4096;
         ctx.imu[3] = 800;
         CHECK(usb_build_30_report(&ctx, rep) == 64, "scaled builds 64B");
-        /* gyro 800 * 2000/250 = 6400 (0x1900)、accel 4096 * 8/2 = 16384 →
-         * Joy-R反転で -16384 (0xC000)。 */
+        /* gyro 800 * 2000/250 = 6400 (0x1900) が j3 に出る。
+         * accel 4096 は Y/Z反転で -4096、×4 で -16384 (0xC000) が j2 に出る。 */
         CHECK(rep[13 + 6] == 0x00u && rep[13 + 7] == 0x19u,
-              "gyro rescaled to 250dps range (x8)");
+              "role2 rescaled gyro (x8)");
         CHECK(rep[13 + 4] == 0x00u && rep[13 + 5] == 0xC0u,
-              "accel rescaled+negated (16384)");
+              "role2 rescaled+negated accel (16384)");
         /* 換算後の飽和: 10000 * 8 = 80000 → 32767。 */
         memset(&ctx, 0, sizeof(ctx));
         ctx.role = 2u;
@@ -373,6 +387,11 @@ int main(void) {
         usb_imu_set_sensitivity(3u, 0u);
     }
 
+    printf("[11] wired gyro gate: ProCon only\n");
+    CHECK(usb_imu_wired_role_ok(0u), "role0 (ProCon) allowed");
+    CHECK(!usb_imu_wired_role_ok(1u), "role1 (JoyL) blocked");
+    CHECK(!usb_imu_wired_role_ok(2u), "role2 (JoyR) blocked");
+    CHECK(!usb_imu_wired_role_ok(3u), "out-of-range role blocked");
 
     printf("\nRESULT: %s (%d failures)\n", fails == 0 ? "ALL PASS" : "HAS FAILURES", fails);
     return fails;

@@ -17,7 +17,8 @@
 | 4.4 | 2026-10-01 | T_RECONNECT新設（0x3B・PC→Pico・LEN0）。Switchが拒否して待機状態に入ったPicoを明示的に起こす（実コントローラーのボタン押下相当）。PROTO_VER=4維持・FW_MINOR=4 |
 | 4.5 | 2026-10-05 | PC→Pico SEQ欠番の再同期を新設（無通信1000msでセッション境界とみなし基準を捨てる・起動時selftestの合成SEQも捨てる）。PC再接続のたびに出ていた偽 `ERRCODE=0x03` を解消。フレーム・フィールド不変・意味の明確化のみのため PROTO_VER=4維持・FW_MINOR据置（4.2前例） |
 | 4.7 | 2026-10-08 | 無線時USB-CDC輸送を追加（§2.1・§5.12。PC→Pico・Pico→PCともv3 frame・UARTと同一形式）。単一UF2で実行時profile選択（有線=HID-only・無線=CDC-only。起動時確定・reboot適用）。無線起動時はPico USBがPC専用CDCになりシリアル変換器なしで制御可。有線起動は従来通りHID-only（Switch接続用）。フレーム・フィールド不変のため PROTO_VER=4維持・FW_MINOR据置（4.2/4.5/4.6前例） |
-| 4.8 | 2026-10-17 | IMU_SAMPLE新設（0x04・PC→Pico・LEN12・§5.13）。PC側生成のIMU生値（6xint16-LE）を200Hzで転送し、USB 0x30のIMU 36Bへ反映する。gyro-mini実機で受理確認（USB 0x30周期15ms・timer 5ms刻み・静止1g=0x1000・§12更新）。PROTO_VER=4維持・FW_MINOR=5 |
+| 4.8 | 2026-10-17 | IMU_SAMPLE新設（0x04・PC→Pico・LEN=12・§5.13）。PC側生成のIMU生値（6xint16-LE）を200Hzで転送し、USB 0x30のIMU 36Bへ反映する。gyro-mini実機で受理確認（USB 0x30周期15ms・timer 5ms刻み・静止1g=0x1000・§12更新）。PROTO_VER=4維持・FW_MINOR=5 |
+| 4.9 | 2026-10-22 | 無線(BT) 0x30へIMU 36B（0x40有効時。50B=A1 30+12B+36B）。無線時はUSB-CDCでIMU_SAMPLEを受ける。BT 0x30はIMU有効時15ms・timer 5ms刻み、無効時7ms。0x41感度はUSBと共有。100ms gyro→0をbcon_imu3にも適用。role2(Joy-R)の0x30 IMUはRx(180°)=Y/Z反転（実機で平坦時Z=−1gを確認）。PC側[IMU]軸変換は恒等が前提（90°を重ねるとrole0まで回る）。有線0x30のIMUはrole0のみ（role1/2は36Bゼロ）。PROTO_VER=4維持・FW_MINOR=12。 |
 
 > フィールド追加・意味変更時は必ず本表と `PROTO_VER` を更新する。
 
@@ -315,10 +316,16 @@ Off  Field  Size  説明
 
 * PC→Pico方向のみ。200Hz（5ms）送信を想定。STATE（120Hz）と独立した周期で送る。
 * 値はSwitch ProCon出力用の生値そのもの（量子化・軸変換はPC側で完了させる）。
-  Picoは検証（LEN=12のみ受理）して最新1件を保持し、USB 0x30生成時に3スロットへ複製する。
+  Picoは検証（LEN=12のみ受理）して最新3件を保持し、USB/BT 0x30生成時に3スロットへ載せる
+  （履歴不足時は最新値の複製）。
+* 無線（BT）時はUSB-CDC輸送（§2.1）で同じ `T_IMU_SAMPLE` を受ける。BT 0x30への反映は
+  §12.4、生成・role変換・`0x41`換算はUSB 0x30と同一実装（`usb_build_30_report`）を共有する。
 * 帯域：17B×200Hz=3.4KB/s（1Mbpsの3%未満）。STATEと合わせても余裕がある。
 * timeout：Picoは最終受信から100msでgyro→0、500msで静止値（0,0,0x1000,0,0,0）へ落とす。
-  IMU未受信時の0x30 IMUは従来通り（ProCon=静止1g・Joy役=ゼロ）。有効時はrole共通で反映する。
+  100msのgyro→0は3スロット（USB/BT共通の `bcon_imu3`）にも適用する。
+  IMU未受信時の0x30 IMUは従来通り（ProCon=静止1g・Joy役=ゼロ）。
+* 有効時の反映範囲：USB（有線）0x30 は role0（ProCon）のみ反映する。role1/2 は
+  IMU未受信時と同じ静的値（36Bゼロ）を送る。BT（無線）は §12.4 の通り全roleで反映する。
 * STATEのtimeout-neutral（§8・200ms）とは独立。IMU停止はボタンを解放しない。
 
 
@@ -486,23 +493,28 @@ PID以外は全role同一（VID・bcd・EP・間隔・構成は不変）。
 `0x02` 機器情報応答の種別のみrole依存（ProCon=0x03・L=0x01・R=0x02）。
 fwはProCon=`03 48`（2wiCC実働値。BTの `03 8B` ではない）、Joy=`04 33`（PABotBase2の応答を参考にした値）。
 `81 01` の種別は全role `0x03`（PABotBase2の応答を参考にした値）。
-電池は全role `0x91`、Joy の `0x30` IMU は未受信時36Bゼロ（PABotBase2の応答を参考にした値。有効時は§5.13を反映）。
+電池は全role `0x91`、Joy の `0x30` IMU は未受信時36Bゼロ（PABotBase2の応答を参考にした値。有効時は§5.13を反映）。有線では role0 以外 IMU サンプルを載せない（§5.13）。
 role=0は従来バイトと同一。
 診断用に `JOY_USB_PID_2007=1` でビルドすると role2 の PID だけ 0x2007 になる
 （WebHID 等の外部実装に Joy-Con R として認識させる検証用。既定 0 は上表どおり
 全 role 0x2009）。
 
-Joy-R の `0x30` IMU は **R = Rx(180°)**（加速度・ジャイロとも Y/Z 反転）で
-ProConフレームから変換する。根拠: 実測の 0x6080 は X が L/R で同符号・Z のみ
-反転（`spi_flash_notes.md` の表も同じ）、`hid-nintendo.c` も右Joy-ConでY,Z反転。
-診断用に `JOY_IMU_NEG_MODE`（`0`=なし/`1`=両方/`2`=ジャイロのみ/`3`=加速度のみ）
-を残すが、`2`/`3` は加速度とジャイロが食い違う非物理な組み合わせなので
-切り分け専用。既定は `1`。
+Joy-R の `0x30` IMU は **Rx(180°) = Y,Z反転**（加速度・ジャイロとも同順）で
+ProConフレームから変換する（`src/usb/usb_hid.c` `k_joy_negate_axis`）。
+根拠: 実機 Joy-Con R の生値は平坦時 **Z=−1g**（ProConは+1g）で、カーネル
+(`hid-nintendo.c joycon_parse_imu_report`) も右Joy-ConのY,Zを反転して
+ProConフレームへ揃える。ProCon生値からJoy-Con Rの生値を合成するには同じ反転を掛ける。
+2026-10-22 実機: 反転なし（net恒等）では重力が+Zのままコンソールへ渡り、
+平坦時に視点が上を向いて視点リセットも効かなくなった（反転ありで解消）。
+**前提**: PC側 `[IMU]` の軸変換（`accel_axes`/`gyro_axes`/`*_signs`）は恒等に
+しておくこと。PC側で90°回転を重ねると role0 まで回り、この反転の意味が壊れる。
 PC側は `[IMU] accel_*/gyro_axes・signs` で同じ変換を重ねられる
 （HID直結でも適用）。
 較正（`0x10` の `0x6020`/`0x6080`/`0x603D`）は **実ProConの実測値**を返す。
 PCの生値が実ProCon由来のため。role2 では原点ベクトルと水平オフセットを
-同じ R で回す（acc/gyro 原点の Y,Z、0x6080 の Y,Z を反転）。
+**Rx(180°)（Y,Z反転）** で回す（`JOY_SPI_CAL_ROT`。`0`=なし/`1`=YZ/`4`=XZ、既定`1`）。
+これは 0x30 本体の軸写像とは独立で、実機で動作確認済みの校正値側の回転を
+A/B するためのもの。
 実測値は `tools/procon_spi.py` で取得（0x10は4byteアドレス+1byteサイズ）。
 `0x41`（IMU感度）は ACK 形を変えず先頭2引数（gyro, accel）を保持し、
 role=2 の `0x30` 出力を要求レンジへ換算する（PC側生値は ±2000dps/±8G 前提。
@@ -534,3 +546,24 @@ Joy roleのSPI読出しは暫定ゼロ埋めで答える（`spi_joy_blank`。`sr
 BTは当該契約を実装済み（`0x6000`以上`0x9000`未満はゼロ埋め＋ACK `0x90`、
 それ以外はtransport-default miss＝無応答。ProConの `spi_find` 経路は通らない）。
 ProCon応答バイトは一切変えない。Joyの実機SPI値は未採取のためprovisionalのまま。
+
+## 12.4 BT 0x30 の IMU（無線ジャイロ）
+
+`0x40`（IMU有効）を受けた接続では BT 0x30 を **50B** で返す。
+`A1`（HIDPヘッダ）+ 48B本体 = 12B状態（`A1 30 timer 80 btn3 stick6 08`）+ 36B IMU
+（3試料x12B = accXYZ LE16 + gyroXYZ LE16）。HID記述子の 0x30 本体48Bと一致する。
+`0x40` の値が0・未受信の間は従来通り **14B**（`A1 30 timer 80 btn3 stick6 08`）。
+
+- IMU 36B の生成は USB 0x30 と同一実装（`usb_build_30_report`。`src/usb/usb_hid.c`）。
+  role変換（role2 の Rx(180°)=Y/Z反転。§12.1）・`0x41` 感度換算・未受信時の静止値
+  （ProCon=静止1g・Joy役=36Bゼロ）はUSBとバイト一致する。BT側に複製を持たない
+  （`src/bt/hid_pack.c` は A1/30/12Bの組み立てとIMU 36Bの貼付のみ）。
+- 送信周期：full mode は IMU有効 15ms・無効 7ms。ペア前（full mode 前）は 100ms の空
+  `A1 00` のまま。
+- `timer`（0x30 `[2]`・0x21 `[2]`）は5ms刻み（`ms/5`）。USB側 `usb_wired_timer_now` と同値で、
+  15ms周期ではレポート毎に +3 進む。
+- `0x41`（IMU感度）はUSBと保持値を共有する（`usb_imu_set_sensitivity`）。ACK形は従来と同じ
+  `0x80 0x41` で、role2 の 0x30 換算に効く（既定 3/0 は恒等）。
+- timeout は §5.13 のまま：100ms で gyro→0（3スロットにも適用）、500ms で静止値。
+- IMU有効時も `0x21` 応答は従来の 50B（0埋め）で変わらない。36Bを削って短くしない
+  （IMUが成立しない）。

@@ -11,9 +11,12 @@
 #include "spi.h"
 #include "pack.h"
 
-/* 診断ビルド用の既定（hostテストは定義しないため）。 */
-#ifndef JOY_IMU_NEG_MODE
-#define JOY_IMU_NEG_MODE 1
+/* 診断ビルド用の既定（hostテストは定義しないため）。
+ * 0x30 IMU の role2 軸写像は実機測定で確定している一方、SPI 校正値
+ * (0x6020/0x6080) の回転は A/B したいので別名にして残す。
+ *   0=回さない / 1=Y,Z反転(既定・実機動作確認済み) / 4=X,Z反転 */
+#ifndef JOY_SPI_CAL_ROT
+#define JOY_SPI_CAL_ROT 1
 #endif
 #if IMU_DUMMY
 #include "imu_dummy.h"
@@ -160,6 +163,14 @@ bool usb_kick81_due(uint8_t role, bool wired_en, bool mounted,
     return (bool)(!kick_done && wired_en && mounted && !pend_valid);
 }
 
+/* 有線 0x30 の IMU ゲート (§5.13)。role1/2 は実機未確認のため、IMU 未受信時と
+ * 同じ静的既定 (36Bゼロ) を送る。無線 BT 側は bt_pack_input30 が別経路で
+ * 全 role に IMU を載せる (§12.4) ので、この述語は有線からのみ呼ぶ。 */
+bool usb_imu_wired_role_ok(uint8_t role)
+{
+    return role == 0u;
+}
+
 bool usb_req_is_handshake(const uint8_t *req, int req_len)
 {
     return req != NULL && req_len >= 2 && req[0] == 0x80u;
@@ -295,6 +306,18 @@ static int16_t imu_scale_value(int32_t v, uint8_t sel, const uint16_t *ranges,
     return (int16_t)scaled;
 }
 
+/* Joy-R (role2) の軸変換: Rx(180°) = Y,Z反転 (加速度・ジャイロとも同順)。
+ * 根拠: 実機 Joy-Con R の生値は平坦時 Z=-1g（ProConは+1g）で、カーネル
+ * (hid-nintendo.c joycon_parse_imu_report) も右Joy-ConのY,Zを反転して
+ * ProConフレームへ揃える。ProCon生値からJoy-Con Rの生値を合成するには
+ * 同じ反転を掛ける。2026-10-22 実機: 反転なし(net恒等)では重力が+Zのまま
+ * コンソールへ渡り、平坦時に視点が上を向いてリセットも効かなくなった。
+ * 注意: PC側 (Poke-Con [IMU] accel_axes・accel_signs・gyro_axes・gyro_signs)
+ * は恒等にしておくこと。90°回転をPC側で重ねると role0 まで回り、この反転の
+ * 意味が壊れる。 */
+static const bool k_joy_negate_axis[6] = {false, true,  true,
+                                          false, true,  true};
+
 int usb_build_30_report(const usb_sub_ctx_t *ctx, uint8_t out64[64])
 {
     int k;
@@ -327,10 +350,10 @@ int usb_build_30_report(const usb_sub_ctx_t *ctx, uint8_t out64[64])
 #endif
     /* PC由来IMU (§5.13): validの間は最新1件を3スロットへ複製する
      * (switch-pico実績方式)。無効時は下の静止値。
-     * Joy-R (role2) はIMU搭載向きの関係でY/Z軸が反転しているため、
-     * 送出時に反転する (hid-nintendo.c joycon_parse_imu_report準拠。
-     * 右はY/Z反転で左・ProConと一致)。-32768は32767へ飽和。
-     * role0/1は不変。 */
+     * Joy-R (role2) は実機の IMU 極性が ProCon と 180° 違う（平坦時に
+     * Z=-1g）ため、送出時に Y,Z を反転する (k_joy_negate_axis)。
+     * 0x41 のレンジ換算は符号反転後の値に、軸ごとに適用する。
+     * role0/1 は恒等。 */
     if (ctx->imu_valid) {
         for (k = 0; k < 3; k++) {
             int base = 13 + k * 12;
@@ -340,23 +363,8 @@ int usb_build_30_report(const usb_sub_ctx_t *ctx, uint8_t out64[64])
                 int32_t v = (int32_t)src[j];
                 int16_t out_v;
                 if (role == 2u) {
-                    /* Joy-R: IMU搭載向きの差でY/Z反転、続いて0x41の
-                     * 要求レンジへ換算 (±2000dps/±8G前提の生値)。
-                     * JOY_IMU_NEG_MODE は反転の組み合わせを選ぶ診断用:
-                     * 0=なし / 1=加速度+ジャイロ / 2=ジャイロのみ /
-                     * 3=加速度のみ。既定1 (カーネル準拠)。 */
-                    int negate = 0;
-#if JOY_IMU_NEG_MODE == 1
-                    negate = (j == 1 || j == 2 || j == 4 || j == 5);
-#elif JOY_IMU_NEG_MODE == 2
-                    negate = (j == 4 || j == 5);
-#elif JOY_IMU_NEG_MODE == 3
-                    negate = (j == 1 || j == 2);
-#elif JOY_IMU_NEG_MODE == 4
-                    /* Ry(180°): X,Z反転（加速度・ジャイロ共通） */
-                    negate = (j == 0 || j == 2 || j == 3 || j == 5);
-#endif
-                    if (negate) {
+                    /* 0x41 の要求レンジへ換算 (±2000dps/±8G 前提の生値)。 */
+                    if (k_joy_negate_axis[j]) {
                         v = -v;
                     }
                     if (j >= 3) {
@@ -522,16 +530,32 @@ static void neg_i16le(uint8_t *p)
     p[1] = (uint8_t)(((uint16_t)w >> 8) & 0xFFu);
 }
 
-/* 3軸ベクトル(3x int16-LE)を role2 の回転Rで回す。
- *   モード1: Rx(180°) = Y,Z反転
- *   モード4: Ry(180°) = X,Z反転（S5で鏡像だった場合の代替）
- * モード2/3は非物理な診断用なので回さない。 */
+/* 3軸ベクトル(3x int16-LE)を role2 の SPI 校正回転で回す。
+ *   0: 回さない（0x30 側が恒等に落ち着いた場合の整合解）
+ *   1: Rx(180°) = Y,Z反転
+ *   2: 巡回置換 (x,y,z)->(y,z,x)（A/B用。0x30本体とは独立）
+ *   4: Ry(180°) = X,Z反転
+ * 0x6080 の水平オフセットは「どの軸が鉛直か」をコンソールへ伝える基準なので、
+ * ここが 0x30 のデータ軸と食い違うと姿勢が恒久的に傾く（視点が上を向いたまま
+ * リセットが効かない症状）。0x30 本体は k_joy_negate_axis（Rx180）で別扱い。 */
 static void joy_rotate_vec(uint8_t *p)
 {
-#if JOY_IMU_NEG_MODE == 1
+#if JOY_SPI_CAL_ROT == 1
     neg_i16le(&p[2]);
     neg_i16le(&p[4]);
-#elif JOY_IMU_NEG_MODE == 4
+#elif JOY_SPI_CAL_ROT == 2
+    /* (x,y,z) -> (y,z,x)。int16-LE 3要素の入れ替え。 */
+    {
+        uint8_t t[6];
+        memcpy(t, p, 6u);
+        p[0] = t[2];
+        p[1] = t[3]; /* out x = in y */
+        p[2] = t[4];
+        p[3] = t[5]; /* out y = in z */
+        p[4] = t[0];
+        p[5] = t[1]; /* out z = in x */
+    }
+#elif JOY_SPI_CAL_ROT == 4
     neg_i16le(&p[0]);
     neg_i16le(&p[4]);
 #else
@@ -646,10 +670,10 @@ static int build_spi_response_joy(uint16_t addr, uint8_t want, uint8_t *out,
         return 64;
     }
 
-    /* 6軸の工場キャリブ: 実測ProCon値を基本に、role2(mode1)はRで回す。 */
+    /* 6軸の工場キャリブ: 実測ProCon値を基本に、role2は SPI 校正回転で回す。 */
     if (addr == 0x6020u && want <= 24u) {
         memcpy(&out[20], SPI_6020_PROCON_MEASURED, want);
-#if JOY_IMU_NEG_MODE == 1 || JOY_IMU_NEG_MODE == 4
+#if JOY_SPI_CAL_ROT == 1 || JOY_SPI_CAL_ROT == 2 || JOY_SPI_CAL_ROT == 4
         if (role == 2u) {
             joy_rotate_vec(&out[20]);      /* acc origin */
             joy_rotate_vec(&out[20 + 12]); /* gyro origin */
@@ -675,7 +699,7 @@ static int build_spi_response_joy(uint16_t addr, uint8_t want, uint8_t *out,
          * ProConのオフセットを流用すると、コンソールがJoy用SPIとして
          * 読む値が本物と食い違う。 */
         memcpy(off, SPI_6080_JOY_BASE, 6);
-#if JOY_IMU_NEG_MODE == 1 || JOY_IMU_NEG_MODE == 4
+#if JOY_SPI_CAL_ROT == 1 || JOY_SPI_CAL_ROT == 2 || JOY_SPI_CAL_ROT == 4
         if (role == 2u) {
             joy_rotate_vec(off);
         }

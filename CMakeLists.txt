@@ -41,11 +41,11 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
   # IMU_DUMMY: Phase 0 実験ビルド (0=現行既定・1=ダミーIMU)。
   # ON時のみ実験パラメータをcompile definitionへ渡し、imu_dummy.cをlinkする。
   set(IMU_DUMMY 0 CACHE STRING "Phase 0 dummy IMU experiment (0=off, 1=on)")
-  # JOY_IMU_NEG_MODE: role2 (Joy-Con R) のY/Z反転の組み合わせ（診断用）。
-  #   0=反転なし / 1=加速度+ジャイロ (既定・カーネル準拠) /
-  #   2=ジャイロのみ / 3=加速度のみ
-  # 実機ProConと同一バイトでJoy役を出し、コンソール側の扱いを切り分ける。
-  set(JOY_IMU_NEG_MODE 1 CACHE STRING "role2 IMU Y/Z negation mode (0..3)")
+  # JOY_SPI_CAL_ROT: role2 (Joy-Con R) の SPI 校正値(0x6020/0x6080)の回転。
+  #   0=回さない / 1=Y,Z反転 (既定・実機動作確認済み) / 4=X,Z反転
+  # 0x30 IMU 本体の軸写像は実機測定で確定済み (src/usb/usb_hid.c
+  # k_joy_negate_axis)。ここは校正値側のA/B専用。
+  set(JOY_SPI_CAL_ROT 1 CACHE STRING "role2 SPI cal rotation (0=none, 1=YZ, 4=XZ)")
   # JOY_USB_PID_2007: 診断用。role2のUSB PIDを0x2007にしてWebHID等に
   # Joy-Con R として認識させる（既定は全role 0x2009）。
   set(JOY_USB_PID_2007 0 CACHE STRING "role2 USB PID 0x2007 for WebHID tests")
@@ -124,6 +124,7 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
     src/usb/usb_cdc.c
     src/usb/usb_wired.c
     src/bt/hid.c
+    src/bt/hid_pack.c
     src/bt/personality.c
     src/bt/link.c
     src/bt/link_conn.c
@@ -172,7 +173,7 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
     WIRED_DEFAULT=${WIRED_DEFAULT}
     POKECON_INPUT=${POKECON_INPUT}
     IMU_DUMMY=${IMU_DUMMY}
-    JOY_IMU_NEG_MODE=${JOY_IMU_NEG_MODE}
+    JOY_SPI_CAL_ROT=${JOY_SPI_CAL_ROT}
     JOY_USB_PID_2007=${JOY_USB_PID_2007}
   )
 

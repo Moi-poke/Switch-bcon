@@ -13,6 +13,8 @@ $ninja = Join-Path $env:USERPROFILE '.pico-sdk/ninja/v1.13.2/ninja.exe'
 & $cmake -S . -B build -G Ninja -DCMAKE_MAKE_PROGRAM:FILEPATH=$ninja
 & $cmake --build build
 ```
+**Non-ASCII worktree path breaks the firmware build** (`arm-none-eabi-objdump`/`cd /D` on the mojibake path fails at step 1). Workaround: map an ASCII drive and build from there — `subst X: <worktree>`, then `cd /X` and run the same cmake commands; `subst X: /D` when done. Host tests (`tests/host`) are unaffected.
+
 Variant configs: `-DPOC_DATA_BAUD=115200` (derated for 115200-bps adapters; default 1Mbps per spec), `-DWIRED_DEFAULT=0` (wireless boot; default 1), `-DPOKECON_INPUT=1` (PokeCon ASCII-line mode; default 0 = v3 binary, no auto-detect). Build variants in a temp dir (don't dirty `build/`), copy the UF2 to `log/`.
 
 Host unit tests — must run from a `vcvars64.bat`-initialized cmd (plain PowerShell has no compiler). `ctest.exe` must be called by full path from the same dir as `cmake.exe`:
@@ -21,7 +23,7 @@ cmake -S tests/host -B build-host
 cmake --build build-host --config Debug
 ctest --test-dir build-host -C Debug -V
 ```
-Single test: `ctest --test-dir build-host -C Debug -R <protocol|usb|usb_cdc|virt_tick|config|baud|pokecon|rumble|personality|joy_scopeA|joy_scopeB|wired_player|player_capsaved|color_getinfo|reconnect_policy|joy_imu_neg_m1|joy_imu_neg_m2> -V`. The authoritative list is the `add_test` set in `tests/host/CMakeLists.txt` (17 entries) — keep this line in sync when adding one. MSVC needs `/utf-8` (Japanese comments, C4819) — already set in `tests/host/CMakeLists.txt`, don't remove.
+Single test: `ctest --test-dir build-host -C Debug -R <protocol|usb|joy_imu_axis|usb_cdc|bt_input|virt_tick|config|baud|pokecon|rumble|personality|joy_scopeA|joy_scopeB|wired_player|player_capsaved|color_getinfo|reconnect_policy> -V`. The authoritative list is the `add_test` set in `tests/host/CMakeLists.txt` (17 active; `imu_dummy` is opt-in via `-DIMU_DUMMY=ON`) — keep this line in sync when adding one. MSVC needs `/utf-8` (Japanese comments, C4819) — already set in `tests/host/CMakeLists.txt`, don't remove.
 Targets: `switch-bcon` is the integrated FW; `poc_dualcore` is the PoC-only predecessor (don't extend it).
 
 ## Architecture

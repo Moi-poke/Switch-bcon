@@ -161,14 +161,14 @@ PC 送信ラッパ 1 箇所に集約すべき項目は次の通り (`spec/protoc
 
 ## レポート配置（in-repoピン、再構築用）
 
-- USB ControllerData 12B は timer・電池 `0x91`・ボタン3B（`btn[1]|=0x80`・`btn[2]&=0xCF`）・スティック6B・振動 `0x09` である (`src/usb/usb_hid.c:56-68`)。`0x30` 64B は ID + 12B + 36B IMU(0) + 15B 埋めである (`src/usb/usb_hid.c:70-79`, `src/usb/usb_hid.h:33-35`)。IMU無効時は 0 のままにする (`src/usb/usb_hid.h:33-35`)。マスクの期待値は host 試験 `[6]` が縛る (`tests/host/test_usb.c:165-178`)
+- USB ControllerData 12B は timer・電池 `0x91`・ボタン3B（`btn[1]|=0x80`・`btn[2]&=0xCF`）・スティック6B・振動 `0x09` である (`src/usb/usb_hid.c:56-68`)。`0x30` 64B は ID + 12B + 36B IMU(0) + 15B 埋めである (`src/usb/usb_hid.c:70-79`, `src/usb/usb_hid.h:33-35`)。IMU無効時は 0 のままにする (`src/usb/usb_hid.h:33-35`)。有線は role0 のみ IMU を載せる（role1/2 はゼロ。`usb_imu_wired_role_ok`。無線は全role）。マスクの期待値は host 試験 `[6]` が縛る (`tests/host/test_usb.c:165-178`)
 - USB `0x21` 64B は ID + 12B 状態 + ack/sub + 本文である (`src/usb/usb_hid.c:140-143`)。`0x01` 対 `01/02/03` の雛形は 2wiCC `procon_data.c` の実働値であり type 1 のみ自 MAC を ASCII 埋めする (`src/usb/usb_hid.c:81-91,144-161`)。`0x02` 本文は `03 48 03 02 + MAC6 + 01 02` であり末尾 `02` が SPI 色有効の条件である (`src/usb/usb_hid.c:162-175`)。`80 xx` 応答は常に 64B ゼロパディングで返し `81 01 00 <type=0x03> <mac6>` を含む (`src/usb/usb_hid.c:19-54`)
-- BT `0x30` 14B は `A1 30 timer 80 btn3 stick6 08` であり (`src/bt/hid.c:161-174`)、応答共通部 16B は `A1 21 timer 80 btn3 stick6 08 ack sub` である (`src/bt/hid.c:136-151`)。応答は `A1+ID+本体48=50B` へ 0 埋めする (`src/bt/hid.c:417-426`)。ペア前は 100ms の空 `A1 00 timer` で生かす (`src/bt/hid.c:175-183`, `src/bt/hid.c:129-132`)
+- BT `0x30` は IMU 無効時 14B `A1 30 timer 80 btn3 stick6 08`、IMU 有効（`0x40`）時は 50B（`A1 30` + 12B 状態 + 36B IMU。`src/bt/hid_pack.c:6-39`。36B は USB と同一の `usb_build_30_report` 出力を貼る）である。応答共通部 16B は `A1 21 timer 80 btn3 stick6 08 ack sub` であり (`src/bt/hid.c:174-190`)、応答は `A1+ID+本体48=50B` へ 0 埋めする (`src/bt/hid.c:557-563`)。ペア前は 100ms の空 `A1 00 timer` で生かす (`src/bt/hid.c:221-230`, `src/bt/hid_pack.c:53-62`)。`timer` は 5ms 刻み（`ms/5`）である (`src/bt/hid.c:152-157`)
 - スティック 12bit 化は `pack_stick_12bit` のみが行い (`src/proto/pack.c:31-38`，`src/main.c:994-1008`)、ボタン 3B は `ctrl_pack_btn3` が作る (`src/proto/pack.c:4-29`)。GR/GL/C/Headset・予約bitは輸送位置なしのため落とす (`src/proto/pack.c:25-28`)
 
 ## ハンドシェイク SUB 順（コード受付順、Switch発行順はHW観測）
 
-- BT は `0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x10,0x21,0x30,0x31,0x33,0x40,0x43,0x48,0x50` を受け、既定は `80 sub` ack である (`src/bt/hid.c:283-384`)。`0x03` で full-mode 開始＋入力モード保持し (`src/bt/hid.c:301-310`)、`0x30` で player lamp を latch し (`src/bt/hid.c:334-340`)、`0x31` 応答にそれを載せる (`src/bt/hid.c:341-345`)。`0x10` SPI は番地・長さで表引きし、未知・不足は答えない (`src/bt/hid.c:249-281`)
+- BT は `0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x10,0x21,0x30,0x31,0x33,0x40,0x41,0x43,0x48,0x50` を受け、既定は `80 sub` ack である (`src/bt/hid.c:402-517`)。`0x41` は ACK 形を変えず先頭2引数（gyro, accel）を USB と共有の保持値へ書く (`src/bt/hid.c:482-493`)。`0x03` で full-mode 開始＋入力モード保持し (`src/bt/hid.c:420-425`)、`0x30` で player lamp を latch し (`src/bt/hid.c:453-459`)、`0x31` 応答にそれを載せる (`src/bt/hid.c:460-464`)。`0x10` SPI は番地・長さで表引きし、未知・不足は答えない (`src/bt/hid.c:381-390`)
 - USB は `80 04` で入力開始、`80 05`・unmount で中立＋再待機である (`src/usb/usb_wired.c:217-221,315-322`)。`0x01` SUB は `01/02/03/10/30/40/48` と既定 ack を返し (`src/usb/usb_hid.c:143-228`)、`0x03 mode 0x30` も full 開始合図にする (`src/usb/usb_wired.c:270-275`)。`0x10` 振動のみと sub `0x10` SPI 読出は別物である (`src/usb/usb_wired.c:231-234,259-269`)
 - Switch の発行順そのものは AB1 勝利ログの SUB 完走で確認する (`log/COM3_2026_09_14.22.32.18.050_ab1.txt`)。コードは順序非依存に受ける
 

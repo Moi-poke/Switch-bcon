@@ -1,7 +1,7 @@
 // joy_spi_override.h -- 実Joy-Con RのSPI応答をそのまま返す診断用。
 //
 // 実機の 0x6020/0x6080/0x8026 を採取したら、このファイルに値を書いて
-// JOY_SPI_HAVE_OVERRIDE を 1 にし、JOY_IMU_NEG_MODE と組み合わせて
+// JOY_SPI_HAVE_OVERRIDE を 1 にし、JOY_SPI_CAL_ROT と組み合わせて
 // 「純正のSPI＋純正の生値」で再生試験を行う。
 //
 // 採取は tools/spi_dump.py（USB HID経由）で行う。

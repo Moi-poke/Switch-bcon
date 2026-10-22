@@ -34,26 +34,20 @@ target_include_directories(test_usb PRIVATE
   ../../src/usb
 )
 
-# role2 のIMU反転モードを 1 (既定) と 2 (ジャイロのみ) の両方で検証する。
-# 同じソースを JOY_IMU_NEG_MODE 付きでビルドし、期待値を切り替える。
-foreach(neg_mode 1 2 4)
-  add_executable(test_joy_imu_neg_m${neg_mode}
-    test_joy_imu_neg.c
-    ../../src/proto/protocol.c
-    ../../src/proto/pack.c
-    ../../src/proto/spi.c
-    ../../src/proto/dispatch.c
-    ../../src/usb/usb_hid.c
-  )
-  target_include_directories(test_joy_imu_neg_m${neg_mode} PRIVATE
-    ../../src/proto
-    ../../src/usb
-  )
-  target_compile_definitions(test_joy_imu_neg_m${neg_mode} PRIVATE
-    JOY_IMU_NEG_MODE=${neg_mode}
-  )
-  add_test(NAME joy_imu_neg_m${neg_mode} COMMAND test_joy_imu_neg_m${neg_mode})
-endforeach()
+# role2 (Joy-Con R) の 0x30 IMU 軸変換。実機 Joy-Con R は平坦時 Z=-1g
+# なので Rx(180°) = Y,Z反転を固定する（PC側 [IMU] 変換は恒等が前提）。
+add_executable(test_joy_imu_axis
+  test_joy_imu_axis.c
+  ../../src/proto/protocol.c
+  ../../src/proto/pack.c
+  ../../src/proto/spi.c
+  ../../src/proto/dispatch.c
+  ../../src/usb/usb_hid.c
+)
+target_include_directories(test_joy_imu_axis PRIVATE
+  ../../src/proto
+  ../../src/usb
+)
 
 add_executable(test_config
   test_config.c
@@ -166,6 +160,24 @@ add_executable(test_usb_cdc
   ../../src/proto/baud.c
 )
 target_include_directories(test_usb_cdc PRIVATE ../../src/proto)
+
+# BT 0x30 (A1 30 + 12B状態 + [36B IMU]) の組み立てと0x41引数抽出。
+# src/bt/hid_pack.c は BTstack/Pico 非依存で、IMU 36B は usb_hid.c の
+# usb_build_30_report() をそのまま使う (複製が無いことをバイト比較で固定)。
+add_executable(test_bt_input
+  test_bt_input.c
+  ../../src/bt/hid_pack.c
+  ../../src/proto/protocol.c
+  ../../src/proto/pack.c
+  ../../src/proto/spi.c
+  ../../src/proto/dispatch.c
+  ../../src/usb/usb_hid.c
+)
+target_include_directories(test_bt_input PRIVATE
+  ../../src/proto
+  ../../src/usb
+  ../../src/bt
+)
 add_executable(test_virt_tick
   test_virt_tick.c
   ../../src/proto/protocol.c
@@ -239,6 +251,7 @@ endif()
 enable_testing()
 add_test(NAME protocol COMMAND test_protocol)
 add_test(NAME usb COMMAND test_usb)
+add_test(NAME joy_imu_axis COMMAND test_joy_imu_axis)
 add_test(NAME config COMMAND test_config)
 add_test(NAME baud COMMAND test_baud)
 add_test(NAME pokecon COMMAND test_pokecon)
@@ -251,6 +264,7 @@ add_test(NAME player_capsaved COMMAND test_player_capsaved)
 add_test(NAME color_getinfo COMMAND test_color_getinfo)
 add_test(NAME reconnect_policy COMMAND test_reconnect_policy)
 add_test(NAME usb_cdc COMMAND test_usb_cdc)
+add_test(NAME bt_input COMMAND test_bt_input)
 add_test(NAME virt_tick COMMAND test_virt_tick)
 if(IMU_DUMMY)
   add_test(NAME imu_dummy COMMAND test_imu_dummy)

@@ -137,7 +137,7 @@ void usb_wired_get_stats(usb_wired_stats_t *st)
 }
 
 /* 有線 Input 0x30 は実機配置 (2wiCC ControllerData 互換)。
- * 12B 状態 + 36B IMU(無効のため 0) + 15B 埋め。mac/player は使わない。 */
+ * 12B 状態 + 36B IMU(role0以外は 0) + 15B 埋め。mac/player は使わない。 */
 static void build_input_report(uint8_t out[USB_WIRED_INPUT_LEN], uint32_t now_ms)
 {
     usb_sub_ctx_t ctx;
@@ -150,9 +150,14 @@ static void build_input_report(uint8_t out[USB_WIRED_INPUT_LEN], uint32_t now_ms
     ctx.rx = bcon_rx;
     ctx.ry = bcon_ry;
     ctx.timer = usb_wired_timer_now();
-    /* PC由来IMU (§5.13): 有効時のみ最新値を写す。memset済みのため
-     * 無効時は imu_valid=false・imu=0 のまま (静止値路へ)。 */
-    if (bcon_imu_valid) {
+    /* role は起動時1回だけ決まる (usb_set_role)。入力 pack (ボタン・
+     * 親指側選択) と 0x02 機器情報は usb_hid 側が ctx.role で適用する。 */
+    ctx.role = usb_get_role();
+    /* PC由来IMU (§5.13): 有線は role0 (ProCon) のみ載せる。role1/2 は
+     * 実機未確認のため IMU 未受信時と同じ静的既定 (36Bゼロ) を送る。
+     * memset済みのためゲート時は imu_valid=false・imu=0 のまま (静止値路へ)。
+     * 無線は bt_pack_input30 が別経路で全 role 対応 (§12.4)。 */
+    if (bcon_imu_valid && usb_imu_wired_role_ok(ctx.role)) {
         int k;
         ctx.imu_valid = true;
         for (k = 0; k < 6; k++) {
@@ -168,9 +173,6 @@ static void build_input_report(uint8_t out[USB_WIRED_INPUT_LEN], uint32_t now_ms
             }
         }
     }
-    /* role は起動時1回だけ決まる (usb_set_role)。入力 pack (ボタン・
-     * 親指側選択) と 0x02 機器情報は usb_hid 側が ctx.role で適用する。 */
-    ctx.role = usb_get_role();
 #if IMU_DUMMY
     /* Phase 0: ダミー生成器への時刻供給 (usb_hid.cはpico非依存のため渡す)。 */
     ctx.now_ms = now_ms;

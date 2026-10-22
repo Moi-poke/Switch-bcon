@@ -19,8 +19,8 @@
 
 ## レポート配置と polling（再構築用、由来は References R2・R8）
 
-- BT `0x30` 14B は `A1 30 timer 80 btn3 stick6 08`、応答 `0x21` は `A1 21 timer 80 btn3 stick6 08 ack sub …` を 50B へ 0 埋めする (`src/bt/hid.c:136-151,161-174,417-426`)。電池は `0x08` 固定であり USB の `0x91` とは別値である (`src/bt/hid.c:147,172`, `src/usb/usb_hid.c:61,67`)
-- 送信優先度は応答 > `0x30` > 空 `A1 00` である (`src/bt/hid.c:154-185`)。周期は full 7ms・ペア前 100ms であり (`src/bt/hid.c:129-132`)、USB 側 8ms (`src/usb/usb_wired.c:26-27`) とは別である。SUB 受付一覧と `0x03`/`0x30` の意味は [Protocol](Protocol.md) ハンドシェイク節を見ること
+- BT `0x30` は IMU 無効時 14B `A1 30 timer 80 btn3 stick6 08`、IMU 有効（`0x40`）時は 50B `A1 30` + 12B 状態 + 36B IMU（`src/bt/hid_pack.c:6-39`）。36B IMU は USB と同一実装 `usb_build_30_report` の `[13..48]` をそのまま貼る（role 変換・`0x41` 換算・未受信時の静止値も共有。`spec/protocol_v3.md` §12.4）。応答 `0x21` は `A1 21 timer 80 btn3 stick6 08 ack sub …` を 50B へ 0 埋めする (`src/bt/hid.c:174-190,557-563`)。電池は `0x08` 固定であり USB の `0x91` とは別値である (`src/bt/hid.c:186`, `src/usb/usb_hid.c:61,67`)
+- 送信優先度は応答 > `0x30` > 空 `A1 00` である (`src/bt/hid.c:192-232`)。周期は full で IMU 無効 7ms・IMU 有効 15ms、ペア前 100ms であり (`src/bt/hid_pack.c:53-62`)、USB 側 15ms (`src/usb/usb_wired.c:54`) とは独立である。`timer` は 5ms 刻み（`ms/5`。`src/bt/hid.c:152-157`）で USB と同値。SUB 受付一覧と `0x03`/`0x30` の意味は [Protocol](Protocol.md) ハンドシェイク節を見ること
 - 値の公開由来（2wiCC ControllerData・dekuNukem系・retro-pico-switch）と HW 証拠（AB1完走）は [References](References.md) R2・R4・R7・R8 を見ること
 
 ## SNIFF 要件（SUB 到達の必須条件）

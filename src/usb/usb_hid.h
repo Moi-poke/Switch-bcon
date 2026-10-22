@@ -62,6 +62,10 @@ void usb_imu_get_sensitivity(uint8_t *gyro_sel, uint8_t *accel_sel);
 /* 0x41を実際に受信したか（未受信ならget値は既定 3/0 のまま）。 */
 bool usb_imu_sensitivity_seen(void);
 
+/* 有線 0x30 で IMU 36B を載せる role。2026-10-23 時点の運用:
+ * 有線は ProCon(0) のみ実機確認済み。無線は §12.4 の通り全 role 対応。 */
+bool usb_imu_wired_role_ok(uint8_t role);
+
 /* エミュレーション role の伝達路 (起動時に1回だけ呼ぶ。USB init/列挙の前)。
  * main.c (T4所有) が store_emulate_load_def() の値をここへ渡す想定。
  * usb_set_personality(const personality_t *) ではなく uint8_t を受ける理由:

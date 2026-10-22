@@ -1521,6 +1521,13 @@ static void poll_tick(uint32_t now) {
         bcon_imu[3] = 0;
         bcon_imu[4] = 0;
         bcon_imu[5] = 0;
+        if (bcon_imu3_valid) {
+            for (k = 0; k < 3; k++) {
+                bcon_imu3[k][3] = 0;
+                bcon_imu3[k][4] = 0;
+                bcon_imu3[k][5] = 0;
+            }
+        }
     }
 
     usb_wired_task(now);
