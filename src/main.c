@@ -1558,6 +1558,11 @@ static void poll_tick(uint32_t now) {
                     if (nrm > 1e-12f) {
                         nx /= nrm; ny /= nrm; nz /= nrm; nw /= nrm;
                     }
+                    /* 非有限値は恒等へ戻す (一度壊れると以後ずっと無効になる)。 */
+                    if (!isfinite(nx) || !isfinite(ny) || !isfinite(nz) ||
+                        !isfinite(nw)) {
+                        nx = 0.0f; ny = 0.0f; nz = 0.0f; nw = 1.0f;
+                    }
                     bcon_quat[0] = nx;
                     bcon_quat[1] = ny;
                     bcon_quat[2] = nz;
