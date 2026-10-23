@@ -35,6 +35,10 @@ typedef struct {
      * 順に載せる（5ms間隔の階段化を避ける）。falseは従来の複製。 */
     bool imu3_valid;
     int16_t imu3[3][6];
+    /* 0x40で要求されたIMUモード (0=off,1=raw,2=quat,3=unknown)。
+     * 2のとき0x30の36Bを圧縮クォータニオン形式で返す。 */
+    uint8_t imu_mode;
+    uint32_t ms_now; /* mode2のタイムスタンプ用 */
 #if IMU_DUMMY
     // Phase 0 実験用 (ON時のみ存在)。to_ms_since_boot由来の時刻。
     // ダミー生成器へ渡す (usb_hid.cはpico非依存のため呼出側が渡す)。

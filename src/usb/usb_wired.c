@@ -33,6 +33,7 @@ extern int16_t bcon_imu3[3][6]; /* 0x30の3スロット用（古い順） */
 extern bool bcon_imu3_valid;
 extern bool bcon_imu_valid; /* 所有元main.c。同有効flag */
 extern bool bcon_wired_imu; /* 所有元main.c。有線0x40受信flag (PLAYER_INFO bit0へ) */
+extern uint8_t bcon_imu_mode; /* 0x40の実引数 (0..3) */
 
 /* timer換算 (5ms刻み)。gyro-mini実機で受理確認 (2026-10-17)。
  * 純正相当 (espp: 4.96ms)。15ms周期でレポート毎 +3。
@@ -173,6 +174,8 @@ static void build_input_report(uint8_t out[USB_WIRED_INPUT_LEN], uint32_t now_ms
             }
         }
     }
+    ctx.imu_mode = bcon_imu_mode;
+    ctx.ms_now = now_ms;
 #if IMU_DUMMY
     /* Phase 0: ダミー生成器への時刻供給 (usb_hid.cはpico非依存のため渡す)。 */
     ctx.now_ms = now_ms;
@@ -481,6 +484,9 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
         /* 有線0x40 IMU有効化の観測 (応答は変えない。PLAYER_INFO bit0へ)。 */
         if (sub == 0x40u && req_len >= 12) {
             bcon_wired_imu = (req[11] != 0u);
+            /* 引数はON/OFFではなくIMU形式の選択 (実機は02を送る)。
+             * 0x30のエンコーダを切り替えるため値を保持する。 */
+            bcon_imu_mode = req[11];
         }
 #if IMU_DUMMY
         /* Phase 0: 0x40/0x03/0x41/0x11の観測 (応答バイトは変えない)。 */

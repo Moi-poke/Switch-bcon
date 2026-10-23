@@ -143,6 +143,7 @@ bool bcon_imu3_valid;
 bool bcon_imu_valid;
 // 有線USB側の0x40 IMU有効化受信 (usb_wired.cが設定。PLAYER_INFO bit0へOR)。
 bool bcon_wired_imu;
+uint8_t bcon_imu_mode;
 
 // ---- RUMBLE受信 (BT 0x10復号amp保持。変化時のみRUMBLE frameでPCへ転送) ----
 uint32_t bcon_usb_rumble_n;
@@ -178,10 +179,22 @@ static uint32_t s_reboot_at; // 0以外は指定msでwatchdog reboot (WIRED切�
 static uint32_t s_bootsel_at; // 0以外は指定msでreset_usb_boot (開発用BOOTSEL)
 
 // bt_compat.h (probe_line) の実体。UART0 printf。
+#ifndef LOG_TO_DATA_UART
+#define LOG_TO_DATA_UART 0
+#endif
+
 void probe_line(const char *s) {
-    if (s != NULL) {
-        printf("%s\n", s);
+    if (s == NULL) {
+        return;
     }
+#if LOG_TO_DATA_UART
+    /* 診断用: ログをデータ側UART(GP4/5)へ出す。PCのログ欄/スニファで
+     * 拾えるが、バイナリフレームにテキストが混ざる（受信側は再同期する）。 */
+    uart_puts(DATA_UART, s);
+    uart_puts(DATA_UART, "\n");
+#else
+    printf("%s\n", s);
+#endif
 }
 
 // ---- Fault可視化 ----

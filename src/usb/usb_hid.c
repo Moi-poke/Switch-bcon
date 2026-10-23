@@ -330,6 +330,40 @@ static int16_t imu_scale_value(int32_t v, uint8_t sel, const uint16_t *ranges,
 static const bool k_joy_negate_axis[6] = {false, true,  true,
                                           false, true,  true};
 
+/* IMU mode2 (0x40 arg=02): NS-LIB-HID ns_mode_2_s と同じ36B。
+ * 第1段はクォータニオン恒等(0,0,0,1)固定。accelは新しいサンプルを
+ * y,x,z 順（ns_motion_vector_s）で先頭6Bへ。残りは0、時刻は
+ * 11bit ms カウンタ (bit0→word30 bit31, [1..10]→word34)。 */
+static void pack_mode2_identity(const int16_t acc[3], uint32_t ms,
+                                uint8_t out[36])
+{
+    uint32_t w;
+    uint16_t h;
+    memset(out, 0, 36);
+    out[0] = (uint8_t)((uint16_t)acc[1] & 0xFFu);
+    out[1] = (uint8_t)((uint16_t)acc[1] >> 8);
+    out[2] = (uint8_t)((uint16_t)acc[0] & 0xFFu);
+    out[3] = (uint8_t)((uint16_t)acc[0] >> 8);
+    out[4] = (uint8_t)((uint16_t)acc[2] & 0xFFu);
+    out[5] = (uint8_t)((uint16_t)acc[2] >> 8);
+    /* word@6: mode=2, max_index=3(w), 成分は0。 */
+    w = 2u | (3u << 2);
+    out[6] = (uint8_t)(w & 0xFFu);
+    out[7] = (uint8_t)((w >> 8) & 0xFFu);
+    out[8] = (uint8_t)((w >> 16) & 0xFFu);
+    out[9] = (uint8_t)((w >> 24) & 0xFFu);
+    /* word@30: timestamp bit0 を bit31 へ。 */
+    w = (ms & 1u) << 31;
+    out[30] = (uint8_t)(w & 0xFFu);
+    out[31] = (uint8_t)((w >> 8) & 0xFFu);
+    out[32] = (uint8_t)((w >> 16) & 0xFFu);
+    out[33] = (uint8_t)((w >> 24) & 0xFFu);
+    /* word@34: (ms>>1)&0x3FF | count(3)<<10。 */
+    h = (uint16_t)(((ms >> 1) & 0x3FFu) | (3u << 10));
+    out[34] = (uint8_t)(h & 0xFFu);
+    out[35] = (uint8_t)(h >> 8);
+}
+
 int usb_build_30_report(const usb_sub_ctx_t *ctx, uint8_t out64[64])
 {
     int k;
@@ -366,6 +400,12 @@ int usb_build_30_report(const usb_sub_ctx_t *ctx, uint8_t out64[64])
      * Z=-1g）ため、送出時に Y,Z を反転する (k_joy_negate_axis)。
      * 0x41 のレンジ換算は符号反転後の値に、軸ごとに適用する。
      * role0/1 は恒等。 */
+    if (ctx->imu_valid && ctx->imu_mode == 2u) {
+        /* 要求がmode2のときはRAW36Bではなく圧縮クォータニオン形式。 */
+        const int16_t *acc = ctx->imu3_valid ? ctx->imu3[2] : ctx->imu;
+        pack_mode2_identity(acc, ctx->ms_now, &out64[13]);
+        return 64;
+    }
     if (ctx->imu_valid) {
         for (k = 0; k < 3; k++) {
             int base = 13 + k * 12;
