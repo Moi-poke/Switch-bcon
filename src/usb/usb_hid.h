@@ -39,6 +39,7 @@ typedef struct {
      * 2のとき0x30の36Bを圧縮クォータニオン形式で返す。 */
     uint8_t imu_mode;
     uint32_t ms_now; /* mode2のタイムスタンプ用 */
+    float quat[4];   /* mode2の姿勢 (x,y,z,w)。FW側で積分済み */
 #if IMU_DUMMY
     // Phase 0 実験用 (ON時のみ存在)。to_ms_since_boot由来の時刻。
     // ダミー生成器へ渡す (usb_hid.cはpico非依存のため呼出側が渡す)。

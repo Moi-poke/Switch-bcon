@@ -5,6 +5,7 @@
  * 一部のUSB応答はPABotBase2で観測された応答を参考に同等機能を実装している。
  * 互換製品であることや完全一致を主張するものではない。
  * 文中の [PABot-ref] はこの注記への参照。 */
+#include <math.h>
 #include <string.h>
 #include "usb_hid.h"
 #include "joy_spi_override.h"
@@ -331,37 +332,75 @@ static const bool k_joy_negate_axis[6] = {false, true,  true,
                                           false, true,  true};
 
 /* IMU mode2 (0x40 arg=02): NS-LIB-HID ns_mode_2_s と同じ36B。
- * 第1段はクォータニオン恒等(0,0,0,1)固定。accelは新しいサンプルを
- * y,x,z 順（ns_motion_vector_s）で先頭6Bへ。残りは0、時刻は
- * 11bit ms カウンタ (bit0→word30 bit31, [1..10]→word34)。 */
-static void pack_mode2_identity(const int16_t acc[3], uint32_t ms,
-                                uint8_t out[36])
+ * accelは y,x,z 順、クォータニオンは最大成分を基準に残り3成分を30bitへ。
+ * role2はRAWと同じくY,Zを反転してから詰める。 */
+static void pack_mode2(const int16_t acc[3], const float q_in[4],
+                       uint32_t ms, uint8_t role, uint8_t out[36])
 {
-    uint32_t w;
-    uint16_t h;
+    float q[4];
+    int16_t ax = acc[0];
+    int16_t ay = acc[1];
+    int16_t az = acc[2];
+    int32_t c[3];
+    uint8_t idx = 0;
+    int i;
+    float sign;
+    uint32_t w6, w18, w30;
+    uint16_t w10, w34;
+
+    if (role == 2u) {
+        ay = (int16_t)-ay;
+        az = (int16_t)-az;
+    }
+    q[0] = q_in[0];
+    q[1] = q_in[1];
+    q[2] = q_in[2];
+    q[3] = q_in[3];
+
     memset(out, 0, 36);
-    out[0] = (uint8_t)((uint16_t)acc[1] & 0xFFu);
-    out[1] = (uint8_t)((uint16_t)acc[1] >> 8);
-    out[2] = (uint8_t)((uint16_t)acc[0] & 0xFFu);
-    out[3] = (uint8_t)((uint16_t)acc[0] >> 8);
-    out[4] = (uint8_t)((uint16_t)acc[2] & 0xFFu);
-    out[5] = (uint8_t)((uint16_t)acc[2] >> 8);
-    /* word@6: mode=2, max_index=3(w), 成分は0。 */
-    w = 2u | (3u << 2);
-    out[6] = (uint8_t)(w & 0xFFu);
-    out[7] = (uint8_t)((w >> 8) & 0xFFu);
-    out[8] = (uint8_t)((w >> 16) & 0xFFu);
-    out[9] = (uint8_t)((w >> 24) & 0xFFu);
-    /* word@30: timestamp bit0 を bit31 へ。 */
-    w = (ms & 1u) << 31;
-    out[30] = (uint8_t)(w & 0xFFu);
-    out[31] = (uint8_t)((w >> 8) & 0xFFu);
-    out[32] = (uint8_t)((w >> 16) & 0xFFu);
-    out[33] = (uint8_t)((w >> 24) & 0xFFu);
-    /* word@34: (ms>>1)&0x3FF | count(3)<<10。 */
-    h = (uint16_t)(((ms >> 1) & 0x3FFu) | (3u << 10));
-    out[34] = (uint8_t)(h & 0xFFu);
-    out[35] = (uint8_t)(h >> 8);
+    out[0] = (uint8_t)((uint16_t)ay & 0xFFu);
+    out[1] = (uint8_t)((uint16_t)ay >> 8);
+    out[2] = (uint8_t)((uint16_t)ax & 0xFFu);
+    out[3] = (uint8_t)((uint16_t)ax >> 8);
+    out[4] = (uint8_t)((uint16_t)az & 0xFFu);
+    out[5] = (uint8_t)((uint16_t)az >> 8);
+
+    for (i = 1; i < 4; i++) {
+        if (fabsf(q[i]) > fabsf(q[idx])) {
+            idx = (uint8_t)i;
+        }
+    }
+    sign = (q[idx] < 0.0f) ? -1.0f : 1.0f;
+    for (i = 0; i < 3; i++) {
+        c[i] = (int32_t)(q[(idx + (uint8_t)i + 1u) & 3u] * 0x40000000 * sign);
+    }
+
+    w6 = 2u | ((uint32_t)idx << 2);
+    w6 |= ((uint32_t)(c[0] >> 10) & 0x1FFFFFu) << 4;
+    w6 |= ((uint32_t)((c[1] >> 10) & 0x7Fu)) << 25;
+    w10 = (uint16_t)(((uint32_t)(c[1] >> 10) & 0x1FFF80u) >> 7);
+    w10 |= (uint16_t)(((uint32_t)(c[2] >> 10) & 0x3u) << 14);
+    w18 = ((uint32_t)(c[2] >> 10) & 0x1FFFFCu) >> 2;
+    /* delta_last_first_* / delta_mid_avg_* は参照実装同様 0。 */
+    w30 = (uint32_t)(ms & 1u) << 31;
+    w34 = (uint16_t)(((ms >> 1) & 0x3FFu) | (3u << 10));
+
+    out[6] = (uint8_t)(w6 & 0xFFu);
+    out[7] = (uint8_t)((w6 >> 8) & 0xFFu);
+    out[8] = (uint8_t)((w6 >> 16) & 0xFFu);
+    out[9] = (uint8_t)((w6 >> 24) & 0xFFu);
+    out[10] = (uint8_t)(w10 & 0xFFu);
+    out[11] = (uint8_t)(w10 >> 8);
+    out[18] = (uint8_t)(w18 & 0xFFu);
+    out[19] = (uint8_t)((w18 >> 8) & 0xFFu);
+    out[20] = (uint8_t)((w18 >> 16) & 0xFFu);
+    out[21] = (uint8_t)((w18 >> 24) & 0xFFu);
+    out[30] = (uint8_t)(w30 & 0xFFu);
+    out[31] = (uint8_t)((w30 >> 8) & 0xFFu);
+    out[32] = (uint8_t)((w30 >> 16) & 0xFFu);
+    out[33] = (uint8_t)((w30 >> 24) & 0xFFu);
+    out[34] = (uint8_t)(w34 & 0xFFu);
+    out[35] = (uint8_t)(w34 >> 8);
 }
 
 int usb_build_30_report(const usb_sub_ctx_t *ctx, uint8_t out64[64])
@@ -403,7 +442,7 @@ int usb_build_30_report(const usb_sub_ctx_t *ctx, uint8_t out64[64])
     if (ctx->imu_valid && ctx->imu_mode == 2u) {
         /* 要求がmode2のときはRAW36Bではなく圧縮クォータニオン形式。 */
         const int16_t *acc = ctx->imu3_valid ? ctx->imu3[2] : ctx->imu;
-        pack_mode2_identity(acc, ctx->ms_now, &out64[13]);
+        pack_mode2(acc, ctx->quat, ctx->ms_now, role, &out64[13]);
         return 64;
     }
     if (ctx->imu_valid) {

@@ -10,6 +10,7 @@
 // 合成Flash試験 (PoC) は廃止。TLV実書込がFlash活動になる。
 
 #include <stdio.h>
+#include <math.h>
 #include <string.h>
 
 #include "pico/stdlib.h"
@@ -140,6 +141,9 @@ int16_t bcon_imu[6];
  * それを捨てずに3スロットへ順に載せる。 */
 int16_t bcon_imu3[3][6];
 bool bcon_imu3_valid;
+/* mode2用の姿勢クォータニオン (x,y,z,w)。Core0で毎サンプル積分する。 */
+float bcon_quat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+static uint32_t s_quat_ms;
 bool bcon_imu_valid;
 // 有線USB側の0x40 IMU有効化受信 (usb_wired.cが設定。PLAYER_INFO bit0へOR)。
 bool bcon_wired_imu;
@@ -1505,6 +1509,61 @@ static void poll_tick(uint32_t now) {
                 memcpy(bcon_imu3[k], cp.imu, sizeof(bcon_imu3[k]));
             }
             bcon_imu3_valid = true;
+        }
+        /* mode2のクォータニオン: 新着1件ごとにジャイロを積分する。
+         * 角速度は±2000dps前提の生値→rad/s。Δtは前回からの実時間
+         * （上限8ms、0以下は公称5ms）。 */
+        {
+            float dt = (float)(uint32_t)(now - s_quat_ms) / 1000.0f;
+            const float k_rad =
+                (2000.0f / 32768.0f) * (3.14159265358979f / 180.0f);
+            if (dt <= 0.0f || dt > 0.008f) {
+                dt = 0.005f;
+            }
+            s_quat_ms = now;
+            {
+                uint8_t role = usb_get_role();
+                int16_t gy = cp.imu[4];
+                int16_t gz = cp.imu[5];
+                float wx, wy, wz;
+                if (role == 2u) {
+                    gy = (int16_t)-gy;
+                    gz = (int16_t)-gz;
+                }
+                wx = (float)cp.imu[3] * k_rad * dt;
+                wy = (float)gy * k_rad * dt;
+                wz = (float)gz * k_rad * dt;
+                float norm = sqrtf(wx * wx + wy * wy + wz * wz);
+                float half = 0.5f * norm;
+                float s;
+                float dx, dy, dz, dw;
+                if (norm > 1e-12f) {
+                    s = sinf(half) / norm;
+                } else {
+                    s = 0.5f;
+                }
+                dx = wx * s;
+                dy = wy * s;
+                dz = wz * s;
+                dw = cosf(half);
+                {
+                    float qx = bcon_quat[0], qy = bcon_quat[1];
+                    float qz = bcon_quat[2], qw = bcon_quat[3];
+                    float nx, ny, nz, nw, nrm;
+                    nx = qw * dx + qx * dw + qy * dz - qz * dy;
+                    ny = qw * dy - qx * dz + qy * dw + qz * dx;
+                    nz = qw * dz + qx * dy - qy * dx + qz * dw;
+                    nw = qw * dw - qx * dx - qy * dy - qz * dz;
+                    nrm = sqrtf(nx * nx + ny * ny + nz * nz + nw * nw);
+                    if (nrm > 1e-12f) {
+                        nx /= nrm; ny /= nrm; nz /= nrm; nw /= nrm;
+                    }
+                    bcon_quat[0] = nx;
+                    bcon_quat[1] = ny;
+                    bcon_quat[2] = nz;
+                    bcon_quat[3] = nw;
+                }
+            }
         }
     } else if (bcon_imu_valid &&
                (int32_t)(now - s_last_imu_ms) >= (int32_t)IMU_STATIC_MS) {

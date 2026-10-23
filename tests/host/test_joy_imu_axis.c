@@ -61,13 +61,14 @@ int main(void)
     ctx.imu_valid = true;
     ctx.imu3_valid = true;
     ctx.ms_now = 0x1234u;
+    ctx.quat[0] = 0.0f; ctx.quat[1] = 0.0f; ctx.quat[2] = 0.0f; ctx.quat[3] = 1.0f;
     memcpy(ctx.imu3[2], imu, sizeof(imu));
     ctx.imu_mode = 2u;
     CHECK(usb_build_30_report(&ctx, rep) == 64, "builds 64B");
-    /* NS-LIB-HID の accel は y,x,z 順。role2のY,Z反転はmode2では未適用。 */
-    CHECK(rd16(&rep[13], 0) == 200, "accel slot0 = ay first");
+    /* NS-LIB-HID の accel は y,x,z 順。role2はRAWと同じくY,Z反転。 */
+    CHECK(rd16(&rep[13], 0) == -200, "accel slot0 = -ay first");
     CHECK(rd16(&rep[13], 1) == 100, "accel slot0 = ax second");
-    CHECK(rd16(&rep[13], 2) == 300, "accel slot0 = az third");
+    CHECK(rd16(&rep[13], 2) == -300, "accel slot0 = -az third");
     CHECK(rep[19] == 0x0Eu && rep[20] == 0x00u, "mode=2 max_index=3");
     /* blob offset 34 -> rep[47..48]: (ms>>1)&0x3FF | 3<<10 */
     CHECK(rep[47] == 0x1Au && rep[48] == 0x0Du, "timestamp 0x1234 ms");

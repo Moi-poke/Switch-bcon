@@ -34,6 +34,7 @@ extern bool bcon_imu3_valid;
 extern bool bcon_imu_valid; /* 所有元main.c。同有効flag */
 extern bool bcon_wired_imu; /* 所有元main.c。有線0x40受信flag (PLAYER_INFO bit0へ) */
 extern uint8_t bcon_imu_mode; /* 0x40の実引数 (0..3) */
+extern float bcon_quat[4];    /* mode2の姿勢 (Core0で積分) */
 
 /* timer換算 (5ms刻み)。gyro-mini実機で受理確認 (2026-10-17)。
  * 純正相当 (espp: 4.96ms)。15ms周期でレポート毎 +3。
@@ -176,6 +177,10 @@ static void build_input_report(uint8_t out[USB_WIRED_INPUT_LEN], uint32_t now_ms
     }
     ctx.imu_mode = bcon_imu_mode;
     ctx.ms_now = now_ms;
+    ctx.quat[0] = bcon_quat[0];
+    ctx.quat[1] = bcon_quat[1];
+    ctx.quat[2] = bcon_quat[2];
+    ctx.quat[3] = bcon_quat[3];
 #if IMU_DUMMY
     /* Phase 0: ダミー生成器への時刻供給 (usb_hid.cはpico非依存のため渡す)。 */
     ctx.now_ms = now_ms;
