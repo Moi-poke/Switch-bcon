@@ -11,6 +11,12 @@
 #include "spi.h"
 #include "pack.h"
 
+#ifndef JOY_WIRED_IMU_ALL
+#define JOY_WIRED_IMU_ALL 0
+#endif
+#ifndef JOY_USB_FW_JOY_OLD
+#define JOY_USB_FW_JOY_OLD 0
+#endif
 /* 診断ビルド用の既定（hostテストは定義しないため）。
  * 0x30 IMU の role2 軸写像は実機測定で確定している一方、SPI 校正値
  * (0x6020/0x6080) の回転は A/B したいので別名にして残す。
@@ -168,7 +174,13 @@ bool usb_kick81_due(uint8_t role, bool wired_en, bool mounted,
  * 全 role に IMU を載せる (§12.4) ので、この述語は有線からのみ呼ぶ。 */
 bool usb_imu_wired_role_ok(uint8_t role)
 {
+#if JOY_WIRED_IMU_ALL
+    /* 診断用: 有線role1/2にもIMUを載せる（既定はrole0のみ）。 */
+    (void)role;
+    return true;
+#else
     return role == 0u;
+#endif
 }
 
 bool usb_req_is_handshake(const uint8_t *req, int req_len)
@@ -458,8 +470,14 @@ static void build_device_info_response(uint8_t *out, uint8_t role,
     out[13] = 0x82u;
     out[14] = 0x02u;
     if (role != 0u) {
+#if JOY_USB_FW_JOY_OLD
+        /* 診断用: 無線と同じ 3.72 を名乗る（高FWのモード差を切り分ける）。 */
+        out[15] = 0x03u;
+        out[16] = 0x48u;
+#else
         out[15] = 0x04u;
         out[16] = 0x33u;
+#endif
     } else {
         out[15] = 0x03u;
         out[16] = 0x48u;

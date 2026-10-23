@@ -49,6 +49,10 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
   # JOY_USB_PID_2007: 診断用。role2のUSB PIDを0x2007にしてWebHID等に
   # Joy-Con R として認識させる（既定は全role 0x2009）。
   set(JOY_USB_PID_2007 0 CACHE STRING "role2 USB PID 0x2007 for WebHID tests")
+  # 診断用: 有線role1/2にもIMUを載せる（既定0=role0のみ）。
+  set(JOY_WIRED_IMU_ALL 0 CACHE STRING "wired IMU for role1/2 (diag)")
+  # 診断用: USBのJoy役FWバージョンを無線と同じ 03 48 にする。
+  set(JOY_USB_FW_JOY_OLD 0 CACHE STRING "Joy USB fw 03 48 (diag)")
   set(IMU_DUMMY_INTERVAL_MS 8 CACHE STRING "Dummy USB report interval ms (ON only)")
   set(IMU_DUMMY_MODE 1 CACHE STRING "Dummy mode (ON only: 0=SINE, 1=STEP)")
   set(IMU_DUMMY_GYRO_AXIS 2 CACHE STRING "Dummy gyro axis 0..2 (ON only)")
@@ -175,6 +179,8 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
     IMU_DUMMY=${IMU_DUMMY}
     JOY_SPI_CAL_ROT=${JOY_SPI_CAL_ROT}
     JOY_USB_PID_2007=${JOY_USB_PID_2007}
+    JOY_WIRED_IMU_ALL=${JOY_WIRED_IMU_ALL}
+    JOY_USB_FW_JOY_OLD=${JOY_USB_FW_JOY_OLD}
   )
 
   # Phase 0: ON時のみ実験パラメータとimu_dummy.cを足す。libmはSINE用。
