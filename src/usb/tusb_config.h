@@ -51,8 +51,9 @@ extern "C" {
 /* USB profileは実行時選択 (単一UF2。起動時1回・tud_init前に確定・reboot適用)。
  * TinyUSBのclass有効化はcompile時定数のため両classを有効化し、記述子側で
  * profileに応じた構成だけを列挙する。未使用classのコールバックは発火しない。
+ * 無線CDC profileは data(itf0/1) + log(itf2/3) の2系統。
  * 有線HID-only時の41B/203Bバイト同一は記述子側のstatic_assertが担保する。 */
-#define CFG_TUD_CDC 1
+#define CFG_TUD_CDC 2
 #define CFG_TUD_CDC_RX_BUFSIZE 64
 #define CFG_TUD_CDC_TX_BUFSIZE 64
 #define CFG_TUD_CDC_EP_BUFSIZE 64

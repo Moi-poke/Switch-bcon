@@ -7,6 +7,7 @@
 #include "switch_hid.h"
 #include "bt_compat.h"
 #include "usb_wired.h"
+#include "usb_cdc.h" // profile判定 (dep-free。tusb/btstack衝突なし)
 #include "reconnect_policy.h"
 
 /* 接続1回あたりの能動page予算。0 になったら受動待機へ永久移行する。
@@ -239,8 +240,12 @@ void link_apply_wired_mode(bool wired)
             hid_device_disconnect(probe_hid_cid);
         }
     } else {
-        /* 無線に戻すときは USB 側を外す。黙ったまま残すと二重認識になる。 */
-        usb_wired_disconnect();
+        /* 無線に戻すときは USB HID 側を外す。黙ったまま残すと二重認識になる。
+         * ただし無線CDC profileはHIDを列挙していない (USB=PC専用CDC) ため、
+         * 外すとCOMポートまで消える。CDC profileでは接続を維持する。 */
+        if (usb_cdc_is_wired_profile()) {
+            usb_wired_disconnect();
+        }
     }
     /* Switch からの呼び直し (着信 page) 対策と電波停止は update に集約。
      * LE 広告・スキャンの要否は update が見る。 */

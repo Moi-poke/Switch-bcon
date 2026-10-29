@@ -6,8 +6,10 @@
  * bool/uint32_t のみで宣言する。実体は src/usb/usb_cdc.c が持つ。
  *
  * 注記:
+ * - 無線profileは data(itf0) と log(itf1) の2系統。有線HID profileはCDCなし。
  * - RX は最大 64B/tick (task_poll が1回に汲み上げる上限)。
  * - TX は nonblock (write_bytes は実際に積めた分だけ返し、待たない)。
+ * - log は probe_line の写しをリングに積み、1ms tick で送る (行単位で破棄)。
  * - DTR/RTS は無視 (connected は mount のみ見る)。
  * - コールバック内処理なし (rx/tx コールバックを置かず poll 駆動)。 */
 
@@ -34,6 +36,16 @@ uint32_t usb_cdc_write_available(void);
 uint32_t usb_cdc_write_bytes(const uint8_t *data, uint32_t len);
 /* 積み分を送出する。 */
 void usb_cdc_write_flush(void);
+
+/* 無線profileのlog CDC (itf 1) へ1行を積む。HID profile時は何もしない。
+ * 改行は本関数が付ける。非ブロッキング (満杯時は行単位で破棄)。 */
+void usb_cdc_log_line(const char *s);
+/* 積んだログをlog CDCへ送る (Core0の1ms tickから呼ぶ)。 */
+void usb_cdc_log_task(void);
+/* log CDCが列挙済みか (診断用)。 */
+bool usb_cdc_log_ready(void);
+/* 破棄した行数 (診断用)。 */
+uint32_t usb_cdc_log_dropped(void);
 
 #ifdef __cplusplus
 }
