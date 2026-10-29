@@ -3,14 +3,22 @@
  * バイト列は ToadKing の純正ダンプの写し。BT 側の記述子とは別物。
  * bcdDevice 0x0200 は実測未確認 (0x0210 説あり。ドック検証で確定する)。 */
 
+#include <stdio.h>
 #include <string.h>
 
 #include "tusb.h"
+#include "pico/unique_id.h"
 
 #include "usb_hid.h"
 #include "usb_cdc.h" // profile参照 (dep-free header。tusb/btstack衝突なし)
 
 /* USB profileは実行時選択 (単一UF2。usb_cdc_set_profileで起動時1回確定)。 */
+
+/* 無線(CDC) profileのUSB ID。有線HIDは純正写し (057E:2009) のまま。
+ * 同一PCで有線HIDと無線CDCが同じUSBインスタンスIDになると、Windowsの
+ * デバイス/ドライバキャッシュが衝突してCOMポートが出ないため別IDにする。 */
+#define CDC_PROFILE_VID 0x2E8Au /* Raspberry Pi */
+#define CDC_PROFILE_PID 0x000Au
 
 /* Device: USB 2.00, EP0 64B, VID 0x057E / PID は Plan A で全 role 0x2009 固定
  * (USB_PID_BY_ROLE 全要素 0x2009。PERSONALITY_TABLE の BT 側 2006/2007 は
@@ -39,15 +47,17 @@ static tusb_desc_device_t desc_device = {
 
 uint8_t const *tud_descriptor_device_cb(void)
 {
-    /* Plan A: 全 role 0x2009 固定 (usb_pid_for_role は全 role 0x2009 を返す)。 */
-    /* profileでclassのみ切替 (CDC-only時はIAD構成。MISC/COMMON/IAD)。 */
-    /* VID/PID/文字列は同一 (同一物理機器)。tud_init前にprofile確定済み。 */
-    desc_device.idProduct = usb_pid_for_role(usb_get_role());
+    /* 有線=従来の純正写し (Plan A: 全role 0x2009)。無線=PC専用CDCの別ID。
+     * 文字列も profile で切り替える (下の string cb)。tud_init前に確定済み。 */
     if (!usb_cdc_is_wired_profile()) {
+        desc_device.idVendor = CDC_PROFILE_VID;
+        desc_device.idProduct = CDC_PROFILE_PID;
         desc_device.bDeviceClass = TUSB_CLASS_MISC;
         desc_device.bDeviceSubClass = MISC_SUBCLASS_COMMON;
         desc_device.bDeviceProtocol = MISC_PROTOCOL_IAD;
     } else {
+        desc_device.idVendor = 0x057Eu;
+        desc_device.idProduct = usb_pid_for_role(usb_get_role());
         desc_device.bDeviceClass = 0x00;
         desc_device.bDeviceSubClass = 0x00;
         desc_device.bDeviceProtocol = 0x00;
@@ -161,25 +171,33 @@ uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance)
 }
 
 /* Configuration 一式はprofileで選択 (実行時)。両配列を保持しcbで返す。
- * 有線HID-only 41Bはバイト同一 (assert維持)。CDC-onlyは 9+66B。
- * EP: CDC (notif 0x83 / out 0x02 / in 0x82) はHID (0x81/0x01) と非衝突。 */
+ * 有線HID-only 41Bはバイト同一 (assert維持)。
+ * 無線CDCは2系統: itf0/1=data (v3 frame) + itf2/3=log (probe_line写し)。
+ * EP: data (notif 0x83 / out 0x02 / in 0x82)、log (notif 0x84 / out 0x03 / in 0x85)
+ * はHID (0x81/0x01) と非衝突。 */
 enum {
-    ITF_NUM_CDC,
     ITF_NUM_CDC_DATA,
+    ITF_NUM_CDC_DATA_EP,
+    ITF_NUM_CDC_LOG,
+    ITF_NUM_CDC_LOG_EP,
     ITF_NUM_CDC_TOTAL,
 };
 
-#define CDC_CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN)
+#define CDC_CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN * 2u)
 
 static uint8_t const desc_configuration_cdc[] = {
     TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_CDC_TOTAL, 0, CDC_CONFIG_TOTAL_LEN,
                           TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 500),
-    TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, 0, 0x83, 8, 0x02, 0x82, 64),
+    /* data: v3 frame (PCのプロトコル用) */
+    TUD_CDC_DESCRIPTOR(ITF_NUM_CDC_DATA, 0, 0x83, 8, 0x02, 0x82, 64),
+    /* log: probe_lineのASCII写し */
+    TUD_CDC_DESCRIPTOR(ITF_NUM_CDC_LOG, 0, 0x84, 8, 0x03, 0x85, 64),
 };
 
-/* CDC-only wTotalLength (9 + 66) との一致をビルドで縛る。 */
-_Static_assert(sizeof(desc_configuration_cdc) == (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN),
-               "cdc config must be 9+66B");
+/* CDC-only wTotalLength (9 + 66*2) との一致をビルドで縛る。 */
+_Static_assert(sizeof(desc_configuration_cdc) ==
+                   (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN * 2u),
+               "cdc config must be 9+66*2B");
 /* Configuration 一式 (wTotalLength 41)。
  * 純正通り: Remote Wakeup、500mA、HID 1IF、IN 0x81 / OUT 0x01 (各64B・間隔8)。 */
 enum {
@@ -227,6 +245,22 @@ static char const *const wired_string_desc_arr[] = {
 
 static uint16_t wired_desc_str[32 + 1];
 
+/* 無線(CDC) profileのシリアル。WindowsのデバイスインスタンスIDを基板ごとに
+ * 分ける (有線HIDの純正固定値 "000000000001" は不変)。 */
+static char s_cdc_serial[13];
+
+static void cdc_serial_init(void)
+{
+    pico_unique_board_id_t id;
+    if (s_cdc_serial[0] != '\0') {
+        return;
+    }
+    pico_get_unique_board_id(&id);
+    snprintf(s_cdc_serial, sizeof(s_cdc_serial), "BCON%02X%02X%02X%02X",
+             (unsigned)id.id[0], (unsigned)id.id[1],
+             (unsigned)id.id[2], (unsigned)id.id[3]);
+}
+
 uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid)
 {
     size_t chr_count;
@@ -243,7 +277,16 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid)
             return NULL;
         }
         str = wired_string_desc_arr[index];
-        if (index == WIRED_STRID_PRODUCT) {
+        if (!usb_cdc_is_wired_profile()) {
+            if (index == WIRED_STRID_MANUFACTURER) {
+                str = "Raspberry Pi";
+            } else if (index == WIRED_STRID_PRODUCT) {
+                str = "switch-bcon CDC";
+            } else if (index == WIRED_STRID_SERIAL) {
+                cdc_serial_init();
+                str = s_cdc_serial;
+            }
+        } else if (index == WIRED_STRID_PRODUCT) {
             str = usb_product_for_role(usb_get_role());
         }
         chr_count = strlen(str);

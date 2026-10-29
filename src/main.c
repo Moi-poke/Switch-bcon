@@ -177,10 +177,11 @@ static bool s_bt_init; // BTstack初期化済み (無線起動時のみtrue)
 static uint32_t s_reboot_at; // 0以外は指定msでwatchdog reboot (WIRED切替適用)
 static uint32_t s_bootsel_at; // 0以外は指定msでreset_usb_boot (開発用BOOTSEL)
 
-// bt_compat.h (probe_line) の実体。UART0 printf。
+// bt_compat.h (probe_line) の実体。UART0 printf ＋ 無線時は log CDC へも写す。
 void probe_line(const char *s) {
     if (s != NULL) {
         printf("%s\n", s);
+        usb_cdc_log_line(s);
     }
 }
 
@@ -1249,6 +1250,8 @@ static void poll_tick(uint32_t now) {
     bool cdc_has;
     // CDC pumpはg_m非保持区間で先に回す (cbがenterするため)。
     // Core1 UART路・DMA・huntとは無関係。HID profile時は不応答。
+    // log CDCの送出もここ (probe_lineはTinyUSBを触らない)。
+    usb_cdc_log_task();
     cdc_poll_feed(now);
     mutex_enter_blocking(&g_m);
     cp = g_s;
@@ -1577,15 +1580,17 @@ static void stats_print(void) {
     mutex_exit(&g_m);
     usb_wired_get_stats(&ws);
     snprintf(line, sizeof(s_stats_line),
-             "BCON t=%lus hs=%d mnt=%d cfg=%d cid=%u wired=%d "
+             "BCON t=%lus hs=%d cfg=%d cdc=%d/%d lgd=%lu cid=%u wired=%d "
              "cap=%d/%d/%d res=%d err=%02x rum=%lu+%lu "
               "ibdrop=%lu obdrop=%u frames=%lu crc=%lu drop=%lu ovr=%lu "
                "rx80=%lu tx81=%lu tx21=%lu in30=%lu iters=%lu pm=%lu "
                "baud=%u%c",
               (unsigned long)(to_ms_since_boot(get_absolute_time()) / 1000),
-             (unsigned long)(to_ms_since_boot(get_absolute_time()) / 1000),
              usb_wired_handshake_done() ? 1 : 0,
              usb_wired_is_configured() ? 1 : 0,
+             usb_cdc_connected() ? 1 : 0,
+             usb_cdc_log_ready() ? 1 : 0,
+             (unsigned long)usb_cdc_log_dropped(),
              (unsigned)probe_hid_cid, s_wired ? 1 : 0,
              probe_cap_valid ? 1 : 0, probe_scanning ? 1 : 0,
              probe_beacon ? 1 : 0,
@@ -1599,7 +1604,7 @@ static void stats_print(void) {
               (unsigned long)ws.tx21, (unsigned long)ws.in30,
               (unsigned long)cp.iters, (unsigned long)pm_rd(),
               (unsigned)cp.baud_idx, cp.baud_locked ? 'L' : 'H');
-    printf("%s\n", line);
+    probe_line(line);
     /* USB dock観測用 (一時計装・Joy PIDの初期化列捕捉)。
      * 振る舞いは変えない (表示のみ)。 */
     {
@@ -1622,7 +1627,7 @@ static void stats_print(void) {
                  (unsigned long)ws.tx81, (unsigned long)ws.tx21,
                  (unsigned long)ws.ep_rx, (unsigned long)ws.ctl_rx,
                  ws.short_n);
-        printf("%s\n", uline);
+        probe_line(uline);
     }
     if (g_vs.auto_status) {
         // STATUS周期 (auto_status 1Hz): 要求元輸送へ (drain路の投入路タグ優先)。
@@ -2008,13 +2013,15 @@ int main(void) {
     // 有線=s_wired: HID-only (Switch接続用)。無線=!s_wired: CDC-only (PC専用)。
     usb_cdc_set_profile(s_wired);
     usb_set_role(s_emulate);
-    usb_wired_init();
-    usb_wired_set_enabled(s_wired);
-
     if (s_wired) {
+        usb_wired_init();
+        usb_wired_set_enabled(true);
+        probe_line("usb profile=hid (switch)");
         wired_loop(); // 戻らない。無線一式は上げない (列挙干渉のため)。
     }
     // 以下は無線起動のみ。BTstack＋CYW43＋電波あり。
+    // USBはBT初期化の後に上げる (hci_power_controlのブロック中にtud_taskを
+    // 回せないと、ホストが列挙を諦めてCOMポートが出ない実測への対策)。
 
     if (cyw43_arch_init() != 0) {
         printf("NG: cyw43_arch_init\n");
@@ -2107,6 +2114,11 @@ int main(void) {
     // 無線起動のため s_wired==false のはず。BT呼び出しはここからのみ。
     link_apply_wired_mode(s_wired);
     s_bt_init = true;
+
+    /* 無線USBはここで上げる (BT初期化後・run loop前)。 */
+    usb_wired_init();
+    usb_wired_set_enabled(false);
+    probe_line("usb profile=cdc data+log (pc)");
 
     btstack_run_loop_set_timer_handler(&stats_timer, &stats_handler);
     btstack_run_loop_set_timer(&stats_timer, 1000);

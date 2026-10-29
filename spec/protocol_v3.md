@@ -19,6 +19,7 @@
 | 4.7 | 2026-10-08 | 無線時USB-CDC輸送を追加（§2.1・§5.12。PC→Pico・Pico→PCともv3 frame・UARTと同一形式）。単一UF2で実行時profile選択（有線=HID-only・無線=CDC-only。起動時確定・reboot適用）。無線起動時はPico USBがPC専用CDCになりシリアル変換器なしで制御可。有線起動は従来通りHID-only（Switch接続用）。フレーム・フィールド不変のため PROTO_VER=4維持・FW_MINOR据置（4.2/4.5/4.6前例） |
 | 4.8 | 2026-10-17 | IMU_SAMPLE新設（0x04・PC→Pico・LEN=12・§5.13）。PC側生成のIMU生値（6xint16-LE）を200Hzで転送し、USB 0x30のIMU 36Bへ反映する。gyro-mini実機で受理確認（USB 0x30周期15ms・timer 5ms刻み・静止1g=0x1000・§12更新）。PROTO_VER=4維持・FW_MINOR=5 |
 | 4.9 | 2026-10-22 | 無線(BT) 0x30へIMU 36B（0x40有効時。50B=A1 30+12B+36B）。無線時はUSB-CDCでIMU_SAMPLEを受ける。BT 0x30はIMU有効時15ms・timer 5ms刻み、無効時7ms。0x41感度はUSBと共有。100ms gyro→0をbcon_imu3にも適用。role2(Joy-R)の0x30 IMUはRx(180°)=Y/Z反転（実機で平坦時Z=−1gを確認）。PC側[IMU]軸変換は恒等が前提（90°を重ねるとrole0まで回る）。有線0x30のIMUはrole0のみ（role1/2は36Bゼロ）。PROTO_VER=4維持・FW_MINOR=12。 |
+| 4.10 | 2026-10-29 | 無線profileのUSBをdata+logの2 CDC（itf0/1=data、itf2/3=log）へ拡張し、無線profileのUSB IDを `2E8A:000A`（"Raspberry Pi"/"switch-bcon CDC"/基板固有シリアル）へ変更。有線HID記述子（41B/203B・`057E:2009`）はバイト不変。無線USBはBTstack初期化の後・run loopの前に初期化し、`link_apply_wired_mode(false)`では外さない（先に`tud_init`するとBT初期化のブロック中に`tud_task`が止まり、ホストが列挙を諦めてCOMポートが出ない実測への対策）。logは`probe_line`のASCII写しで非ブロッキング。フレーム不変・PROTO_VER=4維持・FW_MINOR=12据置 |
 
 > フィールド追加・意味変更時は必ず本表と `PROTO_VER` を更新する。
 
@@ -52,10 +53,25 @@
 * USB構成はprofile排他：有線=HID-only（§12・41B/203B・Switch接続用）、
   無線=CDC-only（PC専用）。単一UF2で起動時に選択（tud_init前に確定・
   切替はWIRED_MODEと同型のreboot適用）。無線USBはSwitchには挿さないこと。
+* 無線profileのUSB初期化はBTstack初期化（`hci_power_control(HCI_POWER_ON)`）の
+  後・run loopの前に行う。BT初期化は数秒ブロックし、その間に`tud_task`を回せないと
+  ホストがSETUPを再送せず列挙を諦めてCOMポートが現れない（2026-10-30 実測）。
+  無線CDC profileでは`link_apply_wired_mode(false)`でもUSBを外さない
+  （HIDを列挙していないため二重認識にならない）。
+* 無線profileのUSB IDは `2E8A:000A`（Raspberry Pi）、製品名 `switch-bcon CDC`、
+  シリアルは基板unique ID由来（`BCON`+8hex）。有線HIDは従来の `057E:2009` /
+  `Pro Controller` / `000000000001` のまま（バイト不変）。同一PCで有線HIDと
+  無線CDCが同じUSBインスタンスIDになるとWindowsのドライバキャッシュが衝突し
+  COMポートが出ないため、無線profileは別IDにする。
+* 無線profileはCDCを2系統持つ：interface 0/1 = data（v3 frame。§3-§9そのまま）、
+  interface 2/3 = log（`probe_line`/BCON行のASCII写し。v3 frameではない）。
+  logは非ブロッキングで、満杯時は行単位で破棄する（取りこぼしあり）。
+  PCはdata側ポートをプロトコルに使う。識別はPINGにPONGを返す側がdata
+  （log側は1HzのBCON行を流すだけで応答しない）。
 * baudの概念なし。baud hunt（§5.11の2連続確定・inbox purge）・`BAUD_SET` の
   rate合意・BREAK再探索はUART路専用。CDC路は接続次第で単発実行する（retryは
   不要だがhostが繰り返すことは許す）。
-* DTR/RTSは無視する（接続判定はenumerate済みのみ）。バイナリ専用。
+* DTR/RTSは無視する（接続判定はenumerate済みのみ）。data路はバイナリ専用。
 * `BAUD_SET` をCDC経由で受けた場合はUART rateのみ切り替え、ACK（STATUS）は
   要求元（CDC）へ返す。拒否しない。`store_baud` 保存はUART確定路のみが行う。
 * 調停：単一parser feed原則（同時刻に一輸送だけ投入）。輸送切替時およびCDC路
