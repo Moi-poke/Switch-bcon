@@ -14,6 +14,7 @@ Classic リンク鍵（BTstack 管理）は同一機器として共有するの�
 | `BCW1` | `0x42435731` | 取込 blob（`CAP_BLOB_SIZE`）(`src/bt/store.c:16`, `src/bt/store.c:191-229`) | blob |
 | `BCWR` | `0x42435752` | 有線モード 0/1 (`src/bt/store.c:17,248-276`) | 1B |
 | `BCBR` | `0x42434252` | ボーレート永続（rate index）(`src/bt/store.c:18,283-323`) | 1B |
+| `BCEM` | `0x4243454D` | emulate-role（0=ProCon/1=JoyL/2=JoyR）(`src/bt/store.c` `TAG_EMULATE`) | 1B |
 
 > ✅ Done: 新 TAG `BCBR`（ボーレート永続）は実装済みである。
 > `BAUD_SET` の永続先として機能する (`src/bt/store.c:18`, `src/bt/store.c:283-323`)。
@@ -23,7 +24,7 @@ Classic リンク鍵（BTstack 管理）は同一機器として共有するの�
 
 Done行は実装状態、ここはTAGの差分だけを述べる。
 
-- `BCBR` も実装済みである。現行表の 5 TAG が全部である (`src/bt/store.c:14-18`)。
+- `BCBR` も実装済みである。現行表の 6 TAG が全部である (`src/bt/store.c:14-19`)。
   `BTL`（BTstack鍵 28B）は bcon TAG ではない。BTstack 管理である。
   non-bonding のため fresh 鍵は保存されない設計である。ただし当該セッションは生存した唯一例である (`docs/history/2026-09-15-wdt/verification-status.md:64-69`)。
 - `BCCL` は 13B 保存・復元 12Bである。13B 目は仕様値のため戻さない (`src/bt/store.c:167-189`)。
@@ -40,9 +41,11 @@ Done行は実装状態、ここはTAGの差分だけを述べる。
 | W5 | `link_cap_tick` の `CAP-DONE best>=0` → `store_cap_save()` (`src/bt/link_cap.c:100-133`) | `BCW1` blob | `link_poll` 経由で `poll_tick` から。スキャン停止直後、BT 稼働中 | BT 稼働中の書込 |
 | W6 | `link_cap_clear()` → `store_cap_forget()` (`src/bt/link_cap.c:91-98`, `src/bt/store.c:231-245`) | `BCW1` 削除 | 呼び出し元依存（現状は同期的） | W5 と同クラス。なお現ツリーで `link_cap_clear` 自体にリポジトリ内呼び出し元がゼロとの指摘がある（U3 関連。未解決点として記録） |
 | W7 | `packet_handler` の `HCI_EVENT_AUTHENTICATION_COMPLETE` 認証失敗 → `gap_delete_all_link_keys()` (`src/main.c:1313-1325`) | 鍵 DB | HCI イベントコールバック、ペアリング失敗直後。ACL 残存の可能性あり | BT 動作中の DB 変更であり、W3 と同様に遅延対象 |
+| W8 | `exec_fx` の `FX_EMULATE_MODE` → `store_emulate(role)` (`src/main.c` `FX_EMULATE_MODE`) | `BCEM` 1B | `poll_tick`。BT 動作中の可能性あり | 単発 `tag_store_safe`。約500ms後に再起動して適用 |
 
 上表は恒久の修正設計書にある現行の経路の一覧を、コードの行付きで再構成したものである (`docs/history/2026-09-15-wdt/plans/quiesced-worker-design.md:86-97`)。
-読込系（`store_*_load`、`link_key_count`）は Core1 起動前の XIP 直読であり現状維持である (`src/main.c:1417-1424`, `docs/history/2026-09-15-wdt/plans/quiesced-worker-design.md:96-97`)。
+`EMULATE_MODE`（W8）も同じ再起動適用クラスであり、`WIRED_MODE` と同様に単発 `tag_store_safe` で書く。
+読込系（`store_*_load`、`store_emulate_load_def`、`link_key_count`）は Core1 起動前の XIP 直読であり現状維持である (`src/main.c`)。
 
 ## 重複排除（dedupe）
 

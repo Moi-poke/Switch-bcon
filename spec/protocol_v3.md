@@ -20,6 +20,7 @@
 | 4.8 | 2026-10-17 | IMU_SAMPLE新設（0x04・PC→Pico・LEN=12・§5.13）。PC側生成のIMU生値（6xint16-LE）を200Hzで転送し、USB 0x30のIMU 36Bへ反映する。gyro-mini実機で受理確認（USB 0x30周期15ms・timer 5ms刻み・静止1g=0x1000・§12更新）。PROTO_VER=4維持・FW_MINOR=5 |
 | 4.9 | 2026-10-22 | 無線(BT) 0x30へIMU 36B（0x40有効時。50B=A1 30+12B+36B）。無線時はUSB-CDCでIMU_SAMPLEを受ける。BT 0x30はIMU有効時15ms・timer 5ms刻み、無効時7ms。0x41感度はUSBと共有。100ms gyro→0をbcon_imu3にも適用。role2(Joy-R)の0x30 IMUはRx(180°)=Y/Z反転（実機で平坦時Z=−1gを確認）。PC側[IMU]軸変換は恒等が前提（90°を重ねるとrole0まで回る）。有線0x30のIMUはrole0のみ（role1/2は36Bゼロ）。PROTO_VER=4維持・FW_MINOR=12。 |
 | 4.10 | 2026-10-29 | 無線profileのUSBをdata+logの2 CDC（itf0/1=data、itf2/3=log）へ拡張し、無線profileのUSB IDを `2E8A:000A`（"Raspberry Pi"/"switch-bcon CDC"/基板固有シリアル）へ変更。有線HID記述子（41B/203B・`057E:2009`）はバイト不変。無線USBはBTstack初期化の後・run loopの前に初期化し、`link_apply_wired_mode(false)`では外さない（先に`tud_init`するとBT初期化のブロック中に`tud_task`が止まり、ホストが列挙を諦めてCOMポートが出ない実測への対策）。logは`probe_line`のASCII写しで非ブロッキング。フレーム不変・PROTO_VER=4維持・FW_MINOR=12据置 |
+| 4.11 | 2026-10-30 | 文書同期: PLAYER_INFO flags bit3-7（0x41感度レンジ/受信済み）と §12.3 Joy SPI応答のUSB/BT差を実装に一致させた。フレーム・PROTO_VER不変・FW_MINOR=12。 |
 
 > フィールド追加・意味変更時は必ず本表と `PROTO_VER` を更新する。
 
@@ -251,11 +252,14 @@ LFは中立相対 `M[3]<=0x40→0`・それ以外 `((M[3]-0x40)*255+41)/82`
 
 ### 5.8 PLAYER_INFO (LEN=2)
 
-`[0]=lamp（SUB 0x30応答のplayer ID写し）、[1]=flags（bit0=IMU有効、bit1=振動有効、bit2=cap_saved、bit3-7予約0）`。
+`[0]=lamp（SUB 0x30応答のplayer ID写し）、[1]=flags（bit0=IMU有効、bit1=振動有効、bit2=cap_saved、bit3-4=0x41 gyroレンジ選択子、bit5-6=0x41 accelレンジ選択子、bit7=0x41受信済み）`。
+bit3-6はSwitchが要求したIMU感度レンジの可視化である（PC側は未知bitを無視してよい）。
+bit7は `usb_imu_sensitivity_seen()` の写しで、0x41を実際に受信したかを示す。
+bit0は無線probeのIMU有効と有線USBの0x40受信のORである。
 bit2は `probe_cap_valid` の写し（取込済みwakeのFlash保存あり＝BEACON再生可）。
 BEACON再生そのものは成功信号ではない（再生可否はbit2で判断する）。
 初回SUB 0x30受信後に有効化し、変化時のみ送出する（lamp/flagsのバイト比較。
-bit2変化も送出対象）。STATUS_REQ受信時はSTATUSに付随して送出する。
+bit2以降の変化も送出対象）。STATUS_REQ受信時はSTATUSに付随して送出する。
 PROTO_VER=4・LEN=2のまま（新規フレームなし・FW_MINOR据置）。
 
 ### 5.9 COLOR_GET (LEN=0) / COLOR_INFO (LEN=12、送出)
@@ -554,14 +558,38 @@ SwitchはMAC単位でペアを覚えるためrole別MACが必須。
 SDPのHID名は `SWITCH_HID_NAME` を維持する（row側のGAP名はGAP専用）。
 Report descriptorバイトは全role共通・無変更（Joyも同形のため）。
 
-## 12.3 SPI Joy応答 (provisional)
+## 12.3 SPI Joy応答（USBとBTで異なる）
 
-Joy roleのSPI読出しは暫定ゼロ埋めで答える（`spi_joy_blank`。`src/proto/spi.h` 契約通り）。
-出典：switchnotes console_pairing_session（bare minimum eeprom `0x6000`-`0x8FFF`。
-ゼロ埋めEEPROMでペア成功・色は黒表示）。
-BTは当該契約を実装済み（`0x6000`以上`0x9000`未満はゼロ埋め＋ACK `0x90`、
-それ以外はtransport-default miss＝無応答。ProConの `spi_find` 経路は通らない）。
-ProCon応答バイトは一切変えない。Joyの実機SPI値は未採取のためprovisionalのまま。
+Joy role（EMULATE_MODE=1/2）の SPI 応答は輸送で異なる。ProCon role の応答は
+従来どおり（BT は `spi_find` の表値、USB は §12.1 の実測上書き）である。
+
+USB（`build_spi_response_joy`、`src/usb/usb_hid.c`）:
+
+- `0x6000`: 常に `0xFF`（serial-none。ProCon と同じ理由）。
+- `0x6050`: `spi_color_6050` の先頭 `min(want,13)`B（`COLOR_SET` 値を反映）。
+- `0x601B`: `0x01`（色情報あり）。
+- `0x6020`: 実 ProCon の実測較正 `SPI_6020_PROCON_MEASURED`。role2 は
+  Rx(180°)=Y,Z 反転（`JOY_SPI_CAL_ROT=1`、既定）で回す。
+- `0x603D`: 実 ProCon の実測較正 `SPI_603D_PROCON_MEASURED`。
+- `0x6080` 帯: 先頭6B（水平オフセット）を Joy-Con 基準値 `SPI_6080_JOY_BASE`
+  で置換し、role2 は Rx(180°) で回す。残りは共有表値。
+- `0x6086`: `0xFF`。
+- 既知表（`spi_find`）の他の番地: 表値。
+- `0x8010`-`0x803F`: `0xFF`（未較正個体の値）。
+- `0x6000`-`0x8FFF` の残り: `spi_joy_blank` のゼロ埋め。
+- 範囲外: `0xFF` 埋め＋ACK（USB はホストを止めない）。
+
+BT（`reply_spi`、`src/bt/hid.c`）:
+
+- `0x6050` / `0x601B`: 色例外。共有 `spi_color_6050` / `0x01` を返す。
+- `0x6000`-`0x8FFF` の他: `spi_joy_blank` のゼロ埋め＋ACK `0x90`。
+- 範囲外: 無応答。
+- ProCon role は `spi_find` の表引きのまま。USB の実測上書きは BT に及ばない。
+
+実 Joy-Con の SPI 実値は未採取のため、USB は「実 ProCon 実測値を role 変換で
+回したもの」、BT はゼロ埋めを暫定値として使う。診断ビルドでは
+`src/usb/joy_spi_override.h` の `JOY_SPI_HAVE_OVERRIDE=1` で実 Joy-Con R の
+採取値を優先できる（既定0）。
 
 ## 12.4 BT 0x30 の IMU（無線ジャイロ）
 

@@ -15,13 +15,17 @@ $ninja = Join-Path $env:USERPROFILE '.pico-sdk/ninja/v1.13.2/ninja.exe'
 & $cmake --build build
 ```
 
-上記は `AGENTS.md:9-15` の正準手順である。統合 FW のターゲット `switch-bcon` は `src/main.c`、`src/proto/`（`protocol.c`、`pack.c`、`spi.c`、`dispatch.c`）、`src/usb/` 3 件、`src/bt/` 7 件（`hid.c`、`link.c`、`link_conn.c`、`link_cap.c`、`link_beacon.c`、`cap.c`、`store.c`）から構成される。BTstack Classic/BLE/CYW43 と TinyUSB をリンクする。`POC_DATA_BAUD` と `WIRED_DEFAULT` は定義で渡す。
+上記は `AGENTS.md:9-15` の正準手順である。統合 FW のソース一覧は `CMakeLists.txt` の `add_executable(switch-bcon ...)` が正である。`src/proto/baud.c`、`src/usb/usb_cdc.c`、`src/bt/hid_pack.c`、`src/bt/personality.c`、`src/bt/reconnect_policy.c` を含む。BTstack Classic/BLE/CYW43 と TinyUSB をリンクする。`POC_DATA_BAUD`、`WIRED_DEFAULT`、`POKECON_INPUT`、`IMU_DUMMY`、`JOY_SPI_CAL_ROT`、`JOY_USB_PID_2007` は定義で渡す。
 
 ## 派生構成 (baudと無線既定)
 
 - `-DPOC_DATA_BAUD=115200` は 115200bps 上限アダプタ向けの derated 構成である。既定は仕様通り 1Mbps (`AGENTS.md:16`, `src/main.c:55-57`)。データ UART の既定ピン・速度の定義は `src/main.c:54-59` にある
 - `-DWIRED_DEFAULT=0` は無線起動の試験用である。既定は 1（有線起動）(`AGENTS.md:16`)。未保存時の起動モードとして `store_wired_load_def(WIRED_DEFAULT != 0)` で使う (`src/main.c:1421`)
 - 派生構成は `build/` を汚さないよう temp ディレクトリに別構成し、UF2 を `log/` へコピーする (`AGENTS.md:16`)。無線版の建て方の具体例（temp `bcon-wireless`、derated＋無線既定＋BUMP 等）は引継ぎに記録されている (`docs/handoff_bt_20260914.md:23`)
+- `-DPOKECON_INPUT=1` は PokeCon Modified ASCII 行モード。`-DPOC_DATA_BAUD=115200` と組で使う。
+- `-DJOY_SPI_CAL_ROT=0|1|4` は role2 の SPI 校正回転（既定1=Y,Z反転）。
+- `-DJOY_USB_PID_2007=1` は診断用で role2 の USB PID を 0x2007 にする。
+- `-DIMU_DUMMY=1` は Phase 0 のダミー IMU 実験ビルド。
 
 ## ホスト単体試験（vcvars64 済み cmd）
 
@@ -33,10 +37,11 @@ ctest --test-dir build-host -C Debug -V
 
 上記は `AGENTS.md:18-23` の正準手順である。`ctest.exe` は cmake と同じディレクトリのものをフルパスで呼ぶ。単体実行は `ctest --test-dir build-host -C Debug -R <protocol|usb|config> -V` である。MSVC には `/utf-8` が要る（日本語コメント、C4819 対策）。`tests/host/CMakeLists.txt` に設定済みであり、外さないこと (`AGENTS.md:24`)。
 
-試験は次の13本立てである。
+試験は次の17本立てである（`imu_dummy` は `-DIMU_DUMMY=ON` の任意）。
 
 - `protocol`（CRC・parser・`frame_build`）
-- `usb`（pack・SPI 等）
+- `usb`（pack・SPI・0x30 IMU ゲート等）
+- `joy_imu_axis`（Joy role の IMU 軸変換）
 - `config`（dispatch の HELLO/PING/CONFIG→FX 写像・outbox・STATUS 組立・PLAYER_INFO 遷移・RUMBLE 遷移）
 - `baud`（レート表・sweep・lock）
 - `pokecon`（PokeCon 行写像・quirk・不正行棄却）
@@ -45,10 +50,11 @@ ctest --test-dir build-host -C Debug -V
 - `wired_player` / `player_capsaved`（有線プレイヤー・ランプ）
 - `color_getinfo`（COLOR_GET→COLOR_INFO）
 - `reconnect_policy`（能動再接続の page 予算・discoverable 判定）
+- `usb_cdc`（CDC 輸送の parser/応答）
+- `bt_input`（BT 0x30 の 14B/50B 組み立て）
+- `virt_tick`（仮想 tick によるポーリング）
 
-現行 13/13 ALL PASS が全 sub-project の gate である。
-
-> 注: 本ページは総数を過去に「6本」と記していたが、実体は 13 本である。`AGENTS.md` 側にも古い件数が残っている。**正は `tests/host/CMakeLists.txt` の `add_test` 一覧**であり、増減するときはここではなく CMake を直したうえで本表を同期すること。
+> 注: 正は `tests/host/CMakeLists.txt` の `add_test` 一覧である。増減するときは CMake を直したうえで本表を同期すること。現行の登録は 17 件であり、合否は `ctest` の実行結果で確認する。
 
 ## UF2 / log の運用規約
 

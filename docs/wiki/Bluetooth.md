@@ -2,18 +2,20 @@
 
 対象は Switch 1 Pro Controller の Classic BT エミュレーションである。相手の実測は Nintendo Switch 2（peer 終始同一）であり、SUB 到達・WDT の各試験はこの相手で行われた (`docs/wdt_phenomena_brief_20260915.md:9`)。
 
-## identity 接触点（将来の personality 作業用）
+## identity 接触点（EMULATE_MODE 実装済み）
 
-> 🚧 In-progress: 機種偽装基盤（personality テーブル、`PERSONALITY_SET 0x37`、再起動適用）は設計のみで未実装であり、変更手順ではない。下表は現行 ProCon 値の所在を示すものであり、Phase C-0（spike、接触点の列挙）の設計入力として指定されている (`docs/superpowers/specs/2026-09-15-uart-features-design.md:52-54`)。なお `0x37` は `T_BOOTSEL`（開発用）に割当て済みのため、`PERSONALITY_SET` には別番号が必要（要所有者判断）。
+personality 基盤は `EMULATE_MODE`（0x38）として実装済みである。role 0=ProCon / 1=Joy-Con (L) / 2=Joy-Con (R) を Flash `BCEM` に保存し、起動時に復元する。切替は WIRED_MODE と同型で、受理後約500msの自発再起動により適用する（変化なしの再送では再起動しない）。role は起動時1回だけ確定し、BT の GAP 名・CoD・機器情報・MAC・pack に効く。USB は Plan A で全 role `057E:2009` / `Pro Controller` 固定（Joy らしさは応答内容で表現）。
 
 | 接触点 | 所在 | 値・内容 |
 |---|---|---|
-| BT 識別情報（CoD・VID/PID・記述子・名前） | `src/bt/switch_hid.h:59-76` | `SWITCH_VENDOR_ID 0x057E`、`SWITCH_PRODUCT_ID 0x2009`、版 `0x0001`、CoD `0x2508`、OUI `7c:bb:8a`、GAP 名 `Pro Controller`、HID 名 `Wireless Gamepad` |
-| 自 MAC 生成 | `src/bt/link_conn.c:14-24` | OUI 固定＋基板 unique ID 下 3B。bump なし安定 MAC が proven 組合せである旨の注記付き |
-| GAP 名・クラス・SDP | `src/main.c:1500-1501,1514-1527` | `gap_set_class_of_device`、`gap_set_local_name(SWITCH_GAP_NAME)`、HID/PNP の SDP 登録。HID パラメタは `hid_params` で初期化 (`src/main.c:1370-1376,1514-1527`) |
-| report builder 群 | `src/bt/hid.c:283-449` | SUB 応答 `answer_subcmd`、入力 report 送出、振動 intake。SUB `0x30` で `probe_player_id` 取得、SUB `0x31` で応答に使用 (`src/bt/hid.c:334-345`) |
-| SPI 応答（色・シリアル） | `src/proto/spi.c`、`src/proto/spi.h` | ProCon SPI フラッシュの中身。移植元は pico-wakecon (`src/proto/spi.h:4`) |
-| USB 側 VID/PID/文字列 | `src/usb/usb_descriptors.c:21,176` | `idVendor 0x057E`、`idProduct 0x2009`、製品名 `Pro Controller`（grep で確認） |
+| BT 識別情報（CoD・VID/PID・記述子・名前） | `src/bt/personality.c` `PERSONALITY_TABLE`、`src/bt/switch_hid.h` | role別 GAP名/CoD/dev_type/fw。ProCon 行は従来値と同一 |
+| 自 MAC 生成 | `src/bt/link_conn.c`（base）、`src/bt/personality.c` `personality_mac` | OUI 固定＋基板 unique ID 下3B。role は末尾バイトに XOR（role0 は恒等） |
+| GAP 名・クラス・SDP | `src/main.c` `personality_get(s_emulate)` | GAP class/name は role 行、SDP HID 名は `SWITCH_HID_NAME` 維持 |
+| report builder 群 | `src/bt/hid.c` `answer_subcmd`、`src/bt/hid_pack.c` | role は `probe_role` と `joy_pack_btn3` で反映。0x30 は 14B/50B |
+| SPI 応答（色・シリアル） | `src/proto/spi.c`、`src/proto/spi.h`、`src/bt/hid.c` `reply_spi` | BT ProCon は表引き、BT Joy はゼロ＋ACK（色例外）。USB は spec §12.3 |
+| USB 側 VID/PID/文字列 | `src/usb/usb_descriptors.c`、`src/usb/usb_hid.c` | Plan A: 全 role `057E:2009` / `Pro Controller`。`JOY_USB_PID_2007=1` で role2 のみ 0x2007 |
+
+role別の GAP名・CoD・dev_type・fw は `spec/protocol_v3.md` §12.2、USB 側は §12.1 が正。
 
 自 MAC は起動時に印字される (`src/main.c:1397-1399`)。無線再投入で transport の MAC が既定に戻るため、`link_radio_update` の電源再投入時は `hci_set_bd_addr(probe_addr)` を掛け直す。掛けないと別機器扱いになり再接続できない (`src/bt/link_conn.c:128-131`)。
 
@@ -82,7 +84,7 @@ reconnect armed
 
 `T_RECONNECT` の応答が返ったことは「Pico が再接続を試みた」ことまでで、**Switch が受け入れたことは含まない**。接続できたかは UART0 ログの `hid open` を見る。`spec/protocol_v3.md` §5.10 が正。
 
-> 🚧 In-progress: `T_RECONNECT` による実機での明示復帰は**未確認**。上の 3 経路のうちどれが実際に効くかは実機検証が要る。
+> 🚧 In-progress: `T_RECONNECT` の実装は完了しているが、実機での明示復帰は未確認。上の 3 経路のうちどれが実際に効くかは実機検証が要る。
 
 ### 診断ログの注意点（2026-10-01 発見）
 

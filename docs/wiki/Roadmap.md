@@ -35,14 +35,14 @@
 - worker 設計の全文（ゲート 6 条件、排出順、合体規則、`WIRED_MODE` 期限規則、失敗時意味論、host 試験影響、検証手順 11 シナリオ、受入 checklist）は設計書を見ること (`docs/history/2026-09-15-wdt/plans/quiesced-worker-design.md:45-67,228-544`)。grep 証明（BT-active 経路上に worker 外の `store_tag`／`delete_tag`／`gap_delete_all_link_keys` 残存なし）が受入条件に含まれる
 - WDT 複合 heartbeat＋scratch breadcrumb の恒久計装は worker とは別承認・別実装であり、同梱しない (`docs/history/2026-09-15-wdt/plans/quiesced-worker-design.md:545-573`)
 
-## 4. personality 基盤（将来の機種偽装） — 将来
+## 4. personality 基盤（EMULATE_MODE） — 実装済み
 
-> 🚧 In-progress: Phase C-0（spike、設計入力）から着手する。出力は接触点リスト（file:line 付き）のみであり、コード変更なしである (`docs/superpowers/specs/2026-09-15-uart-features-design.md:51`)。
+> ✅ Done: `EMULATE_MODE`（0x38）として ProCon / Joy-Con (L) / Joy-Con (R) の role 選択を実装した。Flash `BCEM`・再起動適用・role別 MAC/GAP名/機器情報/ボタン写像。USB は Plan A で全 role `057E:2009` / `Pro Controller` 固定（Joy らしさは応答内容）。診断用 `JOY_USB_PID_2007=1` で role2 の PID のみ 0x2007。
+> 残: 実 Joy-Con の SPI 実測値（BT は暫定ゼロ埋め、USB は ProCon 実測の回転で代用）、HoriCon 等の追加機種。
 
-- C-0 既知候補: `switch_hid.h:59-76`（VID/PID/GAP 名）、`usb_descriptors.c:21-22,175-176`（VID/PID/文字列）、`main.c:1370-1376,1504-1505,1514-1527`（SDP・GAP 名・SDP 初期化）、`hid.c` report builder 群、`spi.c` 色・シリアル応答。本 Wiki の [Bluetooth](Bluetooth.md) 接触点表は現行値の所在確認に使うこと
-- C-1（基盤）: personality テーブル（id→USB VID/PID/文字列・GAP 名・SDP・builder 選択・SPI 応答選択）＋`PERSONALITY_SET`（番号未定）＋再起動適用（無線構成と同じ制約クラス）。`0=ProCon` は現行値の verbatim 移管であり、挙動不変が gate である
-- NOTE: `0x37` は `T_BOOTSEL` 割当て済みのため、`PERSONALITY_SET` には別番号が必要（要所有者判断）
-- HoriCon／Joy-Con の実値は C-1 の範囲外であり、「実測値の採取→テーブル 1 行追加」の繰返しとする。同時多機種・実行時無再起動切替は非目標である
+- 接触点の現行所在は [Bluetooth](Bluetooth.md) の表が正である。`PERSONALITY_TABLE`（`src/bt/personality.c`）が role別 GAP名・CoD・dev_type・fw を持ち、`personality_mac` が MAC を role-tagged にする
+- `0=ProCon` は現行値の verbatim 移管であり、挙動不変が gate である
+- 実値の採取→テーブル 1 行追加の繰返しとする。同時多機種・実行時無再起動切替は非目標である
 
 ## 5. ボーレート Plan B（動的切替） — 完了
 
@@ -65,9 +65,14 @@
 
 - W8 判定ダンプ（U3・U5 確定用、最優先）: `firmware/pico-bcon-w8-epoch.uf2` を flash し、通常ペア→open（host 保存）→約 2 秒後 WDT 死を 1 回再現し、次 boot の `w8epoch`〜`w8ev` 行一式を回収する (`docs/history/2026-09-15-wdt/hw-batch-2026-09-15.md:11-17`)
   - →完了: U3/U5 とも CLOSED
-- 色確認（#2 実装済み判定の裏取り）: 現 tree ビルドを flash し、`COLOR_SET`→登録解除→再接続で Switch UI 表示＋`0x6050` 応答バイトが新色であることを確認する。読戻し `COLOR_GET` は要望が出てから追加する（YAGNI）(`docs/history/2026-09-15-wdt/hw-batch-2026-09-15.md:27-31`, `docs/superpowers/specs/2026-09-15-uart-features-design.md:38-39,70-72`)
+- 色確認（#2 実装済み判定の裏取り）: 現 tree ビルドを flash し、`COLOR_SET`→登録解除→再接続で Switch UI 表示＋`0x6050` 応答バイトが新色であることを確認する。
   - →完了 Commit D `9915acf`: C-1/C-3/C-4/C-6 PASS
+  - `COLOR_GET`/`COLOR_INFO` は実装済み（RAM 12B 読戻し。Flash 書込なし）。`COLOR_SET` 後の読戻しに使える
 - PLAYER_INFO 確認: SUB `0x30` 到達後のセッションで `STATUS_REQ` を送り、応答の `PLAYER_INFO (0x23, LEN2)` と Switch 表示の一致を確認する (`docs/history/2026-09-15-wdt/hw-batch-2026-09-15.md:33-35`)
   - →完了 Commit D: P-1/P-2/P-5 PASS、P-3/P-4/P-6 は未検証残
 - P3-T8 集計・Step 4 commit 承認要求: HW バッチ完了後に回す (`docs/history/2026-09-15-wdt/README.md:29-33`)。Step 3 フェーズ別 A/B（A〜F 窓）＋timer 周期 A/B も W7 結果次第である
-- PC 送信ラッパ本実装・`COLOR_GET` 読戻し・周期的 RUMBLE/PLAYER_INFO 配信・`STATUS` 流用案・BLE 入力エミュレーションは scope 外（YAGNI）であり、新規証拠なしに再提案しない (`docs/superpowers/specs/2026-09-15-uart-features-design.md:70-72`, `docs/superpowers/plans/2026-09-15-plan-a-telemetry-v4.md:406-413`)
+- PC 送信ラッパ本実装・周期的 RUMBLE/PLAYER_INFO 配信・`STATUS` 流用案・BLE 入力エミュレーションは scope 外（YAGNI）であり、新規証拠なしに再提案しない (`docs/superpowers/specs/2026-09-15-uart-features-design.md:70-72`, `docs/superpowers/plans/2026-09-15-plan-a-telemetry-v4.md:406-413`)
+
+## 7. IMU/ジャイロ（完了）
+
+> ✅ Done: `IMU_SAMPLE`（0x04）と 0x30 IMU 36B を実装。PC 側で生成した生値を送る方式。有線は role0 のみ、無線 BT は全 role。100ms gyro→0、500ms 静止値。role2 は Rx(180°)=Y/Z反転。0x41 感度は USB/BT 共有。詳細は `spec/protocol_v3.md` §5.13/§12.4。

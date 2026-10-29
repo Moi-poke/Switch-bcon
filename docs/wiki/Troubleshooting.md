@@ -48,8 +48,32 @@
 - Switch 2ドックでUSB列挙しない：CYW43給電中（無線一式が上がった状態）では実測で列挙しない。有線起動では無線を上げない事。最終FWは`WIRED_MODE`で無線停波を管理する (`spec/protocol_v3.md:290-292`, `src/main.c:1340-1342,1480-1482`)
 - 有線中にCAPTURE/BEACONが拒否される（`0x10`/`0x11`）：無線起動でのみ有効である。先に`WIRED_MODE=0`と再起動が必要 (`spec/protocol_v3.md:157-158`)
 - 色を変えてもSwitch表示が変わらない：Switchは初回接続時の色をキャッシュするため、登録解除から再接続で取り直させる (`spec/protocol_v3.md:287-288`)
+- 色の読戻しは `COLOR_GET`（0x39）→ `COLOR_INFO`（0x3A、12B）。RAM の `spi_color_6050` 先頭12B を返し、13B 目は返さない。Flash 書込はない。
 - `tusb.h`と`btstack.h`を同じTUに含める：`hid_report_type_t`が二重定義になる。`src/usb/`と`src/bt/`を分離する事 (`AGENTS.md:30`)
 - BTコールバック内にFlash書込を足す：入れ子にすると約2秒後のWDT死を起こす。延期/quiesceしHW検証する事 (`AGENTS.md:37`)。`flash_safe_execute`の入れ子禁止とguard監視が恒久規則である (`src/bt/store.c:73-108`)
 - `WIRED_MODE`切替が即時反映されない：再起動適用で、受理後約500msで自発再起動する (`src/main.c:804-808`)
 - CH340で1Mbpsが通らない：CH340は1Mbps以下推奨で、FTDI推奨・latency timer 1msである (`spec/protocol_v3.md:32`)
 - SCR値を直接信じる：2回とも単独bootモデルと矛盾したため不信扱いである。timer/BCON/dump表示を正とする (`docs/handoff_bt_20260914.md:43`)
+
+## IMU/ジャイロが動かない
+
+- PC 側が `IMU_SAMPLE`（0x04、LEN12）を送っているか。200Hz 想定で、STATE とは独立。
+- 有線の `0x30` IMU は role0（ProCon）のみ。role1/2 は 36B ゼロが正しい（仕様）。
+- 無線 BT は `0x40` 受信後に 50B。`0x40` 未受信/0 は 14B。
+- 100ms 無受信で gyro→0、500ms で静止値（0,0,0x1000,0,0,0）。PC 側停止でジャイロが止まるのは仕様。
+- role2 は Rx(180°)=Y/Z反転。PC 側 `[IMU]` 軸変換は恒等にする（90°を重ねると role0 まで回る）。
+- `0x41` 感度は USB/BT 共有。PLAYER_INFO bit3-6 で選択子、bit7 で受信済みを確認する。
+
+## 無線起動で PC から制御できない
+
+- 無線起動時 USB は CDC-only（HID なし）。有線起動時は HID-only（CDC なし）。単一 UF2、起動時確定・reboot 適用。
+- 無線 profile は COM が 2 本出る。data（interface 0/1）が v3 frame 用、log（interface 2/3）は `probe_line`/BCON 行の ASCII 用である。プロトコルは data 側に送る。識別は PING に PONG を返す側が data。
+- 無線 profile の USB ID は `2E8A:000A`（`switch-bcon CDC`）。有線 HID の `057E:2009` と別 ID にしてあり、同一 PC で COM が出ない衝突を避けている。
+- CDC に baud hunt はない。CONFIG は単発でよい。応答は要求元輸送にだけ返る。
+- DTR/RTS は無視。enumerate 済みで接続判定。
+
+## Joy-Con として認識されない/切替わらない
+
+- `EMULATE_MODE`（0x38）は Flash 保存・約500ms で再起動適用。変化なし再送では再起動しない。
+- USB は全 role `057E:2009` / `Pro Controller`（Plan A）。Joy らしさは応答内容。`JOY_USB_PID_2007=1` は診断用で role2 のみ 0x2007。
+- BT は role 別 GAP 名・MAC・機器情報。Switch は MAC 単位でペアを覚える。

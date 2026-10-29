@@ -9,15 +9,21 @@
 - STATUS：Pico→PC の状態フレーム（`0x20`、LEN7）。STATE_FLAGS・最終SEQ・CRC累計・欠番累計・ERRCODEの順である (`src/proto/dispatch.c:156-165`)
 - PING / PONG：生存確認フレーム（`0x03` LEN0／`0x21` LEN1）。PONGの payload は PING の SEQ エコーである (`src/proto/dispatch.c:41-43`)
 - RUMBLE：Pico→PC の振動振幅フレーム（`0x22`、LEN2）。変化時のみ送出する (`src/proto/rumble.h`)
-- PLAYER_INFO：Pico→PC のランプ＋フラグフレーム（`0x23`、LEN2）。変化時と STATUS_REQ 付随に送出する (`src/proto/dispatch.h:62-65`, `src/proto/dispatch.c:127-138`)
+- IMU_SAMPLE：PC→Pico の IMU 生値フレーム（`0x04`、LEN12、6xint16-LE）。200Hz 想定 (`spec/protocol_v3.md` §5.13)
+- IMU timeout：100ms 無受信で gyro→0、500ms で静止値（0,0,0x1000,0,0,0）。STATE の timeout-neutral とは独立 (`src/main.c` `IMU_GYRO_ZERO_MS`/`IMU_STATIC_MS`)
+- USB-CDC 輸送：無線起動時の PC 専用 CDC。interface 0/1=data（v3 frame）、interface 2/3=log（`probe_line` の ASCII 写し）。USB ID は `2E8A:000A`。ボーレートなし、DTR/RTS 無視 (`src/usb/usb_cdc.c`, `src/usb/usb_descriptors.c`)
+- EMULATE_MODE / role：0=ProCon/1=JoyL/2=JoyR。Flash `BCEM`・再起動適用 (`src/bt/personality.c`)
+- COLOR_GET / COLOR_INFO：色の RAM 読戻し（`0x39`/`0x3A`、12B）。Flash 書込なし
+- RECONNECT：拒否待機の明示解除（`0x3B`）。Switch の受入は保証しない
+- PLAYER_INFO：Pico→PC のランプ＋フラグフレーム（`0x23`、LEN2）。flags は bit0=IMU、bit1=振動、bit2=cap_saved、bit3-4=gyroレンジ、bit5-6=accelレンジ、bit7=0x41受信済み。変化時と STATUS_REQ 付随に送出する (`src/proto/dispatch.h`, `src/main.c`)
 - SEQ：方向独立・mod256 の連番。PC→Pico と Pico→PC で別カウンタである (`spec/protocol_v3.md:23,47`)
 - CRC8：CRC-8/SMBUS（対象 TYPE..SEQ、SYNC除外）。検査値は `crc8("123456789")=0xF4` である (`spec/protocol_v3.md:198-199`)
 - ERRCODE：直近エラー理由の1B。`0x00` 正常、`0x01` LEN不正、`0x02` CRC不一致、`0x03` SEQ欠番、`0x04` UNSUPPORTED、`0x05` overrun、`0x06` overflow、`0x10-0x1F` CONFIG拒否である (`spec/protocol_v3.md:144`)
 
 ## ファームウェア内部
 
-- FX：dispatch 受理が返す効果要求（`FX_CAPTURE_START`、`FX_BEACON_START`、`FX_COLOR_SET`、`FX_KEY_DELETE`、`FX_WIRED_MODE`）。HW副作用を持たず `main.c` の `exec_fx` が実行する (`src/proto/dispatch.h:33-44`, `src/main.c:767-836`)
-- ACT：Pico→PC 送信箱への送信要求（`ACT_SEND_STATUS`、`ACT_SEND_PONG`、`ACT_SEND_HELLO_ACK`、`ACT_SEND_PLAYER_INFO`、`ACT_SEND_RUMBLE`）。`flush_outbox` が UART 送信に変える (`src/proto/dispatch.h:17-24`, `src/main.c:839-866`)
+- FX：dispatch 受理が返す効果要求（`FX_CAPTURE_START`、`FX_BEACON_START`、`FX_COLOR_SET`、`FX_KEY_DELETE`、`FX_WIRED_MODE`、`FX_BAUD_SET`、`FX_BOOTSEL`、`FX_EMULATE_MODE`、`FX_RECONNECT`）。HW副作用を持たず `main.c` の `exec_fx` が実行する (`src/proto/dispatch.h`, `src/main.c`)
+- ACT：Pico→PC 送信箱への送信要求（`ACT_SEND_STATUS`、`ACT_SEND_PONG`、`ACT_SEND_HELLO_ACK`、`ACT_SEND_PLAYER_INFO`、`ACT_SEND_RUMBLE`、`ACT_SEND_COLOR_INFO`）。`flush_outbox` が送信に変える (`src/proto/dispatch.h`, `src/main.c`)
 - inbox：Core1→Core0 の8スロット退避列。STATE／NEUTRAL 以外の受信フレームを渡す (`src/main.c:68-73`)
 - outbox：dispatch の8スロット送信箱（`V3_OB_N=8`）。溢れは `ob_dropped` に数える (`src/proto/dispatch.h:31`)
 - `poll_tick`：Core0 の1ms周期処理。inbox drain→dispatch→FX実行→outbox flush→pack→USBの順に回す (`src/main.c:909-1060`)
@@ -28,8 +34,8 @@
 
 ## Flash・永続化
 
-- TLV：Flash永続層（BTstack flash-bank TLV）。bconは `BCxx` 名前空間を使う (`src/bt/store.c:14-22`)
-- BCHO / BCCL / BCW1 / BCWR / BCBR：host住所録・色・取込blob・有線モード・ボーレートの各TAG名である。BCBRはrate indexを保存する (`src/bt/store.c:14-18,283-323`)
+- TLV：Flash永続層（BTstack flash-bank TLV）。bconは `BCxx` 名前空間を使う (`src/bt/store.c`)
+- BCHO / BCCL / BCW1 / BCWR / BCBR / BCEM：host住所録・色・取込blob・有線モード・ボーレート・emulate-roleの各TAG名である (`src/bt/store.c`)
 - dedupe：変化時のみ保存する重複排除。`store_host` の早期復帰のことである (`src/bt/store.c:116-118`)
 - `flash_safe_execute`：全割込み禁止＋Core1 lockout下でFlash操作を行う保護実行。書込はすべてこの経路である (`src/bt/store.c:24-28,33-108`)
 - victim：Core1側のlockout参加状態。起動logの `victim=1` が成立の証拠である (`src/main.c:1472-1474`)
@@ -50,4 +56,4 @@
 - W0-W8：WDT定量A/Bの各UF2群。W0統制、W1遅延書込、W3 breadcrumb、W4遅延＋breadcrumb、W5時間計測、W6 hci_dump、W7統合計装、W8 epoch拡張である (`docs/history/2026-09-15-wdt/trial-history.md:22-36`)
 - hci_dump：一時診断用のHCI記録。鍵バイトを含むため最終版から必ず除去する (`docs/handoff_bt_20260914.md:70-77`)
 - BUMP：診断用の一時MAC末尾加算。安定MAC単独は無力と確定し、恒久アドレスは以後不変の方針である (`docs/history/2026-09-15-wdt/trial-history.md:17`)
-- personality：将来の機種偽装基盤（ProCon以外のVID/PID・GAP名・SDP・report builder切替）。設計のみである (`docs/superpowers/specs/2026-09-15-uart-features-design.md:49-54`)
+- personality：機種 identity テーブル（`PERSONALITY_TABLE`）。ProCon/Joy-Con L/R の GAP名・CoD・dev_type・fw・MAC 変換を持つ。`EMULATE_MODE` で選択し、Flash `BCEM`・再起動適用 (`src/bt/personality.c`)

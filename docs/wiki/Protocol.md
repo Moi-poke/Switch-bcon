@@ -44,6 +44,7 @@ SSOT は `spec/protocol_v3.md`（v4 正準、`PROTO_VER=4`）である。本ペ�
 | `0x01` | STATE | PC→Pico | 8 | 全状態（ホットパス） |
 | `0x02` | NEUTRAL | PC→Pico | 0 | 全入力解放（安全停止） |
 | `0x03` | PING | PC→Pico | 0 | 生存確認/RTT |
+| `0x04` | IMU_SAMPLE | PC→Pico | 12 | IMU生値 6xint16-LE（§5.13） |
 | `0x10` | HELLO | PC→Pico | 2 | 版通知・FLAGS。v4 のみ受付（下記） |
 | `0x11` | HELLO_ACK | Pico→PC | 4 | 版応答・RESULT |
 | `0x20` | STATUS | Pico→PC | 7 | 状態・統計・errcode |
@@ -58,10 +59,14 @@ SSOT は `spec/protocol_v3.md`（v4 正準、`PROTO_VER=4`）である。本ペ�
 | `0x35` | STATUS_REQ | PC→Pico | 0 | STATUS 即時返送要求（+ PLAYER_INFO 付随） |
 | `0x36` | BAUD_SET | PC→Pico | 1 | rate index（§5.6 合意切替） |
 | `0x37` | BOOTSEL | PC→Pico | 1 | 開発用。magic `0x5A` で USB BOOTSEL 再起動 |
+| `0x38` | EMULATE_MODE | PC→Pico | 1 | role 0=ProCon/1=JoyL/2=JoyR（Flash保存） |
+| `0x39` | COLOR_GET | PC→Pico | 0 | 色読出要求 |
+| `0x3A` | COLOR_INFO | Pico→PC | 12 | 色応答（RGB×4） |
+| `0x3B` | RECONNECT | PC→Pico | 0 | 待機状態の明示解除 |
 
 `proto_expected_len` が既知型の正確長を一元管理する。`T_PLAYER_INFO` は `return 2` が追加済みであり、未知 `0x24` は `-1` のままである (`src/proto/protocol.c:31-52`, `tests/host/test_config.c:160-164`)。
 
-> ✅ Done: `T_RUMBLE` 送出・`T_PLAYER_INFO`・`0x36 BAUD_SET`・`0x37 BOOTSEL` は仕様・実装＋HW 実証済みである。CONFIG 拒否 ERRCODE 延長規則（`0x16`・`0x17`）も実装済みである。
+> ✅ Done: `T_IMU_SAMPLE`（0x04）・`T_EMULATE_MODE`（0x38）・`T_COLOR_GET`/`T_COLOR_INFO`（0x39/0x3A）・`T_RECONNECT`（0x3B）も実装済みである。`T_RUMBLE` 送出・`T_PLAYER_INFO`・`0x36 BAUD_SET`・`0x37 BOOTSEL` は仕様・実装＋HW 実証済みである。CONFIG 拒否 ERRCODE 延長規則（`0x16`・`0x17`・`0x18`）も実装済みである。
 
 ## STATE（`0x01`、LEN8）
 
@@ -82,7 +87,7 @@ SSOT は `spec/protocol_v3.md`（v4 正準、`PROTO_VER=4`）である。本ペ�
 
 - HELLO ペイロードは `[0]=PROTO_VER（要求版）、[1]=FLAGS（bit0=STATUS 自動送信要求、他予約 0）` である (`spec/protocol_v3.md:126`)
 - 現コードは v4 のみ受け付ける。`ver == PROTO_VER`（=4）なら `RESULT_OK` + `state_accept=true`、それ以外は `RESULT_VER_UNSUPPORTED` + `state_accept=false` である。`DOWNGRADED` 分岐は削除済みである (`src/proto/dispatch.c:56-59`)。`DOWNGRADED` 列挙値自体は `protocol.h` に残置されているが無害な残骸であり、計画書も削除不要としている (`src/proto/protocol.h:39-43`, `docs/superpowers/plans/2026-09-15-plan-a-telemetry-v4.md:79`)
-- HELLO_ACK ペイロードは `[0]=採用版、[1]=FW_MAJOR、[2]=FW_MINOR、[3]=RESULT` である (`spec/protocol_v3.md:127`)。送信は `flush_outbox` が行う (`src/main.c:839-866`)。FW 版は `FW_MAJOR=0`、`FW_MINOR=1` である (`src/proto/dispatch.h:13-14`)
+- HELLO_ACK ペイロードは `[0]=採用版、[1]=FW_MAJOR、[2]=FW_MINOR、[3]=RESULT` である (`spec/protocol_v3.md:127`)。送信は `flush_outbox` が行う (`src/main.c:839-866`)。FW 版は `FW_MAJOR=0`、`FW_MINOR=12` である (`src/proto/dispatch.h`)。
 - v3 HELLO は UNSUPPORTED になる。STATE は拒否されるが NEUTRAL は安全停止として通す (`src/proto/dispatch.c:34-40`, `tests/host/test_config.c:36-48`)
 - HELLO なし既定では STATE を受け付ける（sweep/PoC 互換のため `state_accept` 初期値は true）(`src/proto/dispatch.c:7-13`, `tests/host/test_config.c:50-56`)
 - PC 送信側は版バイト 4 で送る (`src/poc_dualcore/poc_send.py:102-104`)。`--hello` は HELLO_ACK＋自動 STATUS を確認する (`src/poc_dualcore/poc_send.py:164-182`)
@@ -107,10 +112,11 @@ v4 で送出する。復号は `src/proto/rumble.h`（HF 式＋LF 中立相対�
 
 ## PLAYER_INFO (0x23・LEN2)
 
-ペイロードは `[0]=player lamp byte（SUB `0x30` report[10] の写し）、[1]=flags（bit0=IMU on、bit1=vibration on）` である (`docs/superpowers/specs/2026-09-15-uart-features-design.md:19`)。
+ペイロードは `[0]=player lamp byte（SUB 0x30 report[10] の写し）、[1]=flags（bit0=IMU on、bit1=vibration on、bit2=cap_saved、bit3-4=gyroレンジ選択子、bit5-6=accelレンジ選択子、bit7=0x41受信済み）` である (`src/main.c` の `player_flags` 組立、`src/usb/usb_hid.c` の `usb_imu_get_sensitivity`/`usb_imu_sensitivity_seen`)。
 
 実装の到達点は次の通り。
 
+- bit3-6 は Switch が要求した 0x41 のレンジ選択子、bit7 は 0x41 を実際に受信したかである。PC 側は未知 bit を無視してよい。
 - `T_PLAYER_INFO=0x23` 列挙と LEN2 (`src/proto/protocol.h:28`, `src/proto/protocol.c:41`)
 - 送信箱 `ACT_SEND_PLAYER_INFO` (`src/proto/dispatch.h:22`)
 - セッション欄（`player_lamp/player_flags/player_valid/player_sent_*/player_ever_sent`）(`src/proto/dispatch.h:58-61`)
@@ -122,7 +128,7 @@ v4 で送出する。復号は `src/proto/rumble.h`（HF 式＋LF 中立相対�
 
 > ✅ Done (2026-09-18, Commit D `9915acf`): lamp=0x01/flags=0x03 を HW 確認（P-1/P-2/P-5）。P-3/P-4/P-6 は未検証残。
 
-## CONFIG（`0x30-0x37`）
+## CONFIG・制御（`0x30-0x3B`）
 
 - `CAPTURE_START`：`[0]=` 秒数 1-60。範囲外は拒否（ERRCODE `0x10`）(`spec/protocol_v3.md:149`, `src/proto/dispatch.c:63-72`, `tests/host/test_config.c:66-79`)
 - `BEACON_START`：LEN0。未保存時は拒否（`0x11`）。保存有無は `cap_valid` で判定する (`spec/protocol_v3.md:150`, `src/proto/dispatch.c:73-76`, `tests/host/test_config.c:81-89`)
@@ -132,6 +138,29 @@ v4 で送出する。復号は `src/proto/rumble.h`（HF 式＋LF 中立相対�
 - `STATUS_REQ`：LEN0。即時 STATUS 返送＋PLAYER_INFO 付随（上記）(`src/proto/dispatch.c:95-98`)。即時 STATUS の errcode は `0x00` 扱いである (`spec/protocol_v3.md:159`)
 - `BAUD_SET`：`[0]=` rate index。範囲外は拒否（ERRCODE `0x16`）(`spec/protocol_v3.md:160`)。受理後は旧 rate で STATUS ACK を返し、guard 後に合意切替する
 - `BOOTSEL`：`[0]=0x5A`（magic）。開発用・単独 UART 運用のための USB BOOTSEL 再起動である。不正値は拒否（`0x17`）(`spec/protocol_v3.md:161-164`)。受理後は旧 rate で STATUS ACK を返し、約 500ms 後に `reset_usb_boot` する。Flash 書込みなし
+- `EMULATE_MODE`（0x38）：`[0]=role`（0=ProCon・1=JoyL・2=JoyR）。範囲外は拒否（`0x18`）。Flash `BCEM` に保存し、約500ms後の再起動で適用する。変化なしの再送では再起動しない (`src/proto/dispatch.c` `T_EMULATE_MODE`, `src/main.c` `FX_EMULATE_MODE`)
+- `COLOR_GET`（0x39）：LEN0。RAM `spi_color_6050` の先頭12Bを `COLOR_INFO` で返す。Flash書込なし。LEN≠0は `ERR_BAD_LEN` (`src/proto/dispatch.c` `T_COLOR_GET`, `src/main.c` `ACT_SEND_COLOR_INFO`)
+- `COLOR_INFO`（0x3A）：Pico→PC送出。PC→Pico方向では無視する (`src/proto/dispatch.c` `T_COLOR_INFO`)
+- `RECONNECT`（0x3B）：LEN0。`FX_RECONNECT` で `link_rearm_reconnect()` を呼び、拒否待機を解除する。旧rateのままSTATUSを返す。無線起動時のみ意味を持つ。Switchの受入は保証しない (`src/proto/dispatch.c` `T_RECONNECT`, `src/main.c` `FX_RECONNECT`)
+
+## IMU_SAMPLE（`0x04`、LEN12）
+
+PC→Pico専用。6xint16-LE（ax ay az gx gy gz、Switch出力生値）を200Hz想定で送る。STATEとは独立。
+Picoは最新3件を保持し、USB/BTの `0x30` 生成時に3スロットへ載せる（履歴不足時は最新値の複製）。
+100ms無受信でgyro→0、500msで静止値（0,0,0x1000,0,0,0）。STATEのtimeout-neutralとは独立。
+有線USBの `0x30` はrole0（ProCon）のみ反映し、role1/2は36Bゼロ。無線BTは `0x40` 有効時に全roleへ反映する (`src/main.c` `IMU_GYRO_ZERO_MS`/`IMU_STATIC_MS`, `src/usb/usb_wired.c` `usb_imu_wired_role_ok`, `src/bt/hid_pack.c` `bt_pack_input30`)。
+
+## USB-CDC輸送（無線起動時）
+
+- 単一UF2。有線起動=HID-only、無線起動=CDC-only。`tud_init` 前に確定し、切替は再起動適用 (`src/main.c` `usb_cdc_set_profile`, `src/usb/usb_cdc.c`)
+- 無線profileのUSB IDは `2E8A:000A`（Raspberry Pi、製品名 `switch-bcon CDC`）で、有線HIDの `057E:2009` / `Pro Controller` とは別IDである。同一PCでドライバキャッシュが衝突してCOMポートが出ない実測への対策 (`src/usb/usb_descriptors.c`)
+- 無線profileはCDCを2系統持つ。interface 0/1=data（v3 frame）、interface 2/3=log（`probe_line`/BCON行のASCII写し。v3 frameではない）。PCはdata側をプロトコルに使う。識別はPINGにPONGを返す側がdata (`src/usb/usb_cdc.c`, `src/main.c` `probe_line`)
+- 無線USBの初期化はBTstack初期化の後・run loop の前に行う。`link_apply_wired_mode(false)` では外さない (`src/main.c`)
+- logは非ブロッキングで、満杯時は行単位で破棄する（取りこぼしあり）。
+- フレーム形式・CRC・SEQはUARTと同一。ボーレートなし。baud hunt / `BAUD_SET` のrate合意 / BREAK再探索はUART専用。
+- DTR/RTSは無視し、enumerate済みを接続とみなす。data路はバイナリ専用。
+- 応答は要求元の輸送にだけ返す。周期STATUSはCDC接続中ならCDC、そうでなければUART。
+- CDC路の1000ms無通信と輸送切替でSEQ基準を捨てる。同一フレームの二重投入はSEQ欠番1件。
 
 ## PING/PONG と NEUTRAL
 
@@ -161,7 +190,7 @@ PC 送信ラッパ 1 箇所に集約すべき項目は次の通り (`spec/protoc
 
 ## レポート配置（in-repoピン、再構築用）
 
-- USB ControllerData 12B は timer・電池 `0x91`・ボタン3B（`btn[1]|=0x80`・`btn[2]&=0xCF`）・スティック6B・振動 `0x09` である (`src/usb/usb_hid.c:56-68`)。`0x30` 64B は ID + 12B + 36B IMU(0) + 15B 埋めである (`src/usb/usb_hid.c:70-79`, `src/usb/usb_hid.h:33-35`)。IMU無効時は 0 のままにする (`src/usb/usb_hid.h:33-35`)。有線は role0 のみ IMU を載せる（role1/2 はゼロ。`usb_imu_wired_role_ok`。無線は全role）。マスクの期待値は host 試験 `[6]` が縛る (`tests/host/test_usb.c:165-178`)
+- USB ControllerData 12B は timer・電池 `0x91`・ボタン3B（`btn[1]|=0x80`・`btn[2]&=0xCF`）・スティック6B・振動 `0x09` である (`src/usb/usb_hid.c:56-68`)。`0x30` 64B は ID + 12B + 36B IMU + 15B 埋めである (`usb_build_30_report`)。IMU 36B は PC 由来 `IMU_SAMPLE` があれば3スロットへ載せ、無ければ ProCon=静止1g・Joy=ゼロ。有線は role0 のみ IMU を載せる（role1/2 はゼロ。`usb_imu_wired_role_ok`）。無線 BT は全 role（`bt_pack_input30`）。マスクの期待値は host 試験 `[6]` が縛る (`tests/host/test_usb.c:165-178`)
 - USB `0x21` 64B は ID + 12B 状態 + ack/sub + 本文である (`src/usb/usb_hid.c:140-143`)。`0x01` 対 `01/02/03` の雛形は 2wiCC `procon_data.c` の実働値であり type 1 のみ自 MAC を ASCII 埋めする (`src/usb/usb_hid.c:81-91,144-161`)。`0x02` 本文は `03 48 03 02 + MAC6 + 01 02` であり末尾 `02` が SPI 色有効の条件である (`src/usb/usb_hid.c:162-175`)。`80 xx` 応答は常に 64B ゼロパディングで返し `81 01 00 <type=0x03> <mac6>` を含む (`src/usb/usb_hid.c:19-54`)
 - BT `0x30` は IMU 無効時 14B `A1 30 timer 80 btn3 stick6 08`、IMU 有効（`0x40`）時は 50B（`A1 30` + 12B 状態 + 36B IMU。`src/bt/hid_pack.c:6-39`。36B は USB と同一の `usb_build_30_report` 出力を貼る）である。応答共通部 16B は `A1 21 timer 80 btn3 stick6 08 ack sub` であり (`src/bt/hid.c:174-190`)、応答は `A1+ID+本体48=50B` へ 0 埋めする (`src/bt/hid.c:557-563`)。ペア前は 100ms の空 `A1 00 timer` で生かす (`src/bt/hid.c:221-230`, `src/bt/hid_pack.c:53-62`)。`timer` は 5ms 刻み（`ms/5`）である (`src/bt/hid.c:152-157`)
 - スティック 12bit 化は `pack_stick_12bit` のみが行い (`src/proto/pack.c:31-38`，`src/main.c:994-1008`)、ボタン 3B は `ctrl_pack_btn3` が作る (`src/proto/pack.c:4-29`)。GR/GL/C/Headset・予約bitは輸送位置なしのため落とす (`src/proto/pack.c:25-28`)
