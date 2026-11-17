@@ -145,6 +145,13 @@ v3_live_t v3_on_frame(v3_session_t *s, uint8_t type,
             s->fx_arg = 0u;
             ob_push(s, ACT_SEND_STATUS, 0);
             return V3_IGNORE;
+        case T_KEYBOARD:
+            // HID keyboard report (8B)。live適用はCore1/CDC fast path。
+            // ここはLEN検証のみ (inbox/pure-call経由の防御)。
+            if (len != 8u || payload == NULL) {
+                s->errcode = ERR_BAD_LEN;
+            }
+            return V3_IGNORE;
         default:
             return V3_IGNORE;
     }

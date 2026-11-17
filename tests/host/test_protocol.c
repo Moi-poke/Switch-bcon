@@ -99,6 +99,22 @@ int main(void) {
     { uint8_t out[64]; uint8_t big[33] = {0};
       CHECK(frame_build(out, T_STATE, big, 33, 0) == 0, "len>32 rejected"); }
 
+    printf("[8b] KEYBOARD 0x3C: LEN=8 parsed, LEN=7 rejected\n");
+    { const uint8_t kb[8] = { 0x02, 0x00, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09 };
+      uint8_t f[64];
+      size_t nf = frame_build(f, T_KEYBOARD, kb, 8, 0x60);
+      hits = 0; memset(&st, 0, sizeof(st)); parser_init(&p, cb, NULL, &st);
+      parser_feed_buf(&p, f, nf);
+      CHECK(hits == 1 && lt == T_KEYBOARD && ll == 8 &&
+            memcmp(lp, kb, 8) == 0, "KEYBOARD LEN=8 parsed");
+      CHECK(proto_expected_len(T_KEYBOARD) == 8, "KEYBOARD expected LEN=8");
+      uint8_t bad[64];
+      size_t nb = frame_build(bad, T_KEYBOARD, kb, 7, 0x61);
+      hits = 0; memset(&st, 0, sizeof(st)); parser_init(&p, cb, NULL, &st);
+      parser_feed_buf(&p, bad, nb);
+      CHECK(hits == 0 && st.err_crc >= 1 && st.errcode == ERR_BAD_LEN,
+            "KEYBOARD LEN=7 dropped (BAD_LEN)"); }
+
     printf("[9] F2: in-seq good frame clears ERR_SEQ_GAP (err_drop latch)\n");
     { link_stats_t st3; memset(&st3, 0, sizeof(st3));
       parser_init(&p, cb, NULL, &st3);

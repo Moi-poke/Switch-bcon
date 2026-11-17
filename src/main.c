@@ -85,6 +85,13 @@ typedef enum { TR_UART = 0, TR_CDC = 1 } rx_transport_t; // 要求元輸送タ�
 // ---- Core1 -> Core0 共有状態 (mutex保護。Core1はpushのみ) ----
 typedef struct {
     ctrl_state_t state;   // 最新STATE (u32＋sticks)
+    // 最新KEYBOARD (HID keyboard report 8B)。Core1高速路がpush。
+    // 有線USBのキーボードIFだけが読む (無線profileでは送出しない)。
+    uint8_t kb[8];
+    // 受理したKEYBOARD frame数 (診断用。state_framesとは独立)
+    uint32_t kb_frames;
+    // NEUTRAL受信時にキーボード送出キューを破棄する要求 (Core1→Core0)
+    bool kb_clear_req;
     // 最新IMU_SAMPLE (6xint16-LE展開: ax ay az gx gy gz。Switch出力生値)。
     // Core1高速路がpush、Core0がUSB 0x30生成時に読む。timeout (§5.13) は
     // Core0が imu_frames の停滞で判定する (STATEのtimeout-neutralとは独立)。
@@ -131,6 +138,9 @@ static volatile bool g_core1_booted = false;
 
 // ---- USB/BT層への供給 (所有元はCore0。各層は読みのみ) ----
 uint8_t bcon_btn[3];
+// 最新キーボード状態 (HID report 8B)。poll_tickが共有kbを転記し、
+// 有線USBのキーボードIF (usb_wired.c) が変化時のみ送る。
+uint8_t bcon_kb[8];
 uint16_t bcon_lx = 0x800u, bcon_ly = 0x800u, bcon_rx = 0x800u, bcon_ry = 0x800u;
 uint8_t bcon_mac[6]; // 応答順 (初期化で反転済み。BT addrと同一機器)
 // 最新IMU (poll_tickが共有imuからtimeout付き転記。USB 0x30生成が読む)。
@@ -171,6 +181,7 @@ static uint32_t s_last_frames;
 static uint32_t s_last_state_frames;
 static uint32_t s_last_imu_ms; // IMU直近受信時刻 (§5.13 timeout用)
 static uint32_t s_last_imu_frames; // IMU適用数の前回値
+static uint32_t s_last_kb_frames; // KEYBOARD受理数の前回値 (初回ログ用)
 static uint32_t s_rumble_reported; // 前回STATUS時のrumble合計
 static bool s_wdt_recovered;
 static bool s_bt_init; // BTstack初期化済み (無線起動時のみtrue)
@@ -406,6 +417,14 @@ static void bcon_frame_cb(uint8_t type, const uint8_t *p, uint8_t len,
                 }
             }
         }
+    } else if (type == T_KEYBOARD && len == 8u) {
+        // HID keyboard full state (§5.14)。STATEと同じtrust。
+        // [0]=modifiers [1]=consumer予約 [2..7]=keycodes。予約は常に0を送る。
+        if (trusted && g_s.state_accept && p != NULL) {
+            memcpy(g_s.kb, p, sizeof(g_s.kb));
+            g_s.kb[1] = 0u;
+            g_s.kb_frames++;
+        }
     } else if (type == T_NEUTRAL && len == 0) {
         // 安全停止はUNSUPPORTED下でも適用する (dispatchと同義)。
         // ただしhunt確定前は未確定baudのため適用しない。
@@ -414,6 +433,8 @@ static void bcon_frame_cb(uint8_t type, const uint8_t *p, uint8_t len,
             g_s.state.buttons = 0u;
             g_s.state.lx = g_s.state.ly = 0x800u;
             g_s.state.rx = g_s.state.ry = 0x800u;
+            memset(g_s.kb, 0, sizeof(g_s.kb));
+            g_s.kb_clear_req = true;
         }
     } else {
         // CONFIG/HELLO/PING等は inbox へ。Core0がdispatchする
@@ -484,11 +505,20 @@ static void cdc_frame_cb(uint8_t type, const uint8_t *p, uint8_t len,
                 }
             }
         }
+    } else if (type == T_KEYBOARD && len == 8u) {
+        // HID keyboard full state (§5.14)。CDC路もUART路と同形。
+        if (g_s.state_accept && p != NULL) {
+            memcpy(g_s.kb, p, sizeof(g_s.kb));
+            g_s.kb[1] = 0u;
+            g_s.kb_frames++;
+        }
     } else if (type == T_NEUTRAL && len == 0) {
         g_s.state_frames++;
         g_s.state.buttons = 0u;
         g_s.state.lx = g_s.state.ly = 0x800u;
         g_s.state.rx = g_s.state.ry = 0x800u;
+        memset(g_s.kb, 0, sizeof(g_s.kb));
+        g_s.kb_clear_req = true;
     } else {
         // CONFIG/HELLO/PING等は既存inboxへ。溢れはib_drop (UART路と同一)。
         uint8_t nw = (uint8_t)((g_s.ib_w + 1u) % IB_N);
@@ -1248,6 +1278,7 @@ static void poll_tick(uint32_t now) {
     uint8_t pb[3];
     bool advanced;
     bool cdc_has;
+    bool kb_clear;
     // CDC pumpはg_m非保持区間で先に回す (cbがenterするため)。
     // Core1 UART路・DMA・huntとは無関係。HID profile時は不応答。
     // log CDCの送出もここ (probe_lineはTinyUSBを触らない)。
@@ -1260,7 +1291,14 @@ static void poll_tick(uint32_t now) {
     // (Core0書込・Core1読込。bt_sessionと同型)。
     mutex_enter_blocking(&g_m);
     g_s.state_accept = g_vs.state_accept;
+    kb_clear = g_s.kb_clear_req;
+    if (kb_clear) {
+        g_s.kb_clear_req = false;
+    }
     mutex_exit(&g_m);
+    if (kb_clear) {
+        usb_wired_keyboard_reset();
+    }
 
     // inbox drain → dispatch。live indexで空になるまで回す。
     // (旧コードはスナップショット判定で無限ループしたためlive indexで回す。)
@@ -1418,6 +1456,13 @@ static void poll_tick(uint32_t now) {
     bcon_btn[0] = pb[0];
     bcon_btn[1] = pb[1];
     bcon_btn[2] = pb[2];
+    memcpy(bcon_kb, cp.kb, sizeof(bcon_kb));
+    if (cp.kb_frames != s_last_kb_frames) {
+        if (s_last_kb_frames == 0u && cp.kb_frames > 0u) {
+            probe_line("KEYBOARD rx");
+        }
+        s_last_kb_frames = cp.kb_frames;
+    }
     bcon_lx = cp.state.lx;
     bcon_ly = cp.state.ly;
     bcon_rx = cp.state.rx;
@@ -1452,17 +1497,34 @@ static void poll_tick(uint32_t now) {
     } else if (!s_neutral_hold &&
                (int32_t)(now - s_last_state_ms) >= (int32_t)TIMEOUT_NEUTRAL_MS) {
         bool live;
+        bool kb_live = false;
         mutex_enter_blocking(&g_m);
         live = (g_s.state.buttons != 0u || g_s.state.lx != 0x800u ||
                 g_s.state.ly != 0x800u || g_s.state.rx != 0x800u ||
                 g_s.state.ry != 0x800u);
+        {
+            int k;
+            for (k = 0; k < 8; k++) {
+                if (g_s.kb[k] != 0u) {
+                    kb_live = true;
+                    break;
+                }
+            }
+        }
         if (live) {
             g_s.state.buttons = 0u;
             g_s.state.lx = g_s.state.ly = 0x800u;
             g_s.state.rx = g_s.state.ry = 0x800u;
         }
+        if (kb_live) {
+            memset(g_s.kb, 0, sizeof(g_s.kb));
+        }
         mutex_exit(&g_m);
-        if (live ||
+        if (kb_live) {
+            memset(bcon_kb, 0, sizeof(bcon_kb));
+            usb_wired_keyboard_reset();
+        }
+        if (live || kb_live ||
             probe_btn[0] != 0u || probe_btn[1] != 0u || probe_btn[2] != 0u) {
             probe_input_reset();
             probe_request_send();
@@ -1569,7 +1631,7 @@ static uint32_t pm_rd(void)
 }
 
 // 行バッファは静的に置く (Core0専用・非再入。2KBスタック節約、send_status参照)。
-static char s_stats_line[384];
+static char s_stats_line[448];
 static char s_stats_uline[256];
 static void stats_print(void) {
     char *line = s_stats_line;
@@ -1583,7 +1645,7 @@ static void stats_print(void) {
              "BCON t=%lus hs=%d cfg=%d cdc=%d/%d lgd=%lu cid=%u wired=%d "
              "cap=%d/%d/%d res=%d err=%02x rum=%lu+%lu "
               "ibdrop=%lu obdrop=%u frames=%lu crc=%lu drop=%lu ovr=%lu "
-               "rx80=%lu tx81=%lu tx21=%lu in30=%lu iters=%lu pm=%lu "
+               "rx80=%lu tx81=%lu tx21=%lu in30=%lu kb=%lu kbr=%lu kbd=%lu kbs=%lu kbp=%d kbdrop=%lu iters=%lu pm=%lu "
                "baud=%u%c",
               (unsigned long)(to_ms_since_boot(get_absolute_time()) / 1000),
              usb_wired_handshake_done() ? 1 : 0,
@@ -1602,6 +1664,12 @@ static void stats_print(void) {
              (unsigned long)cp.drop_ev, (unsigned long)cp.overruns,
               (unsigned long)ws.rx80, (unsigned long)ws.tx81,
               (unsigned long)ws.tx21, (unsigned long)ws.in30,
+              (unsigned long)ws.kb_out,
+              (unsigned long)cp.kb_frames,
+              (unsigned long)ws.kb_done,
+              (unsigned long)ws.kb_set,
+              ws.kb_proto_seen ? (int)ws.kb_proto : -1,
+              (unsigned long)ws.kb_drop,
               (unsigned long)cp.iters, (unsigned long)pm_rd(),
               (unsigned)cp.baud_idx, cp.baud_locked ? 'L' : 'H');
     probe_line(line);
