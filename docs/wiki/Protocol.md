@@ -63,10 +63,11 @@ SSOT は `spec/protocol_v3.md`（v4 正準、`PROTO_VER=4`）である。本ペ�
 | `0x39` | COLOR_GET | PC→Pico | 0 | 色読出要求 |
 | `0x3A` | COLOR_INFO | Pico→PC | 12 | 色応答（RGB×4） |
 | `0x3B` | RECONNECT | PC→Pico | 0 | 待機状態の明示解除 |
+| `0x3C` | KEYBOARD | PC→Pico | 8 | HID keyboard 全状態（有線 USB のみ送出） |
 
 `proto_expected_len` が既知型の正確長を一元管理する。`T_PLAYER_INFO` は `return 2` が追加済みであり、未知 `0x24` は `-1` のままである (`src/proto/protocol.c:31-52`, `tests/host/test_config.c:160-164`)。
 
-> ✅ Done: `T_IMU_SAMPLE`（0x04）・`T_EMULATE_MODE`（0x38）・`T_COLOR_GET`/`T_COLOR_INFO`（0x39/0x3A）・`T_RECONNECT`（0x3B）も実装済みである。`T_RUMBLE` 送出・`T_PLAYER_INFO`・`0x36 BAUD_SET`・`0x37 BOOTSEL` は仕様・実装＋HW 実証済みである。CONFIG 拒否 ERRCODE 延長規則（`0x16`・`0x17`・`0x18`）も実装済みである。
+> ✅ Done: `T_IMU_SAMPLE`（0x04）・`T_EMULATE_MODE`（0x38）・`T_COLOR_GET`/`T_COLOR_INFO`（0x39/0x3A）・`T_RECONNECT`（0x3B）・`T_KEYBOARD`（0x3C）も実装済みである。`T_RUMBLE` 送出・`T_PLAYER_INFO`・`0x36 BAUD_SET`・`0x37 BOOTSEL` は仕様・実装＋HW 実証済みである。CONFIG 拒否 ERRCODE 延長規則（`0x16`・`0x17`・`0x18`）も実装済みである。
 
 ## STATE（`0x01`、LEN8）
 
@@ -87,7 +88,7 @@ SSOT は `spec/protocol_v3.md`（v4 正準、`PROTO_VER=4`）である。本ペ�
 
 - HELLO ペイロードは `[0]=PROTO_VER（要求版）、[1]=FLAGS（bit0=STATUS 自動送信要求、他予約 0）` である (`spec/protocol_v3.md:126`)
 - 現コードは v4 のみ受け付ける。`ver == PROTO_VER`（=4）なら `RESULT_OK` + `state_accept=true`、それ以外は `RESULT_VER_UNSUPPORTED` + `state_accept=false` である。`DOWNGRADED` 分岐は削除済みである (`src/proto/dispatch.c:56-59`)。`DOWNGRADED` 列挙値自体は `protocol.h` に残置されているが無害な残骸であり、計画書も削除不要としている (`src/proto/protocol.h:39-43`, `docs/superpowers/plans/2026-09-15-plan-a-telemetry-v4.md:79`)
-- HELLO_ACK ペイロードは `[0]=採用版、[1]=FW_MAJOR、[2]=FW_MINOR、[3]=RESULT` である (`spec/protocol_v3.md:127`)。送信は `flush_outbox` が行う (`src/main.c:839-866`)。FW 版は `FW_MAJOR=0`、`FW_MINOR=12` である (`src/proto/dispatch.h`)。
+- HELLO_ACK ペイロードは `[0]=採用版、[1]=FW_MAJOR、[2]=FW_MINOR、[3]=RESULT` である (`spec/protocol_v3.md:127`)。送信は `flush_outbox` が行う (`src/main.c:839-866`)。FW 版は `FW_MAJOR=0`、`FW_MINOR=15` である (`src/proto/dispatch.h`)。
 - v3 HELLO は UNSUPPORTED になる。STATE は拒否されるが NEUTRAL は安全停止として通す (`src/proto/dispatch.c:34-40`, `tests/host/test_config.c:36-48`)
 - HELLO なし既定では STATE を受け付ける（sweep/PoC 互換のため `state_accept` 初期値は true）(`src/proto/dispatch.c:7-13`, `tests/host/test_config.c:50-56`)
 - PC 送信側は版バイト 4 で送る (`src/poc_dualcore/poc_send.py:102-104`)。`--hello` は HELLO_ACK＋自動 STATUS を確認する (`src/poc_dualcore/poc_send.py:164-182`)
@@ -150,9 +151,28 @@ Picoは最新3件を保持し、USB/BTの `0x30` 生成時に3スロットへ載
 100ms無受信でgyro→0、500msで静止値（0,0,0x1000,0,0,0）。STATEのtimeout-neutralとは独立。
 有線USBの `0x30` はrole0（ProCon）のみ反映し、role1/2は36Bゼロ。無線BTは `0x40` 有効時に全roleへ反映する (`src/main.c` `IMU_GYRO_ZERO_MS`/`IMU_STATIC_MS`, `src/usb/usb_wired.c` `usb_imu_wired_role_ok`, `src/bt/hid_pack.c` `bt_pack_input30`)。
 
+## KEYBOARD（`0x3C`、LEN8）
+
+PC→Pico専用。HID keyboard（report protocol）の入力レポートを全状態で送る。ペイロードは
+`[0]=modifiers（bit0=LCtrl..bit7=RGUI）`、`[1]=consumer予約（0固定）`、
+`[2..7]=HID Usage ID×6（0x00=なし）`である。
+
+- 有線USB profileのHID instance 1（interface 1・report protocol・IN `0x82`・8B）へ、
+  最後の送出値と異なるときだけ送る。mount直後は現在値を1回送る。
+- report descriptorは69BのHID-Project BootKeyboard互換（8B入力＋1B LED出力）。
+  LEDはOUT EPを持たずcontrol SET_REPORTで受ける。`GET_REPORT`(input)は現在の8Bを返す。
+  Picoは受理した全状態遷移を16件FIFOへ積み、EP readyごとに1件送る（`kbdrop`は満杯破棄数）。
+- ProConの`80 04`ハンドシェイクとは独立。無線（CDC）profileはフレームを受理・保持するが
+  HID IFが無いため出力しない（エラーにしない）。
+- PCは変化時即送＋非中立の間100ms以内で全状態を再送する（key-up欠落対策）。
+- `NEUTRAL`（0x02）とSTATE timeout-neutral（200ms）はキーボードも0にする。
+- PokeCon ASCIIモードは対象外 (`src/main.c` `bcon_frame_cb`/`cdc_frame_cb`,
+  `src/usb/usb_wired.c` `kb_send_if_changed`, `src/usb/usb_descriptors.c`
+  `desc_kb_report`)。FW_MINORは14である。
+
 ## USB-CDC輸送（無線起動時）
 
-- 単一UF2。有線起動=HID-only、無線起動=CDC-only。`tud_init` 前に確定し、切替は再起動適用 (`src/main.c` `usb_cdc_set_profile`, `src/usb/usb_cdc.c`)
+- 単一UF2。有線起動=HID composite（Pro Controller + HID keyboard）、無線起動=CDC-only。`tud_init` 前に確定し、切替は再起動適用 (`src/main.c` `usb_cdc_set_profile`, `src/usb/usb_cdc.c`)
 - 無線profileのUSB IDは `2E8A:000A`（Raspberry Pi、製品名 `switch-bcon CDC`）で、有線HIDの `057E:2009` / `Pro Controller` とは別IDである。同一PCでドライバキャッシュが衝突してCOMポートが出ない実測への対策 (`src/usb/usb_descriptors.c`)
 - 無線profileはCDCを2系統持つ。interface 0/1=data（v3 frame）、interface 2/3=log（`probe_line`/BCON行のASCII写し。v3 frameではない）。PCはdata側をプロトコルに使う。識別はPINGにPONGを返す側がdata (`src/usb/usb_cdc.c`, `src/main.c` `probe_line`)
 - 無線USBの初期化はBTstack初期化の後・run loop の前に行う。`link_apply_wired_mode(false)` では外さない (`src/main.c`)

@@ -164,17 +164,69 @@ static uint8_t const desc_hid_report[] = {
 /* 純正 wDescriptorLength 203 との一致をビルドで縛る。 */
 _Static_assert(sizeof(desc_hid_report) == 203u, "wired HID report must be 203B");
 
+/* Keyboard Report Descriptor (69B。HID-Project BootKeyboard 互換)。
+ * 出典: NicoHood/HID `src/SingleReport/BootKeyboard.cpp` の
+ * `_hidReportDescriptorKeyboard`。Arduino 標準 Keyboard（レポートID 2・
+ * LED出力なし）は Switch が無反応だったが、この BootKeyboard 記述子で
+ * 入力できた実績がある（2021-01 Reddit / r/arduino）。
+ * 8B入力: modifiers(8bit)・consumer予約(8bit)・keycode x6(8bit, usage 0x00-0xE7)。
+ * 1B出力: LED 8bit。OUT EPは持たず、LEDは control SET_REPORT で受ける。
+ * レポートIDなし。interface は report protocol (subclass/protocol 0) で、
+ * ホストはこの記述子を解析してキーボードとして扱う。
+ * 有線profileの2番目のHIDインスタンス (interface 1 / IN 0x82) が使う。 */
+static uint8_t const desc_kb_report[] = {
+    0x05, 0x01,       // Usage Page (Generic Desktop Ctrls)
+    0x09, 0x06,       // Usage (Keyboard)
+    0xA1, 0x01,       // Collection (Application)
+    0x05, 0x07,       //   Usage Page (Keyboard/Keypad)
+    0x19, 0xE0,       //   Usage Minimum (0xE0)
+    0x29, 0xE7,       //   Usage Maximum (0xE7)
+    0x15, 0x00,       //   Logical Minimum (0)
+    0x25, 0x01,       //   Logical Maximum (1)
+    0x75, 0x01,       //   Report Size (1)
+    0x95, 0x08,       //   Report Count (8)
+    0x81, 0x02,       //   Input (Data,Var,Abs) modifiers
+    0x05, 0x0C,       //   Usage Page (Consumer)
+    0x95, 0x01,       //   Report Count (1)
+    0x75, 0x08,       //   Report Size (8)
+    0x15, 0x00,       //   Logical Minimum (0)
+    0x26, 0xFF, 0x00, //   Logical Maximum (255)
+    0x19, 0x00,       //   Usage Minimum (0)
+    0x29, 0xFF,       //   Usage Maximum (255)
+    0x81, 0x00,       //   Input (Data,Array,Abs) consumer reserved byte
+    0x05, 0x08,       //   Usage Page (LEDs)
+    0x19, 0x01,       //   Usage Minimum (Num Lock)
+    0x29, 0x08,       //   Usage Maximum (Kana + 3 custom)
+    0x95, 0x08,       //   Report Count (8)
+    0x75, 0x01,       //   Report Size (1)
+    0x91, 0x02,       //   Output (Data,Var,Abs) LED report
+    0x05, 0x07,       //   Usage Page (Keyboard/Keypad)
+    0x95, 0x06,       //   Report Count (6)
+    0x75, 0x08,       //   Report Size (8)
+    0x15, 0x00,       //   Logical Minimum (0)
+    0x26, 0xE7, 0x00, //   Logical Maximum (231)
+    0x19, 0x00,       //   Usage Minimum (0)
+    0x29, 0xE7,       //   Usage Maximum (231)
+    0x81, 0x00,       //   Input (Data,Array,Abs) keycodes
+    0xC0,             // End Collection
+};
+
+_Static_assert(sizeof(desc_kb_report) == 69u, "keyboard HID report must be 69B");
+
 uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance)
 {
-    (void)instance;
+    if (instance == 1u) {
+        return desc_kb_report;
+    }
     return desc_hid_report;
 }
 
 /* Configuration 一式はprofileで選択 (実行時)。両配列を保持しcbで返す。
- * 有線HID-only 41Bはバイト同一 (assert維持)。
+ * 有線は1 device 2 interface: itf0=ProCon (純正41B分のIF+EPはバイト同一)、
+ * itf1=HID keyboard (report protocol・IN 0x82・8B・IDなし)。wTotalLength 66B。
  * 無線CDCは2系統: itf0/1=data (v3 frame) + itf2/3=log (probe_line写し)。
  * EP: data (notif 0x83 / out 0x02 / in 0x82)、log (notif 0x84 / out 0x03 / in 0x85)
- * はHID (0x81/0x01) と非衝突。 */
+ * はHID (0x81/0x01/0x82) と非衝突 (profile排他のため同時には存在しない)。 */
 enum {
     ITF_NUM_CDC_DATA,
     ITF_NUM_CDC_DATA_EP,
@@ -198,24 +250,30 @@ static uint8_t const desc_configuration_cdc[] = {
 _Static_assert(sizeof(desc_configuration_cdc) ==
                    (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN * 2u),
                "cdc config must be 9+66*2B");
-/* Configuration 一式 (wTotalLength 41)。
- * 純正通り: Remote Wakeup、500mA、HID 1IF、IN 0x81 / OUT 0x01 (各64B・間隔8)。 */
+/* Configuration 一式 (wTotalLength 66B)。
+ * 純正ProCon部分 (IF0・Remote Wakeup・500mA・IN 0x81/OUT 0x01 各64B・間隔8) は
+ * バイト同一のまま、キーボードIF (IF1・IN 0x82・8B・間隔8) を末尾に追加する。 */
 enum {
     ITF_NUM_HID,
+    ITF_NUM_KB,
     ITF_NUM_HID_TOTAL,
 };
 
-#define WIRED_CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_HID_INOUT_DESC_LEN)
+#define WIRED_CONFIG_TOTAL_LEN \
+    (TUD_CONFIG_DESC_LEN + TUD_HID_INOUT_DESC_LEN + TUD_HID_DESC_LEN)
 
 static uint8_t const desc_configuration_hid[] = {
     TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_HID_TOTAL, 0, WIRED_CONFIG_TOTAL_LEN,
                           TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 500),
     TUD_HID_INOUT_DESCRIPTOR(ITF_NUM_HID, 0, HID_ITF_PROTOCOL_NONE,
                              sizeof(desc_hid_report), 0x01, 0x80 | 0x01, 64, 8),
+    TUD_HID_DESCRIPTOR(ITF_NUM_KB, 0, HID_ITF_PROTOCOL_NONE,
+                       sizeof(desc_kb_report), 0x82, 8, 8),
 };
 
-/* 純正 wTotalLength 41 との一致をビルドで縛る。 */
-_Static_assert(sizeof(desc_configuration_hid) == 41u, "wired config must be 41B");
+/* 純正41B + keyboard 25B との一致をビルドで縛る。 */
+_Static_assert(sizeof(desc_configuration_hid) == 66u,
+               "wired config must be 41+25B");
 
 uint8_t const *tud_descriptor_configuration_cb(uint8_t index)
 {
@@ -302,15 +360,30 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid)
     return wired_desc_str;
 }
 
-/* GET_REPORT 要求が来た実測はないため 0 (STALL) のまま。
- * でたらめ値は返さない。観測されたら usb_wired 側で持つ。 */
+/* GET_REPORT: ProCon IFは実測要求がないためSTALLのまま。
+ * キーボードIFは report protocol のため、ホストが初期状態を問う場合に
+ * 現在の8Bを返す（返さないとSTALLでキーボードを諦めるホストがある）。 */
 void probe_line(const char *s);
+extern uint8_t bcon_kb[8]; /* 所有元main.c。キーボード最終状態8B */
 
 uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
                                hid_report_type_t report_type, uint8_t *buffer,
                                uint16_t reqlen)
 {
-    (void)instance;
+    if (instance == 1u) {
+        if (report_type == HID_REPORT_TYPE_INPUT && report_id == 0u &&
+            buffer != NULL && reqlen >= 8u) {
+            memcpy(buffer, bcon_kb, 8u);
+            buffer[1] = 0u;
+            return 8u;
+        }
+        if (report_type == HID_REPORT_TYPE_OUTPUT && report_id == 0u &&
+            buffer != NULL && reqlen >= 1u) {
+            buffer[0] = 0u; /* LED状態は保持しないため0 */
+            return 1u;
+        }
+        return 0; /* featureは扱わない */
+    }
     (void)report_id;
     (void)report_type;
     (void)buffer;

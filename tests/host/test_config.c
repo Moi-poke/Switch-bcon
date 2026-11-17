@@ -317,7 +317,7 @@ int main(void) {
                s.errcode == 0x18 && s.fx == FX_EMULATE_MODE && s.fx_arg == 2, "EMULATE=3 rejected (0x18, fx preserved)");
         CHECK(v3_on_frame(&s, T_EMULATE_MODE, procon, 0, 5) == V3_IGNORE &&
               s.errcode == ERR_BAD_LEN, "LEN=0 rejected (BAD_LEN)");
-        CHECK(FW_MINOR == 12, "FW_MINOR==12 (BT 0x30 IMU 50B)");
+        CHECK(FW_MINOR == 15, "FW_MINOR==15 (wired keyboard queue)");
     }
 
     printf("[23] EMULATE intent is reboot-applied (role latch proof)\n");
@@ -353,9 +353,9 @@ int main(void) {
               "RECONNECT LEN2 rejected (BAD_LEN, no FX)");
         /* 未知 opcode として退化していないこと。 */
         v3_session_init(&s);
-        CHECK(v3_on_frame(&s, 0x3C, NULL, 0, 3) == V3_IGNORE &&
+        CHECK(v3_on_frame(&s, 0x3D, NULL, 0, 3) == V3_IGNORE &&
               s.errcode == 0 && s.fx == FX_NONE,
-              "0x3C still unknown (no over-registration)");
+              "0x3D still unknown (no over-registration)");
     }
 
     printf("[25] same-drain CAPTURE+STATUS_REQ preserves fx\n");
@@ -377,6 +377,19 @@ int main(void) {
               "fx survives STATUS_REQ in same drain");
         CHECK(s.ob_n == 2 && has_status && has_pi,
               "STATUS_REQ -> STATUS + PLAYER_INFO");
+    }
+
+    printf("[26] T_KEYBOARD LEN=8 (live path) / LEN!=8 rejected\n");
+    v3_session_init(&s);
+    {
+        const uint8_t kb[8] = { 0x02, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00 };
+        CHECK(T_KEYBOARD == 0x3C, "KEYBOARD TYPE=0x3C");
+        CHECK(proto_expected_len(T_KEYBOARD) == 8, "KEYBOARD LEN=8");
+        CHECK(v3_on_frame(&s, T_KEYBOARD, kb, 8, 1) == V3_IGNORE,
+              "KEYBOARD LEN8 accepted (live applies state)");
+        CHECK(v3_on_frame(&s, T_KEYBOARD, kb, 7, 2) == V3_IGNORE &&
+              s.errcode == ERR_BAD_LEN,
+              "KEYBOARD LEN7 rejected (BAD_LEN)");
     }
 
     printf("\nRESULT: %s (%d failures)\n", fails == 0 ? "ALL PASS" : "HAS FAILURES", fails);

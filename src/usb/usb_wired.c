@@ -25,6 +25,7 @@ void probe_line(const char *s);
 
 /* 入力状態の所有元は main.c。読みのみ。 */
 extern uint8_t bcon_btn[3];
+extern uint8_t bcon_kb[8]; /* HID keyboard report (所有元main.c) */
 extern uint16_t bcon_lx, bcon_ly, bcon_rx, bcon_ry;
 extern uint8_t bcon_mac[6]; /* 応答順 (main.cで反転済み) */
 extern uint32_t bcon_usb_rumble_n; /* 所有元main.c。USB振動0x10受信累計 */
@@ -45,6 +46,10 @@ uint8_t usb_wired_timer_now(void)
 #define USB_WIRED_INPUT_LEN 64u
 #define USB_WIRED_INPUT_PAYLOAD_LEN 63u
 #define USB_WIRED_REPORT_ID_REPLY 0x81u
+/* キーボードIFは2番目のHIDインスタンス (config descriptorのITF_NUM_KB)。
+ * report protocol の8B入力 (modifiers, consumer予約, key0..5)。 */
+#define USB_WIRED_KB_INSTANCE 1u
+#define USB_WIRED_KB_LEN 8u
 #if IMU_DUMMY
 /* Phase 0 実験: ON時のみ送信周期を上書きする (記述子は変えない)。 */
 #define USB_WIRED_INPUT_INTERVAL_MS ((uint32_t)IMU_DUMMY_INTERVAL_MS)
@@ -62,6 +67,26 @@ static bool wired_inited;
 static bool kick81_done; /* mount毎1回: Joy役の81 01先制通知済み */
 static uint32_t last_input_ms;
 static usb_wired_stats_t wired_stats;
+/* キーボードIFの送出キュー。PC側の press→neutral が1ms以内に連続して
+ * 届いても、latestのみで潰さず全遷移を順にUSBへ出す。
+ * EPがbusyの間はキューに積み、readyになったtickで1件ずつ送る。 */
+#define USB_WIRED_KB_QUEUE_LEN 16u
+#define USB_WIRED_KB_QUEUE_MASK (USB_WIRED_KB_QUEUE_LEN - 1u)
+static uint8_t kb_queue[USB_WIRED_KB_QUEUE_LEN][USB_WIRED_KB_LEN];
+static uint8_t kb_q_head;
+static uint8_t kb_q_tail;
+static uint8_t kb_q_count;
+static uint8_t kb_last[USB_WIRED_KB_LEN];
+static bool kb_last_valid;
+static bool kb_done_logged;
+
+static void kb_queue_reset(void)
+{
+    kb_q_head = 0u;
+    kb_q_tail = 0u;
+    kb_q_count = 0u;
+    kb_last_valid = false; /* 次tickで現在値を再投入する */
+}
 #if IMU_DUMMY_DIAG
 /* §1診断: 最後に送信成功した0x30のtimerとIMU先頭12Bの写し。 */
 static uint8_t s_diag_b13[12];
@@ -77,6 +102,7 @@ void usb_wired_init(void)
     handshake_done = false;
     kick81_done = false;
     last_input_ms = 0u;
+    kb_queue_reset();
 #if IMU_DUMMY_DIAG
     imu_dummy_reset_state_why(imud_line, sizeof(imud_line), "init");
     probe_line(imud_line);
@@ -101,6 +127,7 @@ void usb_wired_set_enabled(bool en)
     wired_enabled = en;
     if (!en) {
         handshake_done = false;
+        kb_queue_reset();
 #if IMU_DUMMY_DIAG
         {
             char imud_line[128];
@@ -200,6 +227,7 @@ static bool pend_resp_valid;
 void usb_wired_reconnect(void)
 {
     handshake_done = false;
+    kb_queue_reset();
 #if IMU_DUMMY_DIAG
     {
         char imud_line[128];
@@ -221,6 +249,7 @@ void usb_wired_disconnect(void)
     /* M7: 切断時はセッション状態を落とす (reconnect と同一初期化)。
      * tud_disconnect では umount が来ないため幽霊 handshake が残る。 */
     handshake_done = false;
+    kb_queue_reset();
 #if IMU_DUMMY_DIAG
     {
         char imud_line[128];
@@ -233,6 +262,54 @@ void usb_wired_disconnect(void)
     pend_resp_valid = false;
     kick81_done = false;
     tud_disconnect();
+}
+
+/* キーボードIF (HID instance 1) の全状態遷移をキューへ積む。
+ * PC側の press→neutral が同じ1ms tickに届いても、latestのみで潰さない。
+ * reserved/consumer byteはpc側受信値を無視し、常に0を渡す。 */
+static void kb_enqueue_if_changed(void)
+{
+    uint8_t report[USB_WIRED_KB_LEN];
+    memcpy(report, bcon_kb, sizeof(report));
+    report[1] = 0u;
+    if (kb_last_valid && memcmp(kb_last, report, sizeof(report)) == 0) {
+        return;
+    }
+    memcpy(kb_last, report, sizeof(report));
+    kb_last_valid = true;
+    if (kb_q_count >= USB_WIRED_KB_QUEUE_LEN) {
+        /* ホストが長くpollしない場合の保険。最古を捨てて最新を残す。 */
+        kb_q_head = (uint8_t)((kb_q_head + 1u) & USB_WIRED_KB_QUEUE_MASK);
+        kb_q_count--;
+        wired_stats.kb_drop++;
+    }
+    memcpy(kb_queue[kb_q_tail], report, sizeof(report));
+    kb_q_tail = (uint8_t)((kb_q_tail + 1u) & USB_WIRED_KB_QUEUE_MASK);
+    kb_q_count++;
+}
+
+/* EPがreadyならキューの先頭を1件送る。次tickで残りを送る。 */
+static void kb_send_pending(void)
+{
+    if (kb_q_count == 0u) {
+        return;
+    }
+    if (!tud_hid_n_ready(USB_WIRED_KB_INSTANCE)) {
+        return;
+    }
+    if (tud_hid_n_report(USB_WIRED_KB_INSTANCE, 0u, kb_queue[kb_q_head],
+                         (uint16_t)USB_WIRED_KB_LEN)) {
+        kb_q_head = (uint8_t)((kb_q_head + 1u) & USB_WIRED_KB_QUEUE_MASK);
+        kb_q_count--;
+        wired_stats.kb_out++;
+    }
+}
+
+/* 安全停止 (NEUTRAL/timeout/unmount) 用。未送出の遷移を捨て、
+ * 次のtickで現在値 (通常は全ゼロ) を送り直す。 */
+void usb_wired_keyboard_reset(void)
+{
+    kb_queue_reset();
 }
 
 void usb_wired_task(uint32_t now_ms)
@@ -269,6 +346,13 @@ void usb_wired_task(uint32_t now_ms)
         probe_line(imud_line);
     }
 #endif
+    /* キーボードIFはProConの80 04ハンドシェイク・保留応答とは独立に送る
+     * (標準キーボードは列挙後すぐ使える)。無線profileではHID IFが無く
+     * wired_enabledもfalseのため到達しない。 */
+    if (wired_enabled && wired_inited && tud_mounted()) {
+        kb_enqueue_if_changed();
+        kb_send_pending();
+    }
     /* Joy役の81 01先制通知 (espp式kick-start)。ドックは2006/2007に
      * 80 01を送ってこない実測のため、mount直後にこちらから
      * 81 01 00<type><mac>を出し80 02を誘う。ProConは実績経路のため
@@ -306,7 +390,7 @@ void usb_wired_task(uint32_t now_ms)
         }
         return;
     }
-    /* 80 04 完了前は送らない。 */
+    /* 80 04 完了前は0x30を送らない。 */
     if (!wired_enabled || !wired_inited || !tud_mounted() || !handshake_done) {
         return;
     }
@@ -343,6 +427,15 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
     uint16_t req_len;
     uint8_t sub;
     int n;
+    if (instance == 1u) {
+        /* キーボードIFの control SET_REPORT (LED output) は受けるが
+         * 状態は使わない。TinyUSB が ACK する。 */
+        wired_stats.kb_set++;
+        return;
+    }
+    if (instance != 0u) {
+        return;
+    }
     (void)instance;
     (void)report_type;
     if (buffer == NULL || bufsize == 0u) {
@@ -557,10 +650,44 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
     }
 }
 
+/* キーボードIFのIN転送完了。ホストがIF1を実際にポーリングした証拠。
+ * 最初の1回だけログへ出し、以降は BCON の kbd= で数える。 */
+void tud_hid_report_complete_cb(uint8_t instance, uint8_t const *report,
+                                uint16_t len)
+{
+    (void)report;
+    (void)len;
+    if (instance != USB_WIRED_KB_INSTANCE) {
+        return;
+    }
+    wired_stats.kb_done++;
+    if (!kb_done_logged) {
+        kb_done_logged = true;
+        probe_line("KEYBOARD IN done");
+    }
+}
+
+/* ホストが SET_PROTOCOL を送った場合の観測 (0=boot / 1=report)。
+ * キーボードIFは report protocol で列挙するが、ホストの選択を残す。 */
+void tud_hid_set_protocol_cb(uint8_t instance, uint8_t protocol)
+{
+    if (instance != USB_WIRED_KB_INSTANCE) {
+        return;
+    }
+    wired_stats.kb_proto = protocol;
+    wired_stats.kb_proto_seen = true;
+    {
+        char l[24];
+        snprintf(l, sizeof(l), "KBP proto=%u", (unsigned)protocol);
+        probe_line(l);
+    }
+}
+
 /* 装着で計数。tud_mounted() が立つ直前の bus reset/configure 由来。 */
 void tud_mount_cb(void)
 {
     wired_stats.mount++;
+    kb_queue_reset(); /* mount後の初回は現在値を送る */
     probe_line("MMOUNT");
 }
 
@@ -581,6 +708,7 @@ void tud_umount_cb(void)
     imu_dummy_reset_state();
 #endif
     kick81_done = false;
+    kb_queue_reset();
     probe_line("UUMOUNT");
 }
 

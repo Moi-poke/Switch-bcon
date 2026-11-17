@@ -30,6 +30,10 @@ bool usb_wired_is_configured(void);
 
 bool usb_wired_handshake_done(void);
 
+/* キーボード送出キューを破棄し、次tickで現在値を送り直す。
+ * NEUTRAL/timeout-neutral/unmount の安全停止からCore0で呼ぶ。 */
+void usb_wired_keyboard_reset(void);
+
 /* USB バス側の診断計数。列挙〜応答のどこで止まるかを見る。
  * mount/unmount はホストの bus reset/configure 由来。rx80/last80/tx81 は
  * 80 xx 受信と 81 応答。in30 は入力レポート送出。 */
@@ -68,6 +72,18 @@ typedef struct {
     uint8_t subd;
     /* 2B 未満の短い受信の回数。 */
     uint16_t short_n;
+    /* キーボードIF (HID instance 1) の入力レポート送出数。末尾追加。 */
+    uint32_t kb_out;
+    /* キーボードIFの完了・制御観測 (末尾追加)。
+     * kb_done: IN転送完了数 (ホストが実際にポーリングした証拠)
+     * kb_set: control SET_REPORT (LED等) の受信数
+     * kb_proto: SET_PROTOCOL の値 (0=boot/1=report) */
+    uint32_t kb_done;
+    uint32_t kb_set;
+    uint8_t kb_proto;
+    bool kb_proto_seen;
+    /* キュー満杯で捨てた遷移数 (末尾追加)。 */
+    uint32_t kb_drop;
 } usb_wired_stats_t;
 void usb_wired_get_stats(usb_wired_stats_t *st);
 

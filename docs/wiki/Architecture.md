@@ -6,7 +6,7 @@
 
 有線起動では `wired_loop()` が回り、CYW43/BTstack を一切上げない (`src/main.c:1340-1342,1480-1482`)。無線起動では BTstack run loop + TinyUSB + CYW43 が上がり、1ms 周期の `poll_tick` が全体を駆動する (`src/main.c:1485-1489,1550-1552`)。
 
-USB は起動時に profile を選ぶ。有線起動は HID-only（Switch 接続用）、無線起動は CDC-only（PC 専用、data と log の 2 系統）で、単一 UF2 のまま `usb_cdc_set_profile(s_wired)` を `tud_init` 前に呼んで確定する。切替は再起動適用である (`src/usb/usb_cdc.c`, `src/main.c`)。無線 profile の USB ID は `2E8A:000A` で、有線 HID の `057E:2009` とは別である (`src/usb/usb_descriptors.c`)。
+USB は起動時に profile を選ぶ。有線起動は HID composite（Switch 接続用。Pro Controller IF + HID keyboard IF）、無線起動は CDC-only（PC 専用、data と log の 2 系統）で、単一 UF2 のまま `usb_cdc_set_profile(s_wired)` を `tud_init` 前に呼んで確定する。切替は再起動適用である (`src/usb/usb_cdc.c`, `src/main.c`)。無線 profile の USB ID は `2E8A:000A` で、有線 HID の `057E:2009` とは別である (`src/usb/usb_descriptors.c`)。
 
 ## Core1 の責務（UART 受信・パース専用）
 

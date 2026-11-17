@@ -66,7 +66,7 @@
 
 ## 無線起動で PC から制御できない
 
-- 無線起動時 USB は CDC-only（HID なし）。有線起動時は HID-only（CDC なし）。単一 UF2、起動時確定・reboot 適用。
+- 無線起動時 USB は CDC-only（HID なし）。有線起動時は HID composite（Pro Controller + HID keyboard、CDC なし）。単一 UF2、起動時確定・reboot 適用。
 - 無線 profile は COM が 2 本出る。data（interface 0/1）が v3 frame 用、log（interface 2/3）は `probe_line`/BCON 行の ASCII 用である。プロトコルは data 側に送る。識別は PING に PONG を返す側が data。
 - 無線 profile の USB ID は `2E8A:000A`（`switch-bcon CDC`）。有線 HID の `057E:2009` と別 ID にしてあり、同一 PC で COM が出ない衝突を避けている。
 - CDC に baud hunt はない。CONFIG は単発でよい。応答は要求元輸送にだけ返る。

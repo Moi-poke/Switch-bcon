@@ -21,6 +21,9 @@
 | 4.9 | 2026-10-22 | 無線(BT) 0x30へIMU 36B（0x40有効時。50B=A1 30+12B+36B）。無線時はUSB-CDCでIMU_SAMPLEを受ける。BT 0x30はIMU有効時15ms・timer 5ms刻み、無効時7ms。0x41感度はUSBと共有。100ms gyro→0をbcon_imu3にも適用。role2(Joy-R)の0x30 IMUはRx(180°)=Y/Z反転（実機で平坦時Z=−1gを確認）。PC側[IMU]軸変換は恒等が前提（90°を重ねるとrole0まで回る）。有線0x30のIMUはrole0のみ（role1/2は36Bゼロ）。PROTO_VER=4維持・FW_MINOR=12。 |
 | 4.10 | 2026-10-29 | 無線profileのUSBをdata+logの2 CDC（itf0/1=data、itf2/3=log）へ拡張し、無線profileのUSB IDを `2E8A:000A`（"Raspberry Pi"/"switch-bcon CDC"/基板固有シリアル）へ変更。有線HID記述子（41B/203B・`057E:2009`）はバイト不変。無線USBはBTstack初期化の後・run loopの前に初期化し、`link_apply_wired_mode(false)`では外さない（先に`tud_init`するとBT初期化のブロック中に`tud_task`が止まり、ホストが列挙を諦めてCOMポートが出ない実測への対策）。logは`probe_line`のASCII写しで非ブロッキング。フレーム不変・PROTO_VER=4維持・FW_MINOR=12据置 |
 | 4.11 | 2026-10-30 | 文書同期: PLAYER_INFO flags bit3-7（0x41感度レンジ/受信済み）と §12.3 Joy SPI応答のUSB/BT差を実装に一致させた。フレーム・PROTO_VER不変・FW_MINOR=12。 |
+| 4.12 | 2026-11-04 | KEYBOARD新設（0x3C・PC→Pico・LEN=8）。HID boot keyboard report（modifiers 1B＋reserved 1B＋keycode 6B）を全状態で受け、有線USB profileの2番目のHID IF（boot keyboard・IN `0x82`・8B・`bInterval 8`）へ変化時のみ送出する。有線USB configは純正ProCon IF（41B分・バイト不変）＋keyboard IF 25B＝66B。無線（CDC）profileではフレームを受理・保持するが送出先のHID IFが無いため出力しない。NEUTRALとtimeout-neutralはキーボードも解放する。PROTO_VER=4維持・FW_MINOR=13。 |
+| 4.13 | 2026-11-15 | KEYBOARDのSwitch互換修正。有線IF1を boot keyboard（subclass/protocol 1）から **report protocol（subclass/protocol 0）の HID keyboard** へ変更し、report descriptorを HID-Project BootKeyboard 互換の69B（consumer予約1B＋LED 8bit出力＋key usage 0x00-0xE7）へ差し替える。`GET_REPORT`(input) は現在の8Bを返し、control `SET_REPORT`(LED) は受けてACKする（OUT EPは追加しない）。config 66B・IF0 ProConバイト不変。FW_MINOR=14。 |
+| 4.14 | 2026-11-15 | KEYBOARDの取りこぼし対策。press→neutralが同一1ms tickに到着してもlatestのみで潰さないよう、有線USBのキーボード送出を16件FIFOへ変更（EP readyごとに1件送信、満杯時は最古を捨てて `kbdrop` に計数）。NEUTRAL/timeout-neutral/unmountでは未送出キューを破棄し、現在値（通常は全ゼロ）を再送する。フレーム・IF/config不変。FW_MINOR=15。 |
 
 > フィールド追加・意味変更時は必ず本表と `PROTO_VER` を更新する。
 
@@ -51,8 +54,8 @@
 （§3-§9をそのまま適用。`parser_feed_buf` が輸送非依存の共有pump）。
 相違点のみここに定義する：
 
-* USB構成はprofile排他：有線=HID-only（§12・41B/203B・Switch接続用）、
-  無線=CDC-only（PC専用）。単一UF2で起動時に選択（tud_init前に確定・
+* USB構成はprofile排他：有線=HID composite（§12・ProCon IF＋keyboard IF・
+  Switch接続用）、無線=CDC-only（PC専用）。単一UF2で起動時に選択（tud_init前に確定・
   切替はWIRED_MODEと同型のreboot適用）。無線USBはSwitchには挿さないこと。
 * 無線profileのUSB初期化はBTstack初期化（`hci_power_control(HCI_POWER_ON)`）の
   後・run loopの前に行う。BT初期化は数秒ブロックし、その間に`tud_task`を回せないと
@@ -129,6 +132,7 @@ Offset  Field    Size  説明
 | 0x39 | COLOR_GET | PC→Pico | 0 | 色読出要求（RAM先頭12BをCOLOR_INFOで返送） |
 | 0x3A | COLOR_INFO | Pico→PC | 12 | 色応答（RGB×4。本体・ボタン・左・右） |
 | 0x3B | RECONNECT | PC→Pico | 0 | 待機状態の明示解除（能動再接続を再開させる） |
+| 0x3C | KEYBOARD | PC→Pico | 8 | HID keyboard全状態（modifiers＋consumer予約＋key×6。§5.14） |
 
 ## 5. ペイロード定義
 
@@ -348,6 +352,42 @@ Off  Field  Size  説明
   IMU未受信時と同じ静的値（36Bゼロ）を送る。BT（無線）は §12.4 の通り全roleで反映する。
 * STATEのtimeout-neutral（§8・200ms）とは独立。IMU停止はボタンを解放しない。
 
+### 5.14 KEYBOARD (LEN=8)
+
+PC→Pico専用。HID keyboard（report protocol）の入力レポートを全状態で送る
+（1フレーム欠落は次の変化フレーム／定期リフレッシュで完全復帰する）。
+
+```
+Off  Field  Size  説明
+ 0   MOD     1    修飾キー bit0=LCtrl / bit1=LShift / bit2=LAlt / bit3=LGUI /
+                  bit4=RCtrl / bit5=RShift / bit6=RAlt / bit7=RGUI
+ 1   CONS    1    consumer予約（0固定。Picoは受信値を無視し、ホストへは常に0を送る）
+ 2   K0      1    HID Usage ID（0x00=なし）
+ 3   K1      1    同上
+ 4   K2      1    同上
+ 5   K3      1    同上
+ 6   K4      1    同上
+ 7   K5      1    同上
+```
+
+* 6KRO（同時6キー）。6キー超のRollOver表現・キーボードレイアウト変換・
+  自動リピートはPC/Switch側の責務。Picoは値の変換をしない。
+* 有効条件は有線USB profileのみ。無線（CDC）profileはフレームを受理して
+  状態を保持するが、送出先のHID IFが無いため出力しない（エラーにしない）。
+* 送出先は有線USBのHID instance 1（interface 1・report protocol・IN `0x82`・
+  8B入力・`bInterval 8`）。report descriptorは8B入力に加えて1BのLED出力を
+  持つが、OUT EPは持たずLEDは control SET_REPORT で受ける。
+  Picoは受理した全状態遷移を16件のFIFOへ積み、EP readyごとに1件送る
+  （同一1ms tickにpressとneutralが到着しても潰さない）。FIFO満杯時は
+  最古を捨てる（診断 `kbdrop`）。mount直後は現在値を1回送る。
+  ProConの`80 04`ハンドシェイクとは独立（キーボードは列挙後すぐ使える）。
+* 安全停止：`T_NEUTRAL`・STATE timeout-neutral・unmountでは未送出FIFOを
+  破棄し、現在値（通常は全ゼロ）を再送する。
+* PCの義務：変化時即送。非中立（MODまたはキーが非0）の間は**100ms以内**で
+  同じ全状態を再送する（UART/CDCのフレーム欠落でkey-upが失われるのを防ぐ）。
+* 解放：`T_NEUTRAL`（全入力解放）とSTATE timeout-neutral（§8・200ms）は
+  キーボード状態も0にする（撃ちっぱなし防止）。
+* PokeCon ASCIIモード（`-DPOKECON_INPUT=1`）は対象外（v3バイナリ専用）。
 
 ## 6. CRC8
 
@@ -364,7 +404,8 @@ CRC-8/SMBUS（poly 0x07、init 0x00、 refin/refoutなし、xorout 0x00）。検
 |------|------|
 | STATE送信 | 変化時即送＋定期リフレッシュ（既定60Hz、上限1kHz） |
 | USBポーリング | bInterval 8（実機写し）。低遅延は到着即report更新で確保 |
-| timeout-neutral | 直近STATE（適用されたSTATE/NEUTRAL）から200ms無受信で全解放。PING・STATUS_REQ等の他frameでは延長しない |
+| timeout-neutral | 直近STATE（適用されたSTATE/NEUTRAL）から200ms無受信で全解放（キーボードも0）。PING・STATUS_REQ等の他frameでは延長しない |
+| KEYBOARD送信 | PCは変化時＋非中立の間100ms以内で全状態を再送。Picoは変化時のみUSBへ送る（8B入力・HID keyboard/report protocol） |
 | WDT | 2s。timeout-neutralとは別機構（前者=入力安全、後者=生存性） |
 | USB監視 | unmount/suspendで即中立、再mountで復帰 |
 | コア | dual-core可否はPoCで判定。不合格時はsingle-core＋1ms poll |
@@ -475,10 +516,22 @@ ProConは両スティックlive（従来通り）。
 
 - Device: USB 2.00・EP0 64B・`057E:2009`・`bcdDevice 0x0200`
   (ToadKing写し。`0x0210` 説あり。ドック検証で確認し確定する)。
-- Config一式41B: Remote Wakeup・500mA・HID 1IF・IN `0x81`/OUT `0x01`
-  (各64B・`bInterval 8` 実機写し。低遅延化のための短縮はしない)。
+- Config一式66B: 純正ProCon部分（Remote Wakeup・500mA・IF0・IN `0x81`/OUT `0x01`
+  各64B・`bInterval 8`）は41B分バイト不変。末尾にkeyboard IF 25B
+  （IF1・HID keyboard/report protocol・IN `0x82`・8B・`bInterval 8`）を追加する。
 - HID report 203B (ToadKing写し。入力 `0x30`・`0x21`/`0x81`、
-  出力 `0x01`/`0x10`/`0x80`/`0x82`)。
+  出力 `0x01`/`0x10`/`0x80`/`0x82`) ＋ keyboard report **69B**
+  （HID-Project BootKeyboard互換。レポートIDなし。8B入力=
+  modifiers＋consumer予約＋key×6、1B出力=LED。key usage 0x00-0xE7）。
+  出典: NicoHood/HID `SingleReport/BootKeyboard.cpp`。Arduino標準Keyboard
+  （レポートID 2・LED出力なし）はSwitchが無反応だったが、この記述子は
+  Switchで入力できた実績がある（2021-01 Reddit/r/arduino）。
+- Keyboard IF: `bInterfaceClass=HID`・subclass=0・protocol=0
+  （**report protocol**。ホストは69B descriptorを解析する）。
+  HIDインスタンス1が担当し、`T_KEYBOARD`（§5.14）の8Bをそのまま送る。
+  `GET_REPORT`(input) は現在の8Bを返す。LEDの control `SET_REPORT` は
+  受けてACKし、状態は使わない（OUT EPは持たない）。
+  有線profile専用（無線CDC profileはHID IFを列挙しない）。
 - 文字列: `Nintendo Co., Ltd` / `Pro Controller` / `000000000001` (純正固定値)。
 - SPI `0x6000` 域 (シリアル) は `0xFF` で答える (実機風値を返すと
   Switch 2が `2162-0002` で落ちる実測のため。2wiCCも同運用)。
@@ -501,7 +554,7 @@ ProConは両スティックlive（従来通り）。
 ## 12.1 USB role別値 (EMULATE_MODE)
 
 roleは起動時に1回だけ確定する（USB列挙より先。範囲外はProCon扱い）。
-PID以外は全role同一（VID・bcd・EP・間隔・構成は不変）。
+PID以外は全role同一（VID・bcd・EP・間隔・構成（66B・keyboard IF込み）は不変）。
 
 | role | PID | 製品名 | 備考 |
 |------|-----|--------|------|

@@ -10,7 +10,7 @@ BLE は wake 取込・再生専用であり、Switch 2 の BLE 入力エミュ�
 
 ## 状態バッジ（文字版、2026-10-30 時点）
 
-- プロトコル: v4 完了（`PROTO_VER=4`、`FW_MINOR=12`）(`src/proto/protocol.h`, `src/proto/dispatch.h`)
+- プロトコル: v4 完了（`PROTO_VER=4`、`FW_MINOR=15`）(`src/proto/protocol.h`, `src/proto/dispatch.h`)
 - 有線 USB-HID: 実機動作済み（Pro Controller / Joy-Con L/R）
 - 無線 Classic BT: 実機動作済み（SNIFF 必須は解決済み）
 - 無線 USB-CDC 輸送: 実装済み（単一 UF2・起動時 profile 選択。COM は data と log の 2 本。UART 変換器不要）

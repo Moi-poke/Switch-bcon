@@ -21,6 +21,7 @@ PC 側で生成した IMU（ジャイロ・加速度）を `IMU_SAMPLE` とし�
 
 - Nintendo Switch Pro Controller エミュレーション
 - USB HID（有線接続）
+- 有線時の USB キーボード入力（`KEYBOARD` 0x3C・Pro Controller と複合デバイス）
 - Classic Bluetooth HID（無線接続）
 - BLE Wake Beacon の記録・再生 (Switch2のスリープ解除)
 - PC 由来 IMU（ジャイロ・加速度）入力（`IMU_SAMPLE`）
@@ -35,6 +36,7 @@ PC 側で生成した IMU（ジャイロ・加速度）を `IMU_SAMPLE` とし�
 | 機能 | 実装 | 実機検証 |
 |------|------|----------|
 | USB HID | ✅ | ✅ |
+| 有線 USB キーボード入力 (`KEYBOARD`) | ✅ | — |
 | USB-CDC 無線輸送 | ✅ | — |
 | Classic BT HID | ✅ | ✅ |
 | BLE Wake Beacon 記録・再生 | ✅ | ✅ |
