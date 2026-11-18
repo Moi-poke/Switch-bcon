@@ -33,6 +33,10 @@ bool usb_wired_handshake_done(void);
 /* キーボード送出キューを破棄し、次tickで現在値を送り直す。
  * NEUTRAL/timeout-neutral/unmount の安全停止からCore0で呼ぶ。 */
 void usb_wired_keyboard_reset(void);
+/* 受理済み8B遷移をUSB FIFOへ積む (受信順)。連続同値は重複送出しない。 */
+void usb_wired_keyboard_push(const uint8_t report[8]);
+/* 未送出の遷移があるか (診断用)。seed待ちは含めない。 */
+bool usb_wired_keyboard_pending(void);
 
 /* USB バス側の診断計数。列挙〜応答のどこで止まるかを見る。
  * mount/unmount はホストの bus reset/configure 由来。rx80/last80/tx81 は

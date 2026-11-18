@@ -88,7 +88,7 @@ SSOT は `spec/protocol_v3.md`（v4 正準、`PROTO_VER=4`）である。本ペ�
 
 - HELLO ペイロードは `[0]=PROTO_VER（要求版）、[1]=FLAGS（bit0=STATUS 自動送信要求、他予約 0）` である (`spec/protocol_v3.md:126`)
 - 現コードは v4 のみ受け付ける。`ver == PROTO_VER`（=4）なら `RESULT_OK` + `state_accept=true`、それ以外は `RESULT_VER_UNSUPPORTED` + `state_accept=false` である。`DOWNGRADED` 分岐は削除済みである (`src/proto/dispatch.c:56-59`)。`DOWNGRADED` 列挙値自体は `protocol.h` に残置されているが無害な残骸であり、計画書も削除不要としている (`src/proto/protocol.h:39-43`, `docs/superpowers/plans/2026-09-15-plan-a-telemetry-v4.md:79`)
-- HELLO_ACK ペイロードは `[0]=採用版、[1]=FW_MAJOR、[2]=FW_MINOR、[3]=RESULT` である (`spec/protocol_v3.md:127`)。送信は `flush_outbox` が行う (`src/main.c:839-866`)。FW 版は `FW_MAJOR=0`、`FW_MINOR=15` である (`src/proto/dispatch.h`)。
+- HELLO_ACK ペイロードは `[0]=採用版、[1]=FW_MAJOR、[2]=FW_MINOR、[3]=RESULT` である (`spec/protocol_v3.md:127`)。送信は `flush_outbox` が行う (`src/main.c:839-866`)。FW 版は `FW_MAJOR=0`、`FW_MINOR=16` である (`src/proto/dispatch.h`)。
 - v3 HELLO は UNSUPPORTED になる。STATE は拒否されるが NEUTRAL は安全停止として通す (`src/proto/dispatch.c:34-40`, `tests/host/test_config.c:36-48`)
 - HELLO なし既定では STATE を受け付ける（sweep/PoC 互換のため `state_accept` 初期値は true）(`src/proto/dispatch.c:7-13`, `tests/host/test_config.c:50-56`)
 - PC 送信側は版バイト 4 で送る (`src/poc_dualcore/poc_send.py:102-104`)。`--hello` は HELLO_ACK＋自動 STATUS を確認する (`src/poc_dualcore/poc_send.py:164-182`)
@@ -158,17 +158,23 @@ PC→Pico専用。HID keyboard（report protocol）の入力レポートを全�
 `[2..7]=HID Usage ID×6（0x00=なし）`である。
 
 - 有線USB profileのHID instance 1（interface 1・report protocol・IN `0x82`・8B）へ、
-  最後の送出値と異なるときだけ送る。mount直後は現在値を1回送る。
-- report descriptorは69BのHID-Project BootKeyboard互換（8B入力＋1B LED出力）。
-  LEDはOUT EPを持たずcontrol SET_REPORTで受ける。`GET_REPORT`(input)は現在の8Bを返す。
-  Picoは受理した全状態遷移を16件FIFOへ積み、EP readyごとに1件送る（`kbdrop`は満杯破棄数）。
+  受理した全状態遷移を16件FIFOへ積み、EP readyごとに1件送る。連続同値は積まない。
+  mount直後は現在値を1回送る。
+- report descriptorはHID-Project BootKeyboard互換の69B（レポートIDなし。8B入力＝
+  modifiers＋consumer予約＋6キー、LEDは8bit。OUT EPを持たずcontrol SET_REPORTで受ける）。
+  `GET_REPORT`(input)は現在の8Bを返す。
+- Core1 UART/CDC callbackは受信順リング（`g_m`保護、16件）へ積み、Core0の1ms tickが
+  FIFOへ移す。同じtickにpress→neutralが届いてもlatestだけで潰さない。満杯時は
+  リングが最も新しい1件、USB FIFOが最も古い1件を捨て、`kbrdrop`/`kbdrop`で数える。
+- `NEUTRAL`（0x02）とSTATE timeout-neutral（200ms）は受理済みキューも全消去し、
+  未送出のpressを残さない。timeout-neutral中に届いたKEYBOARDは受理数だけ数え、
+  USBへは出さない（次のSTATE/NEUTRALで復帰）。
 - ProConの`80 04`ハンドシェイクとは独立。無線（CDC）profileはフレームを受理・保持するが
   HID IFが無いため出力しない（エラーにしない）。
 - PCは変化時即送＋非中立の間100ms以内で全状態を再送する（key-up欠落対策）。
-- `NEUTRAL`（0x02）とSTATE timeout-neutral（200ms）はキーボードも0にする。
 - PokeCon ASCIIモードは対象外 (`src/main.c` `bcon_frame_cb`/`cdc_frame_cb`,
-  `src/usb/usb_wired.c` `kb_send_if_changed`, `src/usb/usb_descriptors.c`
-  `desc_kb_report`)。FW_MINORは14である。
+  `src/proto/kb_queue.c`, `src/usb/usb_wired.c` `usb_wired_keyboard_push`/`kb_send_pending`,
+  `src/usb/usb_descriptors.c` `desc_kb_report`)。FW_MINORは16である。
 
 ## USB-CDC輸送（無線起動時）
 

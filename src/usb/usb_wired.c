@@ -78,6 +78,7 @@ static uint8_t kb_q_tail;
 static uint8_t kb_q_count;
 static uint8_t kb_last[USB_WIRED_KB_LEN];
 static bool kb_last_valid;
+static bool kb_seed_needed;
 static bool kb_done_logged;
 
 static void kb_queue_reset(void)
@@ -86,6 +87,7 @@ static void kb_queue_reset(void)
     kb_q_tail = 0u;
     kb_q_count = 0u;
     kb_last_valid = false; /* 次tickで現在値を再投入する */
+    kb_seed_needed = true;
 }
 #if IMU_DUMMY_DIAG
 /* §1診断: 最後に送信成功した0x30のtimerとIMU先頭12Bの写し。 */
@@ -264,18 +266,21 @@ void usb_wired_disconnect(void)
     tud_disconnect();
 }
 
-/* キーボードIF (HID instance 1) の全状態遷移をキューへ積む。
- * PC側の press→neutral が同じ1ms tickに届いても、latestのみで潰さない。
+/* 受理済みの8B遷移をUSB FIFOへ積む。呼出側は受信順に呼ぶ。
+ * 連続する同一状態 (PCの定期リフレッシュ) は重複送出しない。
  * reserved/consumer byteはpc側受信値を無視し、常に0を渡す。 */
-static void kb_enqueue_if_changed(void)
+void usb_wired_keyboard_push(const uint8_t report[USB_WIRED_KB_LEN])
 {
-    uint8_t report[USB_WIRED_KB_LEN];
-    memcpy(report, bcon_kb, sizeof(report));
-    report[1] = 0u;
-    if (kb_last_valid && memcmp(kb_last, report, sizeof(report)) == 0) {
+    uint8_t body[USB_WIRED_KB_LEN];
+    if (report == NULL) {
         return;
     }
-    memcpy(kb_last, report, sizeof(report));
+    memcpy(body, report, sizeof(body));
+    body[1] = 0u;
+    if (kb_last_valid && memcmp(kb_last, body, sizeof(body)) == 0) {
+        return;
+    }
+    memcpy(kb_last, body, sizeof(body));
     kb_last_valid = true;
     if (kb_q_count >= USB_WIRED_KB_QUEUE_LEN) {
         /* ホストが長くpollしない場合の保険。最古を捨てて最新を残す。 */
@@ -283,9 +288,15 @@ static void kb_enqueue_if_changed(void)
         kb_q_count--;
         wired_stats.kb_drop++;
     }
-    memcpy(kb_queue[kb_q_tail], report, sizeof(report));
+    memcpy(kb_queue[kb_q_tail], body, sizeof(body));
     kb_q_tail = (uint8_t)((kb_q_tail + 1u) & USB_WIRED_KB_QUEUE_MASK);
     kb_q_count++;
+}
+
+/* 未送出の遷移があるか (診断用)。seed待ちは含めない。 */
+bool usb_wired_keyboard_pending(void)
+{
+    return kb_q_count > 0u;
 }
 
 /* EPがreadyならキューの先頭を1件送る。次tickで残りを送る。 */
@@ -350,7 +361,10 @@ void usb_wired_task(uint32_t now_ms)
      * (標準キーボードは列挙後すぐ使える)。無線profileではHID IFが無く
      * wired_enabledもfalseのため到達しない。 */
     if (wired_enabled && wired_inited && tud_mounted()) {
-        kb_enqueue_if_changed();
+        if (kb_seed_needed) {
+            kb_seed_needed = false;
+            usb_wired_keyboard_push(bcon_kb);
+        }
         kb_send_pending();
     }
     /* Joy役の81 01先制通知 (espp式kick-start)。ドックは2006/2007に

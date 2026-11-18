@@ -24,6 +24,7 @@
 | 4.12 | 2026-11-04 | KEYBOARD新設（0x3C・PC→Pico・LEN=8）。HID boot keyboard report（modifiers 1B＋reserved 1B＋keycode 6B）を全状態で受け、有線USB profileの2番目のHID IF（boot keyboard・IN `0x82`・8B・`bInterval 8`）へ変化時のみ送出する。有線USB configは純正ProCon IF（41B分・バイト不変）＋keyboard IF 25B＝66B。無線（CDC）profileではフレームを受理・保持するが送出先のHID IFが無いため出力しない。NEUTRALとtimeout-neutralはキーボードも解放する。PROTO_VER=4維持・FW_MINOR=13。 |
 | 4.13 | 2026-11-15 | KEYBOARDのSwitch互換修正。有線IF1を boot keyboard（subclass/protocol 1）から **report protocol（subclass/protocol 0）の HID keyboard** へ変更し、report descriptorを HID-Project BootKeyboard 互換の69B（consumer予約1B＋LED 8bit出力＋key usage 0x00-0xE7）へ差し替える。`GET_REPORT`(input) は現在の8Bを返し、control `SET_REPORT`(LED) は受けてACKする（OUT EPは追加しない）。config 66B・IF0 ProConバイト不変。FW_MINOR=14。 |
 | 4.14 | 2026-11-15 | KEYBOARDの取りこぼし対策。press→neutralが同一1ms tickに到着してもlatestのみで潰さないよう、有線USBのキーボード送出を16件FIFOへ変更（EP readyごとに1件送信、満杯時は最古を捨てて `kbdrop` に計数）。NEUTRAL/timeout-neutral/unmountでは未送出キューを破棄し、現在値（通常は全ゼロ）を再送する。フレーム・IF/config不変。FW_MINOR=15。 |
+| 4.15 | 2026-11-15 | KEYBOARDの順序保持とtimeout安全化。UART/CDCの受信境界で受理した全遷移を16件リング (`kb_queue`) に保存し、Core0がUSB FIFOへ受信順に渡す（同一1ms tickのpress→neutralも両方送出）。`timeout-neutral` 中はKEYBOARDを受理数 (`kbr`) だけ数え、出力を抑制して全解放を維持する（KEYBOARDでSTATE watchdogは延長しない）。timeout時は最新値がneutralでも受信リングと未送出FIFOを破棄する。受信リング満杯は `kbrdrop`、USB FIFO満杯は `kbdrop`。FW_MINOR=16。 |
 
 > フィールド追加・意味変更時は必ず本表と `PROTO_VER` を更新する。
 
@@ -377,12 +378,15 @@ Off  Field  Size  説明
 * 送出先は有線USBのHID instance 1（interface 1・report protocol・IN `0x82`・
   8B入力・`bInterval 8`）。report descriptorは8B入力に加えて1BのLED出力を
   持つが、OUT EPは持たずLEDは control SET_REPORT で受ける。
-  Picoは受理した全状態遷移を16件のFIFOへ積み、EP readyごとに1件送る
-  （同一1ms tickにpressとneutralが到着しても潰さない）。FIFO満杯時は
-  最古を捨てる（診断 `kbdrop`）。mount直後は現在値を1回送る。
+  Picoは受信境界で受理した全状態遷移を16件リングに保存し、Core0がUSB FIFO
+  （16件）へ受信順に渡す。USB側は連続する同一状態を重複送出せず、EP ready
+  ごとに1件送る（同一1ms tickにpressとneutralが到着しても潰さない）。
+  リング満杯は `kbrdrop`、USB FIFO満杯は `kbdrop`。mount直後は現在値を1回送る。
   ProConの`80 04`ハンドシェイクとは独立（キーボードは列挙後すぐ使える）。
-* 安全停止：`T_NEUTRAL`・STATE timeout-neutral・unmountでは未送出FIFOを
-  破棄し、現在値（通常は全ゼロ）を再送する。
+* 安全停止：`T_NEUTRAL`・STATE timeout-neutral・unmountでは受信リングと
+  未送出FIFOを破棄し、現在値（通常は全ゼロ）を再送する。**timeout-neutral中は
+  KEYBOARDを受理数だけ数え、出力を抑制する**（STATE watchdogはKEYBOARDで
+  延長しない）。次にSTATE/NEUTRALが適用されるまでキーボードも全解放を維持する。
 * PCの義務：変化時即送。非中立（MODまたはキーが非0）の間は**100ms以内**で
   同じ全状態を再送する（UART/CDCのフレーム欠落でkey-upが失われるのを防ぐ）。
 * 解放：`T_NEUTRAL`（全入力解放）とSTATE timeout-neutral（§8・200ms）は

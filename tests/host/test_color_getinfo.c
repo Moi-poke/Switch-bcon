@@ -84,7 +84,7 @@ int main(void) {
         /* 新規フレーム追加でも版交渉は不変（EMULATE_MODE前例 spec §5.6）。 */
         CHECK(PROTO_VER == 4, "PROTO_VER=4 (unchanged)");
         /* 新規フレームのためT_RECONNECT前例（3->4）に倣い4->5。実装時に上げる。 */
-        CHECK(FW_MINOR == 15u, "FW_MINOR==15 (wired keyboard queue)");
+        CHECK(FW_MINOR == 16u, "FW_MINOR==16 (wired keyboard ordered queue)");
     }
 
     printf("\nRESULT: %s (%d failures)\n", fails == 0 ? "ALL PASS" : "HAS FAILURES", fails);

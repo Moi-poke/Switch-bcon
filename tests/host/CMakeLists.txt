@@ -21,6 +21,12 @@ add_executable(test_protocol
 )
 target_include_directories(test_protocol PRIVATE ../../src/proto)
 
+add_executable(test_kb_queue
+  test_kb_queue.c
+  ../../src/proto/kb_queue.c
+)
+target_include_directories(test_kb_queue PRIVATE ../../src/proto)
+
 add_executable(test_usb
   test_usb.c
   ../../src/proto/protocol.c
@@ -250,6 +256,7 @@ if(IMU_DUMMY)
 endif()
 enable_testing()
 add_test(NAME protocol COMMAND test_protocol)
+add_test(NAME kb_queue COMMAND test_kb_queue)
 add_test(NAME usb COMMAND test_usb)
 add_test(NAME joy_imu_axis COMMAND test_joy_imu_axis)
 add_test(NAME config COMMAND test_config)
