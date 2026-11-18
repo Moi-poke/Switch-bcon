@@ -16,12 +16,10 @@
 #include "rumble.h"
 #include "hid_pack.h"
 #include "usb_hid.h" /* usb_imu_set_sensitivity (0x41保持値の共有) */
+#include "imu3.h"    /* report同期IMUは0x30生成時に消費する (§5.13) */
 
-/* PC由来IMU (所有元 main.c)。USB 0x30 と同じ値。 */
-extern int16_t bcon_imu[6];
-extern int16_t bcon_imu3[3][6];
-extern bool bcon_imu_valid;
-extern bool bcon_imu3_valid;
+/* PC由来IMU (所有元 main.c)。0x30生成時にbcon_imu_take3()で消費する。
+ * 0x21応答はIMUを持たないため消費しない。 */
 
 #define HID_REPLY_WANT (2u + 48u)
 
@@ -201,13 +199,19 @@ void probe_can_send_now(void)
         uint8_t f[BT_INPUT30_IMU_LEN];
         uint8_t btn3[3];
         uint8_t sticks6[6];
+        int16_t imu[IMU3_AXES] = {0};
+        int16_t imu3[IMU3_SLOTS][IMU3_AXES] = {{0}};
+        bool imu_valid;
         uint16_t len;
         joy_pack_btn3(probe_procon_u32, probe_role, btn3);
         pack_role_sticks(sticks6);
+        /* 0x30生成時に前回以降のIMUを1回だけ消費する。0x21応答(reply_len>0)
+         * では消費しない (IMUを持たないため)。IMU無効時も消費して遅延再生を
+         * 防ぐ。 */
+        imu_valid = bcon_imu_take3(imu3, imu);
         len = bt_pack_input30(f, probe_timer_now(), btn3, sticks6,
                               probe_imu_enabled, probe_role,
-                              bcon_imu_valid, bcon_imu,
-                              bcon_imu3_valid, bcon_imu3);
+                              imu_valid, imu, imu_valid, imu3);
         if (probe_imu_enabled && len != BT_INPUT30_IMU_LEN) {
             if (!s_imu_fallback_logged) {
                 probe_line("IMU 0x30 fallback 14B (builder failed)");

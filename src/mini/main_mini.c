@@ -21,6 +21,7 @@
 #include "usb_wired.h"
 #include "usb_hid.h"
 #include "usb_cdc.h"
+#include "imu3.h"
 #include "imu_dummy.h"
 
 #define LOG_UART uart0
@@ -34,9 +35,21 @@ uint16_t bcon_lx = 0x800u, bcon_ly = 0x800u;
 uint16_t bcon_rx = 0x800u, bcon_ry = 0x800u;
 uint8_t bcon_mac[6];
 uint32_t bcon_usb_rumble_n;
-// miniはPC由来IMUなし (IMU_DUMMY生成器のみ)。valid=false固定で静止値路へ。
-int16_t bcon_imu[6] = { 0, 0, 0, 0, 0, 0 };
-bool bcon_imu_valid = false;
+bool bcon_wired_imu; /* usb_wired.c が0x40受信時に書く (miniでは未使用) */
+// miniはPC由来IMUなし (IMU_DUMMY生成器のみ)。usb_wired.c のreport同期APIを
+// 無効化して静止値路へ倒す。
+bool bcon_imu_take3(int16_t out3[IMU3_SLOTS][IMU3_AXES],
+                    int16_t out[IMU3_AXES])
+{
+    (void)out3;
+    (void)out;
+    return false;
+}
+
+void bcon_imu_requeue3(const int16_t slots[IMU3_SLOTS][IMU3_AXES])
+{
+    (void)slots;
+}
 
 void probe_line(const char *s)
 {

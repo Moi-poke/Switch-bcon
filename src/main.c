@@ -31,6 +31,7 @@
 #include "pico/btstack_flash_bank.h"
 
 #include "protocol.h"
+#include "imu3.h"
 #include "baud.h"
 #include "dispatch.h"
 #include "pack.h"
@@ -85,13 +86,10 @@ typedef enum { TR_UART = 0, TR_CDC = 1 } rx_transport_t; // 要求元輸送タ�
 // ---- Core1 -> Core0 共有状態 (mutex保護。Core1はpushのみ) ----
 typedef struct {
     ctrl_state_t state;   // 最新STATE (u32＋sticks)
-    // 最新IMU_SAMPLE (6xint16-LE展開: ax ay az gx gy gz。Switch出力生値)。
-    // Core1高速路がpush、Core0がUSB 0x30生成時に読む。timeout (§5.13) は
-    // Core0が imu_frames の停滞で判定する (STATEのtimeout-neutralとは独立)。
-    int16_t imu[6];
-    int16_t imu_hist[3][6]; // 直近3サンプル ([imu_frames%3] が最新)
-    uint8_t imu_hist_n;     // 有効サンプル数 (0..3)
-    uint32_t imu_frames;  // 適用したIMU_SAMPLE数
+    // IMU_SAMPLE (6xint16-LE: ax ay az gx gy gz、Switch出力生値)。Core1高速路が
+    // pushし、0x30生成時にCore0が1回だけtakeする (§5.13 report同期)。
+    // ringではなく全サンプルを蓄積し、レポート間で合計角度を保存する。
+    imu3_pending_t imu_pending;
     uint8_t  last_seq;
     uint8_t  last_type;
     uint8_t  perrcode;    // parser errcode mirror (STATUS用)
@@ -133,14 +131,6 @@ static volatile bool g_core1_booted = false;
 uint8_t bcon_btn[3];
 uint16_t bcon_lx = 0x800u, bcon_ly = 0x800u, bcon_rx = 0x800u, bcon_ry = 0x800u;
 uint8_t bcon_mac[6]; // 応答順 (初期化で反転済み。BT addrと同一機器)
-// 最新IMU (poll_tickが共有imuからtimeout付き転記。USB 0x30生成が読む)。
-// valid=false の間はUSB側が静止値 (§12) を使う。BTは使わない (USB有線のみ)。
-int16_t bcon_imu[6];
-/* 0x30の3スロット用（古い順）。PCの0x30は5ms間隔の3サンプルを持つので、
- * それを捨てずに3スロットへ順に載せる。 */
-int16_t bcon_imu3[3][6];
-bool bcon_imu3_valid;
-bool bcon_imu_valid;
 // 有線USB側の0x40 IMU有効化受信 (usb_wired.cが設定。PLAYER_INFO bit0へOR)。
 bool bcon_wired_imu;
 
@@ -171,6 +161,8 @@ static uint32_t s_last_frames;
 static uint32_t s_last_state_frames;
 static uint32_t s_last_imu_ms; // IMU直近受信時刻 (§5.13 timeout用)
 static uint32_t s_last_imu_frames; // IMU適用数の前回値
+static uint32_t s_imu_pending_since_ms; // 最初の未消費サンプル時刻 (late bound)
+static bool s_imu_static_latched; // 500ms静止値を適用済み (毎tickの再適用防止)
 static uint32_t s_rumble_reported; // 前回STATUS時のrumble合計
 static bool s_wdt_recovered;
 static bool s_bt_init; // BTstack初期化済み (無線起動時のみtrue)
@@ -313,6 +305,17 @@ static baudx_t s_baudx;
 static uint32_t s_rx_last_ms; // 直近の有効frame受理時刻
 static bool s_rx_seen;        // 前回の再同期以降に有効frameを受理したか
 
+// g_m保持中に呼ぶ。IMU_SAMPLE LEN=12 を6xint16へ展開し、0x30生成時に
+// 1回だけ消費されるreport同期バッファへ積む (§5.13)。
+static void imu_apply_locked(const uint8_t *p) {
+    int16_t sample[IMU3_AXES];
+    int k;
+    for (k = 0; k < IMU3_AXES; k++) {
+        sample[k] = (int16_t)(p[k * 2] | ((uint16_t)p[k * 2 + 1] << 8));
+    }
+    imu3_push(&g_s.imu_pending, sample);
+}
+
 static void bcon_frame_cb(uint8_t type, const uint8_t *p, uint8_t len,
                           uint8_t seq, void *user) {
     (void)user;
@@ -389,22 +392,10 @@ static void bcon_frame_cb(uint8_t type, const uint8_t *p, uint8_t len,
         }
     } else if (type == T_IMU_SAMPLE && len == 12) {
         // IMU生値 (§5.13)。STATEと同trust (確定baud＋state_accept)。
-        // LEN12のみ受理し、6xint16-LEを展開して最新1件を保持する。
-        // inboxへは送らない (200Hzのため。Core0は共有imuを直接読む)。
+        // LEN12のみ受理し、6xint16-LEを展開してreport同期バッファへ積む。
+        // 0x30生成時に1回だけtakeする (200Hzをinboxへは送らない)。
         if (trusted && g_s.state_accept && p != NULL) {
-            int k;
-            {
-                uint8_t pos = (uint8_t)(g_s.imu_frames % 3u);
-                for (k = 0; k < 6; k++) {
-                    int16_t v = (int16_t)(p[k * 2] | ((uint16_t)p[k * 2 + 1] << 8));
-                    g_s.imu[k] = v;
-                    g_s.imu_hist[pos][k] = v;
-                }
-                g_s.imu_frames++;
-                if (g_s.imu_hist_n < 3u) {
-                    g_s.imu_hist_n++;
-                }
-            }
+            imu_apply_locked(p);
         }
     } else if (type == T_NEUTRAL && len == 0) {
         // 安全停止はUNSUPPORTED下でも適用する (dispatchと同義)。
@@ -470,19 +461,7 @@ static void cdc_frame_cb(uint8_t type, const uint8_t *p, uint8_t len,
     } else if (type == T_IMU_SAMPLE && len == 12) {
         // IMU生値 (§5.13)。UART路と同形 (CDC路はstate_acceptのみ見る)。
         if (g_s.state_accept && p != NULL) {
-            int k;
-            {
-                uint8_t pos = (uint8_t)(g_s.imu_frames % 3u);
-                for (k = 0; k < 6; k++) {
-                    int16_t v = (int16_t)(p[k * 2] | ((uint16_t)p[k * 2 + 1] << 8));
-                    g_s.imu[k] = v;
-                    g_s.imu_hist[pos][k] = v;
-                }
-                g_s.imu_frames++;
-                if (g_s.imu_hist_n < 3u) {
-                    g_s.imu_hist_n++;
-                }
-            }
+            imu_apply_locked(p);
         }
     } else if (type == T_NEUTRAL && len == 0) {
         g_s.state_frames++;
@@ -1470,66 +1449,41 @@ static void poll_tick(uint32_t now) {
         }
         s_neutral_hold = true;
     }
-    // IMU転記＋timeout (§5.13)。STATEのtimeout-neutralとは独立。
-    // 新着があれば最新値を写し、100ms停滞でgyro→0、500ms停滞で静止値へ。
-    // validは初回受信でtrue。以降はtimeout時も値で表現しfalseに戻さない
-    // (USB側は値だけ見ればよい。未受信時の静止値はUSB側既定と同一)。
-    if (cp.imu_frames != s_last_imu_frames) {
-        int k;
-        s_last_imu_frames = cp.imu_frames;
-        s_last_imu_ms = now;
-        for (k = 0; k < 6; k++) {
-            bcon_imu[k] = cp.imu[k];
+    // IMU timeout (§5.13)。蓄積バッファの管理だけをここで行い、0x30生成側
+    // (wired usb_wired.c / 無線 bt/hid.c) が bcon_imu_take3() で1回だけ
+    // 消費する。100msレポート途絶で古い蓄積を捨て、500ms無受信で静止値へ。
+    {
+        uint32_t imu_frames = cp.imu_pending.frames;
+        uint32_t imu_pending = cp.imu_pending.pending;
+        bool imu_valid = cp.imu_pending.valid;
+        if (imu_frames != s_last_imu_frames) {
+            s_last_imu_frames = imu_frames;
+            s_last_imu_ms = now;
+            s_imu_static_latched = false;
         }
-        bcon_imu_valid = true;
-        if (cp.imu_hist_n >= 3u) {
-            uint8_t newest = (uint8_t)((cp.imu_frames - 1u) % 3u);
-            for (k = 0; k < 3; k++) {
-                uint8_t idx = (uint8_t)((newest + 1u + (uint8_t)k) % 3u);
-                memcpy(bcon_imu3[k], cp.imu_hist[idx], sizeof(bcon_imu3[k]));
+        if (imu_pending == 0u) {
+            s_imu_pending_since_ms = 0u;
+        } else if (s_imu_pending_since_ms == 0u) {
+            s_imu_pending_since_ms = now;
+        }
+        if (imu_pending != 0u &&
+            (int32_t)(now - s_imu_pending_since_ms) >= (int32_t)IMU_GYRO_ZERO_MS) {
+            // 0x30が来ないまま100ms経過: 古い動きを遅延レポートで再生しない。
+            // 破棄区間の角度は保存しない (fresh response優先)。
+            mutex_enter_blocking(&g_m);
+            imu3_drop_pending(&g_s.imu_pending);
+            mutex_exit(&g_m);
+            s_imu_pending_since_ms = 0u;
+        }
+        if (imu_valid && !s_imu_static_latched &&
+            (int32_t)(now - s_last_imu_ms) >= (int32_t)IMU_STATIC_MS) {
+            mutex_enter_blocking(&g_m);
+            /* cpコピー後にCore1が新サンプルを積んだ場合は静止値で潰さない。 */
+            if (g_s.imu_pending.frames == s_last_imu_frames) {
+                imu3_set_static(&g_s.imu_pending);
+                s_imu_static_latched = true;
             }
-            bcon_imu3_valid = true;
-        } else {
-            /* 履歴不足時は最新値の複製（従来互換）。 */
-            for (k = 0; k < 3; k++) {
-                memcpy(bcon_imu3[k], cp.imu, sizeof(bcon_imu3[k]));
-            }
-            bcon_imu3_valid = true;
-        }
-    } else if (bcon_imu_valid &&
-               (int32_t)(now - s_last_imu_ms) >= (int32_t)IMU_STATIC_MS) {
-        int k;
-        bcon_imu[0] = 0;
-        bcon_imu[1] = 0;
-        bcon_imu[2] = 0x1000;
-        bcon_imu[3] = 0;
-        bcon_imu[4] = 0;
-        bcon_imu[5] = 0;
-        for (k = 0; k < 3; k++) {
-            bcon_imu3[k][0] = 0;
-            bcon_imu3[k][1] = 0;
-            bcon_imu3[k][2] = 0x1000;
-            bcon_imu3[k][3] = 0;
-            bcon_imu3[k][4] = 0;
-            bcon_imu3[k][5] = 0;
-        }
-        for (k = 0; k < 3; k++) {
-            bcon_imu3[k][3] = 0;
-            bcon_imu3[k][4] = 0;
-            bcon_imu3[k][5] = 0;
-        }
-    } else if (bcon_imu_valid &&
-               (int32_t)(now - s_last_imu_ms) >= (int32_t)IMU_GYRO_ZERO_MS) {
-        int k;
-        bcon_imu[3] = 0;
-        bcon_imu[4] = 0;
-        bcon_imu[5] = 0;
-        if (bcon_imu3_valid) {
-            for (k = 0; k < 3; k++) {
-                bcon_imu3[k][3] = 0;
-                bcon_imu3[k][4] = 0;
-                bcon_imu3[k][5] = 0;
-            }
+            mutex_exit(&g_m);
         }
     }
 
@@ -1550,6 +1504,62 @@ static void poll_tick(uint32_t now) {
         while (1) tight_loop_contents();
     }
 }
+
+// ---------------- Core0: report同期IMU handoff (main.c所有) ----------------
+// 0x30生成時に呼ぶ。pendingを1回だけ消費し、3スロット+最新値を返す。
+// wired usb_wired.c と無線 bt/hid.c が同じ実装を使う。0x21応答は呼ばない。
+bool bcon_imu_take3(int16_t out3[IMU3_SLOTS][IMU3_AXES],
+                    int16_t out[IMU3_AXES])
+{
+    bool ok;
+    uint32_t now = to_ms_since_boot(get_absolute_time());
+    mutex_enter_blocking(&g_m);
+    {
+        uint32_t frames = g_s.imu_pending.frames;
+        if (frames != s_last_imu_frames) {
+            // 初回サンプル直後にpoll_tickを待たずレポートしてもstatic値で
+            // 上書きしないよう、ここでも受信時刻を進める。
+            s_last_imu_frames = frames;
+            s_last_imu_ms = now;
+            s_imu_static_latched = false;
+        }
+    }
+    if (g_s.imu_pending.pending != 0u) {
+        if (s_imu_pending_since_ms == 0u) {
+            s_imu_pending_since_ms = now;
+        } else if ((int32_t)(now - s_imu_pending_since_ms) >=
+                   (int32_t)IMU_GYRO_ZERO_MS) {
+            // 100ms超の遅延レポート: 古い動きを再生せず、以後の新着だけ使う。
+            imu3_drop_pending(&g_s.imu_pending);
+            s_imu_pending_since_ms = 0u;
+        }
+    }
+    if (g_s.imu_pending.valid && !s_imu_static_latched &&
+        (int32_t)(now - s_last_imu_ms) >= (int32_t)IMU_STATIC_MS) {
+        imu3_set_static(&g_s.imu_pending);
+        s_imu_static_latched = true;
+    }
+    ok = imu3_take(&g_s.imu_pending, out3, out);
+    if (ok) {
+        s_imu_pending_since_ms = 0u;
+    }
+    mutex_exit(&g_m);
+    return ok;
+}
+
+// USB HID送信失敗時だけ、生成済みの3スロットを未送信分として戻す。
+// 新着サンプルより古い順序を保ち、合計角度を落とさない。
+void bcon_imu_requeue3(const int16_t slots[IMU3_SLOTS][IMU3_AXES])
+{
+    uint32_t now = to_ms_since_boot(get_absolute_time());
+    mutex_enter_blocking(&g_m);
+    imu3_requeue(&g_s.imu_pending, slots);
+    if (g_s.imu_pending.pending != 0u) {
+        s_imu_pending_since_ms = now;
+    }
+    mutex_exit(&g_m);
+}
+
 // ---------------- Core0: BTstack timers ----------------
 static uint8_t hid_service_buffer[700];
 static uint8_t pnp_service_buffer[200];

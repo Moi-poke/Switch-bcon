@@ -119,6 +119,7 @@ if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/pico_sdk_import.cmake)
     src/proto/pack.c
     src/proto/spi.c
     src/proto/dispatch.c
+    src/proto/imu3.c
     src/usb/usb_descriptors.c
     src/usb/usb_hid.c
     src/usb/usb_cdc.c

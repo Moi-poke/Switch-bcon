@@ -14,6 +14,7 @@
 
 #include "usb_wired.h"
 #include "usb_hid.h"
+#include "imu3.h" /* report同期IMUは0x30生成時に消費する (§5.13) */
 #if IMU_DUMMY
 #include "imu_dummy.h"
 #endif
@@ -28,10 +29,6 @@ extern uint8_t bcon_btn[3];
 extern uint16_t bcon_lx, bcon_ly, bcon_rx, bcon_ry;
 extern uint8_t bcon_mac[6]; /* 応答順 (main.cで反転済み) */
 extern uint32_t bcon_usb_rumble_n; /* 所有元main.c。USB振動0x10受信累計 */
-extern int16_t bcon_imu[6]; /* 所有元main.c。PC由来IMU最新値 (§5.13) */
-extern int16_t bcon_imu3[3][6]; /* 0x30の3スロット用（古い順） */
-extern bool bcon_imu3_valid;
-extern bool bcon_imu_valid; /* 所有元main.c。同有効flag */
 extern bool bcon_wired_imu; /* 所有元main.c。有線0x40受信flag (PLAYER_INFO bit0へ) */
 
 /* timer換算 (5ms刻み)。gyro-mini実機で受理確認 (2026-10-17)。
@@ -137,10 +134,15 @@ void usb_wired_get_stats(usb_wired_stats_t *st)
 }
 
 /* 有線 Input 0x30 は実機配置 (2wiCC ControllerData 互換)。
- * 12B 状態 + 36B IMU(role0以外は 0) + 15B 埋め。mac/player は使わない。 */
-static void build_input_report(uint8_t out[USB_WIRED_INPUT_LEN], uint32_t now_ms)
+ * 12B 状態 + 36B IMU(role0以外は 0) + 15B 埋め。mac/player は使わない。
+ * 戻値: IMUを実際にreportへ載せた場合true。送信失敗時のrequeue用。
+ * imu3_taken はbcon_imu_take3の出力（3スロット、古い順）を受ける。 */
+static bool build_input_report(uint8_t out[USB_WIRED_INPUT_LEN], uint32_t now_ms,
+                               int16_t imu3_taken[IMU3_SLOTS][IMU3_AXES])
 {
     usb_sub_ctx_t ctx;
+    int16_t imu_taken[IMU3_AXES];
+    bool imu_used = false;
     memset(&ctx, 0, sizeof(ctx));
     ctx.btn[0] = bcon_btn[0];
     ctx.btn[1] = bcon_btn[1];
@@ -153,31 +155,32 @@ static void build_input_report(uint8_t out[USB_WIRED_INPUT_LEN], uint32_t now_ms
     /* role は起動時1回だけ決まる (usb_set_role)。入力 pack (ボタン・
      * 親指側選択) と 0x02 機器情報は usb_hid 側が ctx.role で適用する。 */
     ctx.role = usb_get_role();
-    /* PC由来IMU (§5.13): 有線は role0 (ProCon) のみ載せる。role1/2 は
-     * 実機未確認のため IMU 未受信時と同じ静的既定 (36Bゼロ) を送る。
-     * memset済みのためゲート時は imu_valid=false・imu=0 のまま (静止値路へ)。
-     * 無線は bt_pack_input30 が別経路で全 role 対応 (§12.4)。 */
-    if (bcon_imu_valid && usb_imu_wired_role_ok(ctx.role)) {
+    /* PC由来IMU (§5.13): report同期。前回0x30以降のサンプルをここで1回だけ
+     * 消費し、3スロットへ載せる。有線はrole0 (ProCon) のみ載せる。role1/2は
+     * 実機未確認のため従来通り36Bゼロだが、pendingは消費して遅延再生を防ぐ。
+     * 無線は bt/hid.c が同じ bcon_imu_take3() を0x30生成時に呼ぶ。 */
+    if (bcon_imu_take3(imu3_taken, imu_taken) &&
+        usb_imu_wired_role_ok(ctx.role)) {
         int k;
         ctx.imu_valid = true;
-        for (k = 0; k < 6; k++) {
-            ctx.imu[k] = bcon_imu[k];
+        ctx.imu3_valid = true;
+        for (k = 0; k < IMU3_AXES; k++) {
+            ctx.imu[k] = imu_taken[k];
         }
-        if (bcon_imu3_valid) {
-            int slot;
-            ctx.imu3_valid = true;
-            for (slot = 0; slot < 3; slot++) {
-                for (k = 0; k < 6; k++) {
-                    ctx.imu3[slot][k] = bcon_imu3[slot][k];
-                }
+        for (k = 0; k < IMU3_SLOTS; k++) {
+            int j;
+            for (j = 0; j < IMU3_AXES; j++) {
+                ctx.imu3[k][j] = imu3_taken[k][j];
             }
         }
+        imu_used = true;
     }
 #if IMU_DUMMY
     /* Phase 0: ダミー生成器への時刻供給 (usb_hid.cはpico非依存のため渡す)。 */
     ctx.now_ms = now_ms;
 #endif
     usb_build_30_report(&ctx, out);
+    return imu_used;
 }
 
 void usb_wired_pump(void)
@@ -238,6 +241,8 @@ void usb_wired_disconnect(void)
 void usb_wired_task(uint32_t now_ms)
 {
     uint8_t report[USB_WIRED_INPUT_LEN];
+    int16_t imu3_taken[IMU3_SLOTS][IMU3_AXES] = {{0}};
+    bool imu_used = false;
     tud_task();
 #if IMU_DUMMY
     /* Phase 0: STEP終了の検出はgateより前で行う (hs前のstepを捨てないため)。 */
@@ -316,7 +321,7 @@ void usb_wired_task(uint32_t now_ms)
     if (!tud_hid_ready()) {
         return;
     }
-    build_input_report(report, now_ms);
+    imu_used = build_input_report(report, now_ms, imu3_taken);
     if (tud_hid_report(USB_WIRED_REPORT_ID_INPUT, &report[1],
                        USB_WIRED_INPUT_PAYLOAD_LEN)) {
         last_input_ms = now_ms;
@@ -330,6 +335,9 @@ void usb_wired_task(uint32_t now_ms)
         s_diag_timer = report[1];
         s_diag_has = true;
 #endif
+    } else if (imu_used) {
+        /* 送信失敗で消費したIMUを落とさない。次tickで再送する。 */
+        bcon_imu_requeue3(imu3_taken);
     }
 }
 

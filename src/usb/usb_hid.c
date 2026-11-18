@@ -348,8 +348,10 @@ int usb_build_30_report(const usb_sub_ctx_t *ctx, uint8_t out64[64])
         return 64;
     }
 #endif
-    /* PC由来IMU (§5.13): validの間は最新1件を3スロットへ複製する
-     * (switch-pico実績方式)。無効時は下の静止値。
+    /* PC由来IMU (§5.13): report同期バッファから取り出した3スロットを
+     * そのまま載せる (呼出側 main.c の bcon_imu_take3() が前回0x30以降の
+     * サンプルを消費済み)。imu3_valid=false は従来の最新1件複製。
+     * 無効時は下の静止値。
      * Joy-R (role2) は実機の IMU 極性が ProCon と 180° 違う（平坦時に
      * Z=-1g）ため、送出時に Y,Z を反転する (k_joy_negate_axis)。
      * 0x41 のレンジ換算は符号反転後の値に、軸ごとに適用する。

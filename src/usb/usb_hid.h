@@ -26,13 +26,14 @@ typedef struct {
     uint8_t mac[6];
     uint8_t player;
     uint8_t role;
-    // PC由来IMU (§5.13)。valid=trueの間だけ0x30のIMU 36Bへ反映する
-    // (3スロットへ同一値を複製)。false時は従来の静止値。
+    // PC由来IMU (§5.13)。valid=trueの間だけ0x30のIMU 36Bへ反映する。
+    // 呼出側 (main.cのbcon_imu_take3) がreport同期で消費した3スロットを
+    // imu3へ、最新値をimuへ入れる。false時は従来の静止値。
     // ゼロ初期化ctxはvalid=false→従来動作 (host test互換)。
     bool imu_valid;
     int16_t imu[6];
-    /* PC0x30の3サンプル（古い順）。trueならimuより優先して3スロットへ
-     * 順に載せる（5ms間隔の階段化を避ける）。falseは従来の複製。 */
+    /* 消費済みの3スロット（古い順）。trueならimuより優先して3スロットへ
+     * 順に載せる（5ms間隔の階段化を保存する）。falseは従来の複製。 */
     bool imu3_valid;
     int16_t imu3[3][6];
 #if IMU_DUMMY

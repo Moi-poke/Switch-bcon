@@ -186,6 +186,23 @@ add_executable(test_virt_tick
 )
 target_include_directories(test_virt_tick PRIVATE ../../src/proto)
 
+# Report-synchronous IMU delivery (§5.13): 4 samples before one 0x30 keep
+# their integrated gyro; steady 3/15ms, zero-arrival replay, saturation,
+# requeue and role2 calibration. Uses the real 0x30 builder for the bytes.
+add_executable(test_imu3
+  test_imu3.c
+  ../../src/proto/imu3.c
+  ../../src/proto/protocol.c
+  ../../src/proto/pack.c
+  ../../src/proto/spi.c
+  ../../src/proto/dispatch.c
+  ../../src/usb/usb_hid.c
+)
+target_include_directories(test_imu3 PRIVATE
+  ../../src/proto
+  ../../src/usb
+)
+
 # Phase 0: IMU_DUMMY=ON構成のときだけ定義する。既存15件には触れない。
 # 構成マトリクスは -DIMU_DUMMY_*= で切る (既定=A: MODE1/MASK7/FORCE0)。
 option(IMU_DUMMY "Phase 0 dummy IMU host test" OFF)
@@ -266,6 +283,7 @@ add_test(NAME reconnect_policy COMMAND test_reconnect_policy)
 add_test(NAME usb_cdc COMMAND test_usb_cdc)
 add_test(NAME bt_input COMMAND test_bt_input)
 add_test(NAME virt_tick COMMAND test_virt_tick)
+add_test(NAME imu3 COMMAND test_imu3)
 if(IMU_DUMMY)
   add_test(NAME imu_dummy COMMAND test_imu_dummy)
 endif()
